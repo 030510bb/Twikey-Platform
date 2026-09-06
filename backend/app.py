@@ -24,6 +24,7 @@ See README.md for full setup and DEPLOY.md for cloud hosting.
 """
 
 import html
+import logging
 import os
 import urllib.parse
 
@@ -47,6 +48,9 @@ import database
 from auth import get_current_account, require_admin_secret
 from gmail_client import list_recent_messages, send_email, send_html_email
 from validation import validate_message
+
+logger = logging.getLogger("twikey_platform")
+logging.basicConfig(level=logging.INFO)
 
 SEND_AS_EMAIL = os.environ.get("SEND_AS_EMAIL", "sales@twikeycampaigns.nl")
 CORS_ORIGINS = [origin.strip() for origin in os.environ.get("CORS_ORIGINS", "*").split(",")]
@@ -199,8 +203,11 @@ def api_forgot_password(payload: ForgotPasswordIn):
         except Exception:
             # Don't leak Gmail/service-account errors to an unauthenticated
             # caller, and don't reveal whether the send succeeded - the
-            # generic response below covers both cases.
-            pass
+            # generic response below covers both cases either way. DO log it
+            # server-side though (visible in Render's Logs tab), otherwise a
+            # broken Gmail connection here is completely invisible - nobody
+            # who can't see the logs would ever know the mail didn't go out.
+            logger.exception("forgot-password: failed to send reset e-mail to %s", account["login_email"])
     return {"message": "Als dit e-mailadres bij ons bekend is, hebben we een resetlink gestuurd."}
 
 

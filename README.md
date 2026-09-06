@@ -43,7 +43,13 @@ en `.gitignore` die al in dit project zitten.
 - `frontend/index.html` — de publieke, commerciele homepage (geen login
   nodig). Vertelt eerlijk wat het platform doet, met een "Inloggen"-knop.
 - `frontend/login.html` — het inlogscherm (e-mail + wachtwoord), praat met
-  `POST /api/auth/login` en bewaart het sessietoken in `localStorage`.
+  `POST /api/auth/login` en bewaart het sessietoken in `localStorage`. Bevat
+  een "Wachtwoord vergeten?"-link.
+- `frontend/forgot-password.html` — vraagt een e-mailadres, roept
+  `POST /api/auth/forgot-password` aan (altijd dezelfde generieke reactie).
+- `frontend/reset-password.html` — de pagina waar de gemailde resetlink naar
+  toe wijst (`?token=...`); stelt via `POST /api/auth/reset-password` een
+  nieuw wachtwoord in.
 - `frontend/dashboard.html` — het eigenlijke dashboard (alle tabs), met echte
   `fetch()`-aanroepen op alle tabs in plaats van nep-cijfers. Toont alleen
   gegevens van het ingelogde account en stuurt niet-ingelogde bezoekers terug
@@ -110,10 +116,18 @@ deploy moet je het account hierboven dus opnieuw aanmaken met dezelfde curl
 (of je wachtwoord opnieuw kiezen) voordat iemand kan inloggen. Zie de
 opmerking in `backend/database.py` en de "Volgende stappen" hieronder.
 
-**Wachtwoord vergeten?** Er is (nog) geen "wachtwoord vergeten"-link op het
-inlogscherm die zelf een reset-mail verstuurt. Als een klant zijn wachtwoord
-kwijt is, reset jij het als beheerder via hetzelfde soort curl-commando als
-bij het aanmaken van een account:
+**Wachtwoord vergeten?** Er staat een "Wachtwoord vergeten?"-link op
+`login.html`. Die stuurt naar `forgot-password.html`, waar je een e-mailadres
+invult; de backend mailt (via de gedeelde Gmail-mailbox) een eenmalige,
+1 uur geldige resetlink naar `reset-password.html?token=...` als dat adres
+bij een account hoort. De reactie is altijd dezelfde generieke tekst,
+ongeacht of het adres bestaat — zo kan dit endpoint niet gebruikt worden om
+te achterhalen welke e-mailadressen geregistreerd zijn.
+
+Werkt de mail niet (bijv. Gmail-koppeling kapot, of de mailbox van de klant
+zelf onbereikbaar)? Dan kun jij als beheerder het wachtwoord alsnog direct
+resetten, met hetzelfde soort curl-commando als bij het aanmaken van een
+account:
 
 ```bash
 curl -X POST http://localhost:8000/api/admin/accounts/reset-password \
@@ -122,7 +136,7 @@ curl -X POST http://localhost:8000/api/admin/accounts/reset-password \
   -d '{"login_email":"sales@twikeycampaigns.nl","new_password":"<nieuw wachtwoord>"}'
 ```
 
-Dit logt meteen ook alle bestaande sessies van dat account uit.
+Beide routes loggen meteen ook alle bestaande sessies van dat account uit.
 
 **Wat nog niet per account is afgeschermd**: alle accounts versturen mail op
 dit moment via dezelfde gedeelde mailbox (`SEND_AS_EMAIL`,
@@ -142,6 +156,8 @@ geldig token geeft elk 🔒-endpoint een 401 terug.
 |---|---|
 | `GET /api/health` | Check of de backend draait en welke mailbox actief is. Publiek. |
 | `POST /api/auth/login` | Inloggen (`email`, `password`) → `{token, account}`. Publiek. |
+| `POST /api/auth/forgot-password` | Vraag een resetlink aan (`email`). Altijd dezelfde generieke reactie. Publiek. |
+| `POST /api/auth/reset-password` | Wissel een geldig resettoken (`token`, `new_password`) om voor een nieuw wachtwoord. Publiek (het token zelf is de autorisatie). |
 | `POST /api/auth/logout` 🔒 | Huidige sessie ongeldig maken. |
 | `GET /api/auth/me` 🔒 | Gegevens van het ingelogde account. |
 | `POST /api/admin/accounts` | Nieuw account aanmaken. Vereist `X-Admin-Secret`-header (niet hetzelfde als een sessietoken) — zie "Inloggen en accounts" hierboven. |

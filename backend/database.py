@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    token TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -265,6 +273,47 @@ def get_account_by_token(token: str):
 def delete_session(token: str):
     with get_conn() as conn:
         conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+RESET_TOKEN_LIFETIME_HOURS = 1
+
+
+def create_password_reset_token(account_id: int) -> str:
+    """Issue a one-time, short-lived token for the self-service 'forgot
+    password' flow. Deliberately short-lived (1 hour) and single-use (see
+    consume_password_reset_token) since it's mailed as a plain link."""
+    token = secrets.token_urlsafe(32)
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=RESET_TOKEN_LIFETIME_HOURS)).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO password_reset_tokens (token, account_id, created_at, expires_at, used) VALUES (?, ?, ?, ?, 0)",
+            (token, account_id, now_iso(), expires_at),
+        )
+    return token
+
+
+def get_account_for_reset_token(token: str):
+    """Return the account dict (without password_hash) for a valid, unused,
+    non-expired reset token, else None. Does not consume the token - call
+    consume_password_reset_token() once the password has actually been
+    changed, so a token that's merely looked up (e.g. loading the reset
+    page) doesn't get burned before the user submits the form."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM password_reset_tokens WHERE token = ?", (token,)
+        ).fetchone()
+        if not row or row["used"] or row["expires_at"] < now_iso():
+            return None
+        account_row = conn.execute(
+            "SELECT id, company_name, login_email, created_at FROM accounts WHERE id = ?",
+            (row["account_id"],),
+        ).fetchone()
+        return dict(account_row) if account_row else None
+
+
+def consume_password_reset_token(token: str):
+    with get_conn() as conn:
+        conn.execute("UPDATE password_reset_tokens SET used = 1 WHERE token = ?", (token,))
 
 
 # ---------------------------------------------------------------------------

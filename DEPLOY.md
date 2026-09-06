@@ -175,16 +175,19 @@ Render bouwt en deployt automatisch opnieuw bij elke push naar de
 - **Inloggen geeft "E-mailadres of wachtwoord onjuist" terwijl je zeker weet
   dat het klopt**: zelfde oorzaak als hierboven — het account is verdwenen
   bij de laatste deploy. Draai het curl-commando uit Stap 4 opnieuw.
-- **Wachtwoord vergeten**: er is geen "wachtwoord vergeten"-link op het
-  inlogscherm. Reset het zelf als beheerder:
+- **Wachtwoord vergeten**: gebruik de "Wachtwoord vergeten?"-link op het
+  inlogscherm (`login.html` → `forgot-password.html`) — die mailt een
+  eenmalige resetlink naar het opgegeven adres via de gedeelde Gmail-mailbox.
+  Komt die mail niet aan (bijv. `GOOGLE_SERVICE_ACCOUNT_JSON` staat niet
+  goed, zie hierboven), reset het dan zelf als beheerder:
   ```bash
   curl -X POST https://twikey-platform-backend.onrender.com/api/admin/accounts/reset-password \
     -H "X-Admin-Secret: <jouw ADMIN_SECRET>" \
     -H "Content-Type: application/json" \
     -d '{"login_email":"sales@twikeycampaigns.nl","new_password":"<nieuw wachtwoord>"}'
   ```
-  Log daarna opnieuw in met het nieuwe wachtwoord — oude sessies worden
-  automatisch ongeldig gemaakt.
+  Beide routes loggen daarna oude sessies automatisch uit — log opnieuw in
+  met het nieuwe wachtwoord.
 - **`/api/admin/accounts` geeft altijd 503 "ADMIN_SECRET is niet ingesteld"**:
   controleer bij de backend-service → Environment of `ADMIN_SECRET`
   daadwerkelijk een waarde heeft (niet leeg). Sla op — Render herstart de

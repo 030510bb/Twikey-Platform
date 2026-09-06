@@ -165,6 +165,64 @@ def api_me(account: dict = Depends(get_current_account)):
     return {"account": account}
 
 
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+
+@app.post("/api/auth/forgot-password")
+def api_forgot_password(payload: ForgotPasswordIn):
+    """
+    Self-service 'forgot password' - request step. Always returns the same
+    generic message regardless of whether the e-mail address has an account,
+    so this endpoint can't be used to check which e-mail addresses are
+    registered (account enumeration). If it *does* match an account, a
+    one-time reset link (valid for an hour) is mailed to it via the shared
+    Gmail mailbox.
+    """
+    account = database.get_account_by_email(payload.email)
+    if account:
+        token = database.create_password_reset_token(account["id"])
+        reset_link = f"{FRONTEND_PUBLIC_URL}/reset-password.html?token={token}"
+        body = (
+            f"Hoi,\n\n"
+            f"Er is een wachtwoordreset aangevraagd voor je Twikey Sales Platform-account "
+            f"({account['login_email']}).\n\n"
+            f"Klik op onderstaande link om een nieuw wachtwoord in te stellen. "
+            f"Deze link is 1 uur geldig en werkt maar één keer:\n\n"
+            f"{reset_link}\n\n"
+            f"Heb je dit niet zelf aangevraagd? Dan kun je deze e-mail negeren - "
+            f"er verandert niets aan je account.\n\n"
+            f"- Twikey Sales Platform"
+        )
+        try:
+            send_email(SEND_AS_EMAIL, account["login_email"], "Wachtwoord resetten - Twikey Sales Platform", body)
+        except Exception:
+            # Don't leak Gmail/service-account errors to an unauthenticated
+            # caller, and don't reveal whether the send succeeded - the
+            # generic response below covers both cases.
+            pass
+    return {"message": "Als dit e-mailadres bij ons bekend is, hebben we een resetlink gestuurd."}
+
+
+class ResetPasswordSelfIn(BaseModel):
+    token: str
+    new_password: str
+
+
+@app.post("/api/auth/reset-password")
+def api_reset_password_self(payload: ResetPasswordSelfIn):
+    """Self-service 'forgot password' - completion step: exchange a valid,
+    unused, unexpired token (from the emailed link) for a new password."""
+    account = database.get_account_for_reset_token(payload.token)
+    if not account:
+        raise HTTPException(status_code=400, detail="Deze resetlink is ongeldig, al gebruikt, of verlopen. Vraag een nieuwe aan.")
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Wachtwoord moet minstens 8 tekens zijn.")
+    database.set_password(account["login_email"], payload.new_password)
+    database.consume_password_reset_token(payload.token)
+    return {"success": True}
+
+
 class CreateAccountIn(BaseModel):
     company_name: str
     login_email: EmailStr
@@ -195,11 +253,13 @@ class ResetPasswordIn(BaseModel):
 @app.post("/api/admin/accounts/reset-password", dependencies=[Depends(require_admin_secret)])
 def api_reset_password(payload: ResetPasswordIn):
     """
-    Admin-only password reset. There is no self-service "forgot password"
-    flow (that would need outbound reset-link emails, not built yet) - this
-    is the practical way a forgotten password gets fixed for now: whoever
-    holds ADMIN_SECRET resets it directly. Also invalidates that account's
-    existing sessions.
+    Admin-only password reset. The normal path for a forgotten password is
+    now the self-service flow (POST /api/auth/forgot-password + .../reset-
+    password, wired up to login.html/forgot-password.html/reset-password.html)
+    which mails the account a one-time reset link. This endpoint is the
+    fallback for when that isn't an option - e.g. mail delivery is broken,
+    or the account's mailbox itself is inaccessible. Also invalidates that
+    account's existing sessions.
     """
     if len(payload.new_password) < 8:
         raise HTTPException(status_code=400, detail="Wachtwoord moet minstens 8 tekens zijn.")

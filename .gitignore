@@ -1,0 +1,15 @@
+# Secrets - never commit these
+backend/.env
+backend/service-account.json
+*.json.key
+
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+
+# Local SQLite database (contacts/campaigns/LinkedIn log) - see backend/database.py
+backend/*.db
+
+# OS/editor cruft
+.DS_Store

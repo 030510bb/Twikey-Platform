@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Twikey - Gratis rapport aanvragen</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+    .card {
+        background: white;
+        border-radius: 16px;
+        max-width: 480px;
+        width: 100%;
+        padding: 40px 32px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    }
+    h1 { font-size: 22px; margin-bottom: 8px; color: #1f2937; }
+    p.subtitle { color: #6b7280; font-size: 14px; margin-bottom: 24px; }
+    .input-group { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+    input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 14px;
+    }
+    button {
+        width: 100%;
+        padding: 12px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        margin-top: 8px;
+    }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .thanks { text-align: center; }
+    .thanks .icon { font-size: 48px; margin-bottom: 12px; }
+    .error { color: #dc2626; font-size: 13px; margin-top: 8px; display: none; }
+</style>
+</head>
+<body>
+    <div class="card" id="card">
+        <div id="form-state">
+            <h1 id="offer-title">Je gratis rapport</h1>
+            <p class="subtitle" id="offer-subtitle">Vul je gegevens in en we sturen je de analyse.</p>
+            <form id="lead-form">
+                <div class="input-group">
+                    <label>Naam</label>
+                    <input type="text" id="field-name" required>
+                </div>
+                <div class="input-group">
+                    <label>E-mailadres</label>
+                    <input type="email" id="field-email" required>
+                </div>
+                <div class="input-group">
+                    <label>Bedrijf</label>
+                    <input type="text" id="field-company" required>
+                </div>
+                <button type="submit" id="submit-button">Vraag rapport aan</button>
+                <div class="error" id="error-message"></div>
+            </form>
+        </div>
+        <div class="thanks" id="thanks-state" style="display:none;">
+            <div class="icon">✅</div>
+            <h1>Bedankt!</h1>
+            <p class="subtitle">We hebben je aanvraag ontvangen. Iemand van Twikey neemt snel contact met je op.</p>
+        </div>
+    </div>
+
+    <script>
+        const PRODUCTION_API_BASE = 'https://twikey-platform-backend.onrender.com';
+        const isLocal = location.protocol === 'file:' ||
+            location.hostname === 'localhost' ||
+            location.hostname === '127.0.0.1';
+        const API_BASE = isLocal ? 'http://localhost:8000' : PRODUCTION_API_BASE;
+
+        const params = new URLSearchParams(location.search);
+        const token = params.get('token');
+        const offer = params.get('offer') || 'rapport';
+
+        document.getElementById('offer-title').textContent = 'Je gratis ' + offer;
+
+        document.getElementById('lead-form').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const errorEl = document.getElementById('error-message');
+            errorEl.style.display = 'none';
+
+            if (!token) {
+                errorEl.textContent = 'Geen geldige link (ontbrekende token) - open deze pagina via een link uit een campagne-e-mail.';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            const button = document.getElementById('submit-button');
+            button.disabled = true;
+            button.textContent = 'Bezig...';
+
+            try {
+                const res = await fetch(`${API_BASE}/track/formfill/${encodeURIComponent(token)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: document.getElementById('field-name').value,
+                        email: document.getElementById('field-email').value,
+                        company: document.getElementById('field-company').value,
+                    }),
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.detail || `Serverfout (${res.status})`);
+                }
+                document.getElementById('form-state').style.display = 'none';
+                document.getElementById('thanks-state').style.display = 'block';
+            } catch (err) {
+                errorEl.textContent = 'Er ging iets mis: ' + err.message;
+                errorEl.style.display = 'block';
+                button.disabled = false;
+                button.textContent = 'Vraag rapport aan';
+            }
+        });
+    </script>
+</body>
+</html>

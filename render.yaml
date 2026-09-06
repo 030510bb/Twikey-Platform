@@ -1,0 +1,48 @@
+# Render "Blueprint" file. Render reads this automatically when you connect
+# your GitHub repo and choose "New + -> Blueprint", and sets up both
+# services below in one go. See DEPLOY.md for the full walkthrough.
+services:
+  # The FastAPI backend (Gmail sending/reading).
+  - type: web
+    runtime: docker
+    name: twikey-platform-backend
+    plan: free              # Gratis; slaapt na ~15 min inactiviteit. Zet dit
+                            # om naar "starter" (~$7/maand) zodra je wilt dat
+                            # de backend altijd direct reageert.
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    envVars:
+      - key: SEND_AS_EMAIL
+        value: sales@twikeycampaigns.nl
+      - key: CORS_ORIGINS
+        value: "*"          # Tighten this to your frontend URL after first deploy
+      # Paste the full content of your service-account JSON key file as the
+      # value for this one, in the Render dashboard. Never commit it to git.
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      # Shared secret required (as an X-Admin-Secret header) to create new
+      # customer accounts via POST /api/admin/accounts. Set this to a long
+      # random value in the Render dashboard - never commit the real value
+      # to git. See README.md for the exact curl command that uses it.
+      - key: ADMIN_SECRET
+        sync: false
+      # Used to build the open-tracking pixel and click-tracking links that
+      # get embedded in campaign emails (A/B Test tab). Update these two if
+      # your actual Render service URLs differ from the defaults below.
+      - key: BACKEND_PUBLIC_URL
+        value: https://twikey-platform-backend.onrender.com
+      - key: FRONTEND_PUBLIC_URL
+        value: https://twikey-platform-frontend.onrender.com
+      # NOTE on persistence: contacts/campaigns/LinkedIn-log data lives in a
+      # SQLite file on this service's local disk (see backend/database.py).
+      # Render's free plan disk is EPHEMERAL - that data is wiped on every
+      # new deploy (though it survives sleep/wake). Fine for trying this
+      # out; before relying on it, move to a real database (Render Postgres,
+      # or the Supabase project you already have).
+
+  # The static front-end dashboard.
+  - type: web
+    runtime: static
+    name: twikey-platform-frontend
+    staticPublishPath: ./frontend

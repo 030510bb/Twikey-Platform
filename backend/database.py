@@ -1,5 +1,5 @@
 """
-Lightweight SQLite storage for the Twikey Sales Platform backend.
+Postgres (Supabase) storage for the Twikey Sales Platform backend.
 
 This backs every account's Contacts, A/B Test / Analytics and
 LinkedIn-tracking data, plus the login system itself (accounts, users +
@@ -14,18 +14,14 @@ tenant-scoped table (contacts, campaigns, linkedin_*) is still keyed by
 account_id, not user_id - teammates on the same account share that data by
 design, they aren't isolated from each other.
 
-Why SQLite: it needs zero external services or credentials, so everything in
-this project still runs with just "GOOGLE_SERVICE_ACCOUNT_JSON" configured -
-no extra account to create before you can try this out.
-
-Important limitation on Render's free plan: the free web service's disk is
-ephemeral. Data written here survives restarts/sleep, but is WIPED on every
-new deploy (e.g. every `git push`) - including accounts/passwords. That is
-fine for testing, but before you rely on this for real customer data, move
-to a real database - Render's Postgres (a free instance is available for the
-first 30 days) or the Supabase project you already have are both a drop-in
-fit for the table layout below. This file isolates all SQL in one place
-specifically to make that swap easy later.
+Why Postgres/Supabase (and not SQLite anymore): this used to be a local
+SQLite file, which was simple but had a real problem on Render's free plan -
+that disk is ephemeral and gets wiped on every deploy, taking every account,
+password and contact with it. Supabase's Postgres is a normal always-on
+database reachable over the network, so none of that data ever disappears
+just because you pushed new code. Set DATABASE_URL (see README.md/DEPLOY.md
+for where to find that in your Supabase project) and everything below talks
+to it instead.
 
 Multi-tenancy: every account (= one customer) only ever sees its own
 contacts/campaigns/LinkedIn data - every query below that touches those
@@ -39,25 +35,32 @@ customer) - a real next step, not built here.
 
 import os
 import secrets
-import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
+import psycopg2
+import psycopg2.extras
+import psycopg2.pool
 
-DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "twikey_platform.db"))
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 SESSION_LIFETIME_DAYS = 30
 
+# Postgres dialect (this used to be SQLite - see the module docstring for
+# why that changed). Differences from the old SQLite version: SERIAL instead
+# of INTEGER PRIMARY KEY AUTOINCREMENT for auto-incrementing ids; everything
+# else (table/column names, UNIQUE/REFERENCES constraints) is unchanged, so
+# no data-shape/behaviour changes ripple into the rest of this file.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     company_name TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
@@ -81,7 +84,7 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 );
 
 CREATE TABLE IF NOT EXISTS contacts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
     first_name TEXT NOT NULL,
     last_name TEXT DEFAULT '',
@@ -93,7 +96,7 @@ CREATE TABLE IF NOT EXISTS contacts (
 );
 
 CREATE TABLE IF NOT EXISTS campaigns (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
     name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'draft',
@@ -102,7 +105,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
 );
 
 CREATE TABLE IF NOT EXISTS campaign_variants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     campaign_id INTEGER NOT NULL REFERENCES campaigns(id),
     group_label TEXT NOT NULL,
     offer_name TEXT NOT NULL,
@@ -111,7 +114,7 @@ CREATE TABLE IF NOT EXISTS campaign_variants (
 );
 
 CREATE TABLE IF NOT EXISTS campaign_recipients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     campaign_id INTEGER NOT NULL REFERENCES campaigns(id),
     variant_id INTEGER NOT NULL REFERENCES campaign_variants(id),
     contact_id INTEGER NOT NULL REFERENCES contacts(id),
@@ -124,7 +127,7 @@ CREATE TABLE IF NOT EXISTS campaign_recipients (
 );
 
 CREATE TABLE IF NOT EXISTS linkedin_templates (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
     label TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -132,7 +135,7 @@ CREATE TABLE IF NOT EXISTS linkedin_templates (
 );
 
 CREATE TABLE IF NOT EXISTS linkedin_outreach (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
     contact_id INTEGER REFERENCES contacts(id),
     contact_name TEXT NOT NULL,
@@ -171,16 +174,77 @@ DEFAULT_LINKEDIN_TEMPLATES = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Connection handling
+#
+# The rest of this file was originally written against sqlite3, where
+# conn.execute(sql, params) is a convenience shorthand that creates a cursor,
+# runs the query, and returns it - and "?" is the placeholder style. Rather
+# than rewrite every single query/call-site for psycopg2 (a much bigger,
+# riskier diff), _Conn below reproduces that same shorthand on top of a
+# psycopg2 connection, translating "?" -> "%s" and returning dict-like rows
+# (via RealDictCursor) so `row["some_column"]` keeps working unchanged.
+# ---------------------------------------------------------------------------
+
+_pool = None
+
+
+def _get_pool():
+    global _pool
+    if _pool is None:
+        if not DATABASE_URL:
+            raise RuntimeError(
+                "DATABASE_URL is not set. This backend stores its data in Postgres "
+                "(Supabase) now - see the 'Database (Supabase)' section in README.md "
+                "for where to find your connection string and how to set it."
+            )
+        _pool = psycopg2.pool.ThreadedConnectionPool(1, 10, dsn=DATABASE_URL)
+    return _pool
+
+
+class _Conn:
+    def __init__(self, pg_conn):
+        self._conn = pg_conn
+
+    def execute(self, sql, params=()):
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql.replace("?", "%s"), params)
+        return cur
+
+    def executemany(self, sql, seq_of_params):
+        cur = self._conn.cursor()
+        cur.executemany(sql.replace("?", "%s"), list(seq_of_params))
+        return cur
+
+    def executescript(self, sql):
+        # No "?" placeholders in SCHEMA, and psycopg2 sends a param-less
+        # execute() as a simple query, which Postgres happily runs as
+        # multiple ";"-separated statements in one call - same effect as
+        # sqlite3's executescript().
+        cur = self._conn.cursor()
+        cur.execute(sql)
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    pool = _get_pool()
+    pg_conn = pool.getconn()
+    conn = _Conn(pg_conn)
     try:
         yield conn
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        conn.close()
+        pool.putconn(pg_conn)
 
 
 def init_db():
@@ -208,15 +272,15 @@ def create_account(company_name: str, admin_email: str, admin_password: str) -> 
     password_hash = bcrypt.hashpw(admin_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO accounts (company_name, created_at) VALUES (?, ?)",
+            "INSERT INTO accounts (company_name, created_at) VALUES (?, ?) RETURNING id",
             (company_name, now_iso()),
         )
-        account_id = cur.lastrowid
+        account_id = cur.fetchone()["id"]
         cur = conn.execute(
-            "INSERT INTO users (account_id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO users (account_id, email, password_hash, created_at) VALUES (?, ?, ?, ?) RETURNING id",
             (account_id, admin_email.lower(), password_hash, now_iso()),
         )
-        user_id = cur.lastrowid
+        user_id = cur.fetchone()["id"]
         conn.executemany(
             "INSERT INTO linkedin_templates (account_id, label, title, body) VALUES (?, ?, ?, ?)",
             [(account_id, label, title, body) for label, title, body in DEFAULT_LINKEDIN_TEMPLATES],
@@ -236,10 +300,10 @@ def create_user(account_id: int, email: str, password: str) -> dict:
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO users (account_id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO users (account_id, email, password_hash, created_at) VALUES (?, ?, ?, ?) RETURNING id",
             (account_id, email.lower(), password_hash, now_iso()),
         )
-        user_id = cur.lastrowid
+        user_id = cur.fetchone()["id"]
         row = conn.execute("SELECT id, account_id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
         return dict(row)
 
@@ -286,11 +350,12 @@ def delete_user(account_id: int, user_id: int) -> bool:
 
 def ensure_seed_account():
     """
-    Recreate a starter account automatically if it's missing - the practical
-    fix for Render's free-tier ephemeral disk (see the module docstring):
-    every `git push`/deploy wipes this SQLite file, including all accounts,
-    so without this a customer is locked out after every deploy until
-    someone remembers to re-run the admin bootstrap curl.
+    Optionally create a starter account automatically on startup if it's
+    missing - handy so a fresh deployment doesn't need the admin bootstrap
+    curl before anyone can log in. Now that data lives in Supabase Postgres
+    (see the module docstring), this no longer runs on every deploy to
+    fight an ephemeral disk - it's just a one-time convenience for the very
+    first boot against a brand new, empty database.
 
     Controlled by three env vars, read directly here (not passed in) so this
     can be called from anywhere without threading them through:
@@ -299,11 +364,8 @@ def ensure_seed_account():
       - SEED_ACCOUNT_COMPANY_NAME: optional, defaults to "Twikey Campaigns".
 
     Deliberately only creates the account if that e-mail doesn't already
-    exist - never resets an existing password. That matters once someone
-    has actually changed their password (e.g. via the reset-password flow):
-    a real deploy shouldn't silently revert it back to the seed value. Once
-    a real database replaces SQLite (see the module docstring), this becomes
-    unnecessary and can be removed.
+    exist - never resets an existing password, so it's always safe to leave
+    these env vars set permanently.
     """
     email = os.environ.get("SEED_ACCOUNT_EMAIL")
     password = os.environ.get("SEED_ACCOUNT_PASSWORD")
@@ -490,9 +552,10 @@ def list_contacts(account_id: int) -> list:
 
 def count_contacts(account_id: int) -> int:
     with get_conn() as conn:
-        return conn.execute(
-            "SELECT COUNT(*) FROM contacts WHERE account_id = ?", (account_id,)
-        ).fetchone()[0]
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM contacts WHERE account_id = ?", (account_id,)
+        ).fetchone()
+        return row["n"]
 
 
 # ---------------------------------------------------------------------------
@@ -508,21 +571,21 @@ def create_campaign(account_id: int, name: str, variants: list) -> dict:
     """
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO campaigns (account_id, name, status, created_at) VALUES (?, ?, 'draft', ?)",
+            "INSERT INTO campaigns (account_id, name, status, created_at) VALUES (?, ?, 'draft', ?) RETURNING id",
             (account_id, name, now_iso()),
         )
-        campaign_id = cur.lastrowid
+        campaign_id = cur.fetchone()["id"]
 
         variant_ids = []
         for v in variants:
             vcur = conn.execute(
                 """
                 INSERT INTO campaign_variants (campaign_id, group_label, offer_name, subject_template, body_template)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?) RETURNING id
                 """,
                 (campaign_id, v["group_label"], v["offer_name"], v["subject_template"], v["body_template"]),
             )
-            variant_ids.append(vcur.lastrowid)
+            variant_ids.append(vcur.fetchone()["id"])
 
         contacts = conn.execute(
             "SELECT id FROM contacts WHERE account_id = ? ORDER BY id", (account_id,)
@@ -702,11 +765,12 @@ def log_linkedin_action(account_id: int, contact_name: str, action: str, templat
         cur = conn.execute(
             """
             INSERT INTO linkedin_outreach (account_id, contact_id, contact_name, action, template_label, note, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
             """,
             (account_id, contact_id, contact_name, action, template_label, note, now_iso()),
         )
-        row = conn.execute("SELECT * FROM linkedin_outreach WHERE id = ?", (cur.lastrowid,)).fetchone()
+        new_id = cur.fetchone()["id"]
+        row = conn.execute("SELECT * FROM linkedin_outreach WHERE id = ?", (new_id,)).fetchone()
         return dict(row)
 
 

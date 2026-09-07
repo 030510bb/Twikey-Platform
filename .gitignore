@@ -8,7 +8,7 @@ backend/venv/
 backend/__pycache__/
 backend/*.pyc
 
-# Local SQLite database (contacts/campaigns/LinkedIn log) - see backend/database.py
+# Any local SQLite file from before the Supabase/Postgres migration - see backend/database.py
 backend/*.db
 
 # OS/editor cruft

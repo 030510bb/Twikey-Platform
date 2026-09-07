@@ -13,6 +13,14 @@ services:
     dockerContext: ./backend
     healthCheckPath: /api/health
     envVars:
+      # Postgres connection string for your Supabase project (Project
+      # Settings -> Database -> Connection string -> URI). Required - the
+      # backend stores everything here now (accounts, contacts, campaigns,
+      # LinkedIn-log) instead of the old local SQLite file, so this data no
+      # longer disappears on every deploy. See README.md, "Database
+      # (Supabase)". Never commit the real value to git.
+      - key: DATABASE_URL
+        sync: false
       - key: SEND_AS_EMAIL
         value: sales@twikeycampaigns.nl
       - key: CORS_ORIGINS
@@ -27,13 +35,11 @@ services:
       # to git. See README.md for the exact curl command that uses it.
       - key: ADMIN_SECRET
         sync: false
-      # Optional: automatically (re)create this one account on every startup
-      # if it doesn't already exist yet. Fixes the practical annoyance of
-      # the ephemeral disk below wiping accounts on every deploy - set these
-      # once and you never have to re-run the admin bootstrap curl again.
-      # Leave both unset to disable this (no seed account created). Only
-      # ever creates the account if missing - never resets an existing
-      # password, so changing your password later sticks across deploys.
+      # Optional: automatically create this one account on first startup if
+      # it doesn't exist yet, so you don't have to run the admin bootstrap
+      # curl by hand. Only ever creates the account if missing - never
+      # resets an existing password - so it's safe to leave these set
+      # permanently. Leave both unset to disable this entirely.
       - key: SEED_ACCOUNT_EMAIL
         sync: false
       - key: SEED_ACCOUNT_PASSWORD
@@ -45,12 +51,10 @@ services:
         value: https://twikey-platform-backend.onrender.com
       - key: FRONTEND_PUBLIC_URL
         value: https://twikey-platform-frontend.onrender.com
-      # NOTE on persistence: contacts/campaigns/LinkedIn-log data lives in a
-      # SQLite file on this service's local disk (see backend/database.py).
-      # Render's free plan disk is EPHEMERAL - that data is wiped on every
-      # new deploy (though it survives sleep/wake). Fine for trying this
-      # out; before relying on it, move to a real database (Render Postgres,
-      # or the Supabase project you already have).
+      # NOTE on persistence: contacts/campaigns/accounts/LinkedIn-log data
+      # lives in Supabase Postgres (DATABASE_URL above, see
+      # backend/database.py) - not on this service's own disk, so it
+      # survives every deploy/restart, unlike the old local-SQLite setup.
 
   # The static front-end dashboard.
   - type: web

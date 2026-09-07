@@ -33,9 +33,9 @@ en `.gitignore` die al in dit project zitten.
   zonder dat iemand handmatig hoeft in te loggen. Kan zowel platte tekst als
   HTML-mail versturen (het laatste is nodig voor de open-tracking pixel en
   click-tracked links in campagnes).
-- `backend/database.py` — alle opslag (contacten, campagnes, tracking,
-  LinkedIn-log) in een lokaal SQLite-bestand. Zie de opmerking daar over de
-  beperking hiervan op Render's gratis laag (verderop ook in `DEPLOY.md`).
+- `backend/database.py` — alle opslag (accounts/gebruikers, contacten,
+  campagnes, tracking, LinkedIn-log) in Postgres via Supabase — zie
+  "Database (Supabase)" hieronder voor hoe je dat instelt.
 - `backend/validation.py` — de regel-gebaseerde berichtvalidatie (spam-
   woorden, lengte, personalisatie-placeholders, een lichte grammatica-
   heuristiek, professionele toon, compliance/PII-patronen, platform-
@@ -109,22 +109,19 @@ niet per ongeluk door een buitenstaander gebruikt worden.
 wachtwoord van hierboven. Je komt dan op `dashboard.html` met een sessie die
 30 dagen geldig blijft (opgeslagen als bearer-token in `localStorage`).
 
-**Belangrijk — SQLite is ephemeral op Render's gratis laag**: net als
-contacten en campagnes staan accounts en wachtwoorden in hetzelfde
-SQLite-bestand (zie `backend/database.py`). Dat betekent dat **elk nieuw
-account ook verdwijnt bij elke nieuwe deploy** op de gratis laag. Na een
-deploy moet je het account hierboven dus opnieuw aanmaken met dezelfde curl
-(of je wachtwoord opnieuw kiezen) voordat iemand kan inloggen. Zie de
-opmerking in `backend/database.py` en de "Volgende stappen" hieronder.
+Accounts en wachtwoorden staan (net als contacten en campagnes) in je
+Supabase Postgres-database (zie "Database (Supabase)" hierboven) — die
+verdwijnen dus niet meer bij een herstart of nieuwe deploy, in tegenstelling
+tot de oude lokale-SQLite-opzet.
 
-**Voorkom dat je account elke deploy kwijtraakt.** Zet in Render (of lokaal
-in `.env`) de variabelen `SEED_ACCOUNT_EMAIL` en `SEED_ACCOUNT_PASSWORD` —
-dan wordt dat account bij elke opstart automatisch opnieuw aangemaakt als
-het (door de ephemere schijf) verdwenen is, zonder dat je de curl uit stap 4
-telkens opnieuw hoeft te draaien. Verander je je wachtwoord later zelf (via
+**Optioneel — automatisch een eerste account aanmaken.** Zet in Render (of
+lokaal in `.env`) de variabelen `SEED_ACCOUNT_EMAIL` en
+`SEED_ACCOUNT_PASSWORD` — dan wordt dat account bij de eerste opstart tegen
+een lege database automatisch aangemaakt, zonder dat je de curl hierboven
+handmatig hoeft te draaien. Verander je je wachtwoord later zelf (via
 inloggen of de reset-flow), dan blijft dat gewoon staan — de seed maakt het
 account alleen aan als het nog niet bestaat, hij zet een bestaand wachtwoord
-nooit terug.
+nooit terug. Prima om permanent ingesteld te laten staan.
 
 **Wachtwoord vergeten?** Er staat een "Wachtwoord vergeten?"-link op
 `login.html`. Die stuurt naar `forgot-password.html`, waar je een e-mailadres
@@ -231,6 +228,27 @@ geldig token geeft elk 🔒-endpoint een 401 terug.
   (nodig om de domeinbrede delegatie te autoriseren)
 - Het domein moet geverifieerd zijn in Google Workspace (zonder verificatie
   kun je domeinbrede delegatie niet instellen)
+- Een gratis [Supabase](https://supabase.com)-project (de database — zie
+  "Database (Supabase)" hieronder)
+
+## Database (Supabase)
+
+De backend slaat alles op in Postgres via Supabase — geen lokaal bestand
+meer, dus er verdwijnt ook niets meer bij een herstart of nieuwe deploy.
+
+1. Maak (of gebruik een bestaand) project op
+   [supabase.com](https://supabase.com/dashboard) — de gratis laag is
+   voldoende.
+2. Ga naar **Project Settings → Database → Connection string**, kies **URI**,
+   en kopieer die. Vul het wachtwoord van je database in op de plek van
+   `[YOUR-PASSWORD]` (dat heb je zelf gekozen bij het aanmaken van het
+   project, of kun je op diezelfde pagina resetten).
+3. Zet die volledige URI als `DATABASE_URL` in `backend/.env` (lokaal, zie
+   Stap 3 hieronder) en/of in Render (zie `DEPLOY.md`).
+
+Je hoeft zelf geen tabellen aan te maken — `backend/database.py` doet dat
+automatisch (`CREATE TABLE IF NOT EXISTS ...`) zodra de backend voor het
+eerst opstart met een geldige `DATABASE_URL`.
 
 ## Stap 1 — Google Cloud: service-account aanmaken
 
@@ -272,8 +290,11 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# open .env en zet GOOGLE_SERVICE_ACCOUNT_FILE op het pad naar het
-# gedownloade JSON-sleutelbestand uit stap 1.4, bijv.:
+# open .env en vul in:
+# - DATABASE_URL: de Postgres-connection-string van je Supabase-project
+#   (zie "Database (Supabase)" hierboven)
+# - GOOGLE_SERVICE_ACCOUNT_FILE: het pad naar het gedownloade
+#   JSON-sleutelbestand uit stap 1.4, bijv.:
 #   GOOGLE_SERVICE_ACCOUNT_FILE=/pad/naar/service-account.json
 
 uvicorn app:app --reload --port 8000
@@ -329,9 +350,6 @@ alleen goed zodra je ze ook op Render hebt ingesteld — zie `DEPLOY.md`.
 
 ## Volgende stappen (niet in deze levering)
 
-- Overstappen van SQLite naar een echte database (Postgres/Supabase) zodra
-  je op Render's gratis laag draait en de campagnedata niet meer bij elke
-  deploy kwijt wilt raken (zie de opmerking in `backend/database.py`).
 - Automatisch gegenereerde rapporten op de lead-magnet-pagina (nu toont die
   pagina alleen een formulier; het rapport zelf — DSO-score, cashflow-
   berekening, etc. — wordt nog niet automatisch gegenereerd).

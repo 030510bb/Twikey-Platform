@@ -16,6 +16,9 @@ wel al met GitHub werkt (zoals bij Claimate). We gebruiken **Render**
   delegatie-gedeelte uit `README.md` af (stappen 1 en 2 daar). Zonder een
   werkend service-account heeft deployen weinig zin — je krijgt dan een
   werkende website die alleen foutmeldingen teruggeeft.
+- Rond ook "Database (Supabase)" in `README.md` af — je hebt de
+  connection-string van je Supabase-project nodig bij stap 2 hieronder. De
+  backend start niet op zonder een geldige `DATABASE_URL`.
 - Een GitHub-account (heb je al) en een Render-account (gratis aan te maken
   op [render.com](https://render.com), bijv. met "Sign up with GitHub").
 
@@ -52,42 +55,41 @@ meegepusht — die horen nooit in git te staan.
    `twikey-platform`-repo.
 4. Render herkent automatisch het `render.yaml`-bestand en toont een
    overzicht van de twee services die het gaat aanmaken.
-5. Bij het veld **GOOGLE_SERVICE_ACCOUNT_JSON** moet je zelf een waarde
+5. Bij het veld **DATABASE_URL** vul je de Postgres-connection-string van je
+   Supabase-project in (zie "Database (Supabase)" in `README.md` voor waar
+   je die vindt). Zonder dit veld start de backend niet op.
+6. Bij het veld **GOOGLE_SERVICE_ACCOUNT_JSON** moet je zelf een waarde
    invullen (Render vraagt hier expliciet om, want dit is een geheime
    waarde die niet in `render.yaml` staat): open het JSON-sleutelbestand dat
    je bij Google Cloud hebt gedownload in een teksteditor, kopieer de
    **volledige inhoud** (van `{` tot en met de laatste `}`), en plak dat
    in dit veld.
-6. Bij het veld **ADMIN_SECRET** vul je zelf een lange, willekeurige waarde
+7. Bij het veld **ADMIN_SECRET** vul je zelf een lange, willekeurige waarde
    in (bijv. gegenereerd met `openssl rand -hex 32`). Bewaar deze waarde
    ergens veilig (wachtwoordmanager) — je hebt hem nodig om je eerste
    klantaccount aan te maken (stap 4 hieronder).
-7. Optioneel maar aanbevolen — voorkomt dat je steeds opnieuw moet inloggen
-   na elke deploy: zet ook **SEED_ACCOUNT_EMAIL** en **SEED_ACCOUNT_PASSWORD**
-   (bijv. `sales@twikeycampaigns.nl` en hetzelfde wachtwoord dat je in stap 4
-   gebruikt). Dat account wordt dan bij elke opstart automatisch opnieuw
-   aangemaakt als het (door de ephemere schijf hieronder) verdwenen is — je
-   hoeft de curl uit stap 4 dan nooit meer te herhalen na een deploy. Een
-   wachtwoord dat je later zelf wijzigt, blijft gewoon staan.
-8. Klik op **Apply** / **Create**. Render bouwt en start nu beide services —
+8. Optioneel — bespaart je de curl uit stap 4 bij de allereerste keer: zet
+   ook **SEED_ACCOUNT_EMAIL** en **SEED_ACCOUNT_PASSWORD** (bijv.
+   `sales@twikeycampaigns.nl` en hetzelfde wachtwoord dat je in stap 4
+   gebruikt). Dat account wordt dan bij de eerste opstart tegen een lege
+   database automatisch aangemaakt. Prima om permanent ingesteld te laten
+   staan — een wachtwoord dat je later zelf wijzigt, blijft gewoon staan.
+9. Klik op **Apply** / **Create**. Render bouwt en start nu beide services —
    dit duurt een paar minuten bij de eerste keer.
-9. Controleer (of stel achteraf in bij de backend-service → **Environment**)
-   dat `BACKEND_PUBLIC_URL` en `FRONTEND_PUBLIC_URL` overeenkomen met de
-   werkelijke URLs die Render aan je services heeft gegeven (zichtbaar bovenin
-   elke service-pagina). Render voegt soms een suffix toe als de standaardnaam
-   al bezet is — als dat zo is, moeten deze twee variabelen worden aangepast,
-   anders wijzen de open/click-tracking-links in campagnemails en de knop
-   "Quick Start" naar de verkeerde URL.
+10. Controleer (of stel achteraf in bij de backend-service → **Environment**)
+    dat `BACKEND_PUBLIC_URL` en `FRONTEND_PUBLIC_URL` overeenkomen met de
+    werkelijke URLs die Render aan je services heeft gegeven (zichtbaar bovenin
+    elke service-pagina). Render voegt soms een suffix toe als de standaardnaam
+    al bezet is — als dat zo is, moeten deze twee variabelen worden aangepast,
+    anders wijzen de open/click-tracking-links in campagnemails en de knop
+    "Quick Start" naar de verkeerde URL.
 
-**Let op — data-persistentie:** contacten, campagnes, accounts/wachtwoorden
-en de LinkedIn-log worden allemaal opgeslagen in hetzelfde SQLite-bestand op
-de lokale schijf van de backend-service. Op Render's gratis laag is die
-schijf **ephemeral**: de data blijft staan bij een herstart/slaapstand, maar
-wordt **gewist bij elke nieuwe `git push`/deploy** — dus ook elk klantaccount
-dat je hebt aangemaakt. Prima om het platform mee uit te proberen; zodra je
-er echt op vertrouwt, verplaats de opslag naar een echte database (Render
-Postgres, of de Supabase die je al hebt) — zie de opmerking bovenin
-`backend/database.py`.
+**Data-persistentie:** contacten, campagnes, accounts/wachtwoorden en de
+LinkedIn-log worden allemaal opgeslagen in je Supabase Postgres-database
+(`DATABASE_URL` hierboven) — niet meer op de eigen schijf van de
+backend-service. Dat betekent dat niets verdwijnt bij een herstart,
+slaapstand, of nieuwe `git push`/deploy, in tegenstelling tot de oude
+lokale-SQLite-opzet.
 
 ## Stap 3 — URLs opzoeken en testen
 
@@ -137,14 +139,11 @@ maakt een heel nieuw, apart account/tenant aan (bijv. voor een andere klant),
 terwijl de Team-tab een extra login toevoegt aan het account waar je al
 op bent ingelogd.
 
-**Zonder `SEED_ACCOUNT_EMAIL`/`SEED_ACCOUNT_PASSWORD` (stap 2.7) moet je dit
-commando opnieuw draaien na elke nieuwe deploy** (zie de opmerking over
-ephemere opslag hierboven) — anders krijg je op het inlogscherm
-"E-mailadres of wachtwoord onjuist", simpelweg omdat het account niet meer
-bestaat. Heb je die twee variabelen wél ingesteld, dan gebeurt dit
-automatisch bij elke opstart en hoef je deze curl maar één keer te draaien.
-Bewaar het commando sowieso ergens waar je het makkelijk terugvindt, voor
-als je ooit een tweede klantaccount aanmaakt.
+Dit account blijft nu gewoon bestaan, ook na een herstart of nieuwe deploy —
+je hoeft deze curl dus maar één keer te draaien (tenzij je `SEED_ACCOUNT_*`
+had ingesteld, dan gebeurde dat zelfs automatisch). Bewaar het commando
+sowieso ergens waar je het makkelijk terugvindt, voor als je ooit een tweede
+klantaccount aanmaakt.
 
 ## Stap 5 — CORS aanscherpen (aanbevolen, niet verplicht)
 
@@ -186,13 +185,23 @@ Render bouwt en deployt automatisch opnieuw bij elke push naar de
   `BACKEND_PUBLIC_URL`/`FRONTEND_PUBLIC_URL` op de backend-service kloppen
   niet met de echte Render-URLs. Zet ze gelijk aan wat je bovenin de service-
   pagina's ziet staan, en launch de campagne opnieuw.
-- **Contacten/campagnes zijn plotseling verdwenen**: normaal gedrag op de
-  gratis laag — de SQLite-data wordt bij elke nieuwe deploy gewist (zie de
-  opmerking bij Stap 2). Geen bug; verplaats de opslag naar een echte
-  database zodra dit hindert.
+- **Contacten/campagnes/accounts zijn plotseling verdwenen**: zou nu niet
+  meer moeten gebeuren, want die data staat in Supabase, niet meer op de
+  ephemere schijf van de backend-service. Check eerst of `DATABASE_URL` op
+  de backend-service nog naar hetzelfde Supabase-project wijst (bijv. per
+  ongeluk aangepast, of gewijzigd database-wachtwoord in Supabase zonder dat
+  hier bij te werken) — dat zou een lege of onbereikbare database opleveren.
+- **Backend start niet op / crasht meteen met een `DATABASE_URL`-foutmelding
+  in de logs**: `DATABASE_URL` staat niet of onjuist ingesteld op de
+  backend-service → **Environment**. Kopieer de connection-string opnieuw
+  vanuit Supabase (Project Settings → Database → Connection string → URI) en
+  vul het echte database-wachtwoord in op de plek van `[YOUR-PASSWORD]`.
 - **Inloggen geeft "E-mailadres of wachtwoord onjuist" terwijl je zeker weet
-  dat het klopt**: zelfde oorzaak als hierboven — het account is verdwenen
-  bij de laatste deploy. Draai het curl-commando uit Stap 4 opnieuw.
+  dat het klopt**: meestal gewoon een typefout, of je hebt het wachtwoord
+  intussen via de reset-flow gewijzigd. Als het account recent nooit is
+  aangemaakt (nieuwe Supabase-database, of `DATABASE_URL` per ongeluk naar
+  een ander/leeg project gewezen), draai dan het curl-commando uit Stap 4
+  opnieuw.
 - **Wachtwoord vergeten**: gebruik de "Wachtwoord vergeten?"-link op het
   inlogscherm (`login.html` → `forgot-password.html`) — die mailt een
   eenmalige resetlink naar het opgegeven adres via de gedeelde Gmail-mailbox.

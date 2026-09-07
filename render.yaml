@@ -27,6 +27,17 @@ services:
       # to git. See README.md for the exact curl command that uses it.
       - key: ADMIN_SECRET
         sync: false
+      # Optional: automatically (re)create this one account on every startup
+      # if it doesn't already exist yet. Fixes the practical annoyance of
+      # the ephemeral disk below wiping accounts on every deploy - set these
+      # once and you never have to re-run the admin bootstrap curl again.
+      # Leave both unset to disable this (no seed account created). Only
+      # ever creates the account if missing - never resets an existing
+      # password, so changing your password later sticks across deploys.
+      - key: SEED_ACCOUNT_EMAIL
+        sync: false
+      - key: SEED_ACCOUNT_PASSWORD
+        sync: false
       # Used to build the open-tracking pixel and click-tracking links that
       # get embedded in campaign emails (A/B Test tab). Update these two if
       # your actual Render service URLs differ from the defaults below.

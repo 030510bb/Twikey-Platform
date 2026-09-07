@@ -493,6 +493,7 @@
             <button class="tab-button" onclick="switchTab('validation')">🔍 Validation</button>
             <button class="tab-button" onclick="switchTab('abtest')">🧪 A/B Test</button>
             <button class="tab-button" onclick="switchTab('analytics')">📈 Analytics</button>
+            <button class="tab-button" onclick="switchTab('team')">👥 Team</button>
         </div>
 
         <!-- TAB 1: DASHBOARD -->
@@ -914,6 +915,40 @@
                 <button class="button button-primary" id="analytics-round2-button" style="display:none;" onclick="launchRound2()">🚀 Launch Round 2 with Winner</button>
             </div>
         </div>
+
+        <div id="team" class="tab-content">
+            <div class="card">
+                <h2><span class="icon">➕</span>Teamlid uitnodigen</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Een teamlid krijgt een eigen inlog (e-mail + wachtwoord), maar
+                    ziet en werkt in dezelfde contacten, campagnes en LinkedIn-log
+                    als jij — er is geen aparte data per teamlid, alleen per account.
+                </p>
+                <div id="team-invite-alert"></div>
+                <div class="input-group">
+                    <label>E-mailadres</label>
+                    <input type="email" id="team-invite-email" placeholder="collega@bedrijf.nl">
+                </div>
+                <button class="button button-primary" onclick="inviteTeammate()">Uitnodiging versturen</button>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">👥</span>Teamleden</h2>
+                <div id="team-list-alert"></div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>E-mailadres</th>
+                            <th>Lid sinds</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="team-users-body">
+                        <tr><td colspan="3" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -1022,6 +1057,9 @@
             }
             if (tabName === 'dashboard') {
                 loadDashboardStats();
+            }
+            if (tabName === 'team') {
+                loadTeamUsers();
             }
         }
 
@@ -1154,6 +1192,78 @@
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
             return data;
+        }
+
+        async function apiDelete(path) {
+            const res = await fetch(`${API_BASE}${path}`, {
+                method: 'DELETE',
+                headers: authHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+            return data;
+        }
+
+        // --- Team (teammates sharing this account's data) ------------------
+
+        function teamAlert(elId, message, kind) {
+            const el = document.getElementById(elId);
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        async function loadTeamUsers() {
+            const tbody = document.getElementById('team-users-body');
+            tbody.innerHTML = '<tr><td colspan="3" style="color:#666;">Laden...</td></tr>';
+            try {
+                const account = JSON.parse(localStorage.getItem(AUTH_ACCOUNT_KEY) || '{}');
+                const data = await apiGet('/api/team/users');
+                if (!data.users.length) {
+                    tbody.innerHTML = '<tr><td colspan="3" style="color:#666;">Nog geen teamleden.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.users.map(u => {
+                    const since = new Date(u.created_at).toLocaleDateString('nl-NL');
+                    const isSelf = account.user_id === u.id;
+                    const removeBtn = isSelf
+                        ? '<span style="color:#999;">(jij)</span>'
+                        : `<button class="button button-secondary" style="margin-top:0; color:#b91c1c;" onclick="removeTeammate(${u.id}, '${u.email.replace(/'/g, "\\'")}')">Verwijderen</button>`;
+                    return `<tr><td>${u.email}</td><td>${since}</td><td>${removeBtn}</td></tr>`;
+                }).join('');
+            } catch (err) {
+                teamAlert('team-list-alert', `Kon teamleden niet laden: ${err.message}`, 'warning');
+                tbody.innerHTML = '<tr><td colspan="3" style="color:#666;">-</td></tr>';
+            }
+        }
+
+        async function inviteTeammate() {
+            const emailEl = document.getElementById('team-invite-email');
+            const email = emailEl.value.trim();
+            teamAlert('team-invite-alert', '', '');
+            if (!email) {
+                teamAlert('team-invite-alert', 'Vul een e-mailadres in.', 'warning');
+                return;
+            }
+            try {
+                await apiPost('/api/team/invite', { email });
+                teamAlert('team-invite-alert', `Uitnodiging verstuurd naar ${email} - ze ontvangen een e-mail om hun eigen wachtwoord in te stellen.`, 'success');
+                emailEl.value = '';
+                loadTeamUsers();
+            } catch (err) {
+                teamAlert('team-invite-alert', `Uitnodigen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function removeTeammate(userId, email) {
+            if (!confirm(`Weet je zeker dat je ${email} wilt verwijderen als teamlid?`)) return;
+            teamAlert('team-list-alert', '', '');
+            try {
+                await apiDelete(`/api/team/users/${userId}`);
+                teamAlert('team-list-alert', `${email} is verwijderd als teamlid.`, 'success');
+                loadTeamUsers();
+            } catch (err) {
+                teamAlert('team-list-alert', `Verwijderen mislukt: ${err.message}`, 'warning');
+            }
         }
 
         // --- Dashboard ---------------------------------------------------

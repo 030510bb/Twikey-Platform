@@ -53,7 +53,8 @@ en `.gitignore` die al in dit project zitten.
 - `frontend/dashboard.html` — het eigenlijke dashboard (alle tabs), met echte
   `fetch()`-aanroepen op alle tabs in plaats van nep-cijfers. Toont alleen
   gegevens van het ingelogde account en stuurt niet-ingelogde bezoekers terug
-  naar `login.html`.
+  naar `login.html`. Bevat ook de Team-tab (teamleden uitnodigen/verwijderen —
+  zie "Teamleden toevoegen" hieronder).
 - `frontend/lead-magnet.html` — een kleine landingspagina die de campagne-
   links naar toe leiden: toont de aangeboden lead magnet en een kort
   formulier, dat bij versturen een "form fill"-event registreert voor de
@@ -116,6 +117,15 @@ deploy moet je het account hierboven dus opnieuw aanmaken met dezelfde curl
 (of je wachtwoord opnieuw kiezen) voordat iemand kan inloggen. Zie de
 opmerking in `backend/database.py` en de "Volgende stappen" hieronder.
 
+**Voorkom dat je account elke deploy kwijtraakt.** Zet in Render (of lokaal
+in `.env`) de variabelen `SEED_ACCOUNT_EMAIL` en `SEED_ACCOUNT_PASSWORD` —
+dan wordt dat account bij elke opstart automatisch opnieuw aangemaakt als
+het (door de ephemere schijf) verdwenen is, zonder dat je de curl uit stap 4
+telkens opnieuw hoeft te draaien. Verander je je wachtwoord later zelf (via
+inloggen of de reset-flow), dan blijft dat gewoon staan — de seed maakt het
+account alleen aan als het nog niet bestaat, hij zet een bestaand wachtwoord
+nooit terug.
+
 **Wachtwoord vergeten?** Er staat een "Wachtwoord vergeten?"-link op
 `login.html`. Die stuurt naar `forgot-password.html`, waar je een e-mailadres
 invult; de backend mailt (via de gedeelde Gmail-mailbox) een eenmalige,
@@ -137,6 +147,36 @@ curl -X POST http://localhost:8000/api/admin/accounts/reset-password \
 ```
 
 Beide routes loggen meteen ook alle bestaande sessies van dat account uit.
+
+## Teamleden toevoegen (meerdere logins, één account)
+
+Eén "account" hierboven is één bedrijf/tenant — maar binnen dat account
+kunnen meerdere mensen een eigen login hebben, die allemaal dezelfde
+contacten, campagnes en LinkedIn-log zien en gebruiken (er is geen aparte
+data per teamlid, alleen per account). Dit is iets anders dan een nieuw
+account aanmaken via `/api/admin/accounts` hierboven — dat maakt een nieuwe,
+losstaande klant/tenant aan met zijn eigen, gescheiden data; een teamlid
+toevoegen voegt alleen een extra inlog toe aan een bestaand account.
+
+Dit gaat, in tegenstelling tot een nieuw account, niet via `ADMIN_SECRET` —
+elke al ingelogde gebruiker van een account kan zelf teamleden uitnodigen en
+verwijderen, via de nieuwe **Team**-tab in `dashboard.html`, of rechtstreeks:
+
+```bash
+curl -X POST http://localhost:8000/api/team/invite \
+  -H "Authorization: Bearer <jouw sessietoken>" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"collega@bedrijf.nl"}'
+```
+
+De uitgenodigde persoon krijgt een e-mail (via de gedeelde Gmail-mailbox) met
+een eenmalige, 1 uur geldige link om zelf een wachtwoord in te stellen —
+dezelfde `reset-password.html`-pagina als bij "wachtwoord vergeten". Niemand,
+ook degene die uitnodigt niet, komt ooit een wachtwoord van een ander te
+weten. `GET /api/team/users` toont alle teamleden van je eigen account;
+`DELETE /api/team/users/{id}` verwijdert er één (jezelf verwijderen via dit
+endpoint kan niet, en een account met precies één teamlid overhouden ook
+niet — dan zou het account ontoegankelijk worden).
 
 **Wat nog niet per account is afgeschermd**: alle accounts versturen mail op
 dit moment via dezelfde gedeelde mailbox (`SEND_AS_EMAIL`,
@@ -161,7 +201,10 @@ geldig token geeft elk 🔒-endpoint een 401 terug.
 | `POST /api/auth/logout` 🔒 | Huidige sessie ongeldig maken. |
 | `GET /api/auth/me` 🔒 | Gegevens van het ingelogde account. |
 | `POST /api/admin/accounts` | Nieuw account aanmaken. Vereist `X-Admin-Secret`-header (niet hetzelfde als een sessietoken) — zie "Inloggen en accounts" hierboven. |
-| `POST /api/admin/accounts/reset-password` | Wachtwoord van een bestaand account resetten (`login_email`, `new_password`). Vereist ook `X-Admin-Secret`. Er is geen self-service "wachtwoord vergeten" met e-mail-link — dit is de manier waarop een vergeten wachtwoord nu opgelost wordt. |
+| `POST /api/admin/accounts/reset-password` | Wachtwoord van een bestaand account resetten (`login_email`, `new_password`). Vereist ook `X-Admin-Secret`. Fallback voor als de self-service "wachtwoord vergeten"-mail niet aankomt (zie "Inloggen en accounts" hierboven). |
+| `POST /api/team/invite` 🔒 | Teamlid toevoegen aan je eigen account (`email`). Mailt een eenmalige link om zelf een wachtwoord te kiezen. Zie "Teamleden toevoegen". |
+| `GET /api/team/users` 🔒 | Lijst van teamleden op je eigen account. |
+| `DELETE /api/team/users/{id}` 🔒 | Een teamlid verwijderen van je eigen account. Niet mogelijk voor jezelf, en niet als het account daarmee 0 gebruikers zou overhouden. |
 | `POST /api/send` 🔒 | Verstuur een losse mail (`to`, `subject`, `message`). |
 | `GET /api/inbox` 🔒 | Laatste inbox-berichten + ongelezen/vandaag-tellingen. |
 | `GET /api/contacts` 🔒 | Lijst van alle contacten (van je eigen account). |

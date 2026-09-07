@@ -26,6 +26,7 @@ See README.md for full setup and DEPLOY.md for cloud hosting.
 import html
 import logging
 import os
+import secrets
 import urllib.parse
 
 from dotenv import load_dotenv
@@ -122,11 +123,13 @@ app.add_middleware(
 # correctly under test runners/tools that call the app without going
 # through a full server startup lifecycle.
 database.init_db()
+database.ensure_seed_account()
 
 
 @app.on_event("startup")
 def _startup():
     database.init_db()
+    database.ensure_seed_account()
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +156,7 @@ def api_login(payload: LoginIn):
     account = database.verify_password(payload.email, payload.password)
     if not account:
         raise HTTPException(status_code=401, detail="E-mailadres of wachtwoord onjuist.")
-    token = database.create_session(account["id"])
+    token = database.create_session(account["user_id"], account["id"])
     return {"token": token, "account": account}
 
 
@@ -183,14 +186,14 @@ def api_forgot_password(payload: ForgotPasswordIn):
     one-time reset link (valid for an hour) is mailed to it via the shared
     Gmail mailbox.
     """
-    account = database.get_account_by_email(payload.email)
-    if account:
-        token = database.create_password_reset_token(account["id"])
+    user = database.get_user_by_email(payload.email)
+    if user:
+        token = database.create_password_reset_token(user["user_id"])
         reset_link = f"{FRONTEND_PUBLIC_URL}/reset-password.html?token={token}"
         body = (
             f"Hoi,\n\n"
             f"Er is een wachtwoordreset aangevraagd voor je Twikey Sales Platform-account "
-            f"({account['login_email']}).\n\n"
+            f"({user['email']}).\n\n"
             f"Klik op onderstaande link om een nieuw wachtwoord in te stellen. "
             f"Deze link is 1 uur geldig en werkt maar één keer:\n\n"
             f"{reset_link}\n\n"
@@ -199,7 +202,7 @@ def api_forgot_password(payload: ForgotPasswordIn):
             f"- Twikey Sales Platform"
         )
         try:
-            send_email(SEND_AS_EMAIL, account["login_email"], "Wachtwoord resetten - Twikey Sales Platform", body)
+            send_email(SEND_AS_EMAIL, user["email"], "Wachtwoord resetten - Twikey Sales Platform", body)
         except Exception:
             # Don't leak Gmail/service-account errors to an unauthenticated
             # caller, and don't reveal whether the send succeeded - the
@@ -207,7 +210,7 @@ def api_forgot_password(payload: ForgotPasswordIn):
             # server-side though (visible in Render's Logs tab), otherwise a
             # broken Gmail connection here is completely invisible - nobody
             # who can't see the logs would ever know the mail didn't go out.
-            logger.exception("forgot-password: failed to send reset e-mail to %s", account["login_email"])
+            logger.exception("forgot-password: failed to send reset e-mail to %s", user["email"])
     return {"message": "Als dit e-mailadres bij ons bekend is, hebben we een resetlink gestuurd."}
 
 
@@ -220,12 +223,12 @@ class ResetPasswordSelfIn(BaseModel):
 def api_reset_password_self(payload: ResetPasswordSelfIn):
     """Self-service 'forgot password' - completion step: exchange a valid,
     unused, unexpired token (from the emailed link) for a new password."""
-    account = database.get_account_for_reset_token(payload.token)
-    if not account:
+    user = database.get_user_for_reset_token(payload.token)
+    if not user:
         raise HTTPException(status_code=400, detail="Deze resetlink is ongeldig, al gebruikt, of verlopen. Vraag een nieuwe aan.")
     if len(payload.new_password) < 8:
         raise HTTPException(status_code=400, detail="Wachtwoord moet minstens 8 tekens zijn.")
-    database.set_password(account["login_email"], payload.new_password)
+    database.set_password(user["email"], payload.new_password)
     database.consume_password_reset_token(payload.token)
     return {"success": True}
 
@@ -243,7 +246,7 @@ def api_create_account(payload: CreateAccountIn):
     (matching the ADMIN_SECRET env var) instead of being open self-signup -
     see auth.py for why.
     """
-    existing = database.get_account_by_email(payload.login_email)
+    existing = database.get_user_by_email(payload.login_email)
     if existing:
         raise HTTPException(status_code=409, detail="Er bestaat al een account met dit e-mailadres.")
     if len(payload.password) < 8:
@@ -273,6 +276,83 @@ def api_reset_password(payload: ResetPasswordIn):
     found = database.set_password(payload.login_email, payload.new_password)
     if not found:
         raise HTTPException(status_code=404, detail="Geen account gevonden met dit e-mailadres.")
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Team (teammates - extra logins that share one account's data)
+# ---------------------------------------------------------------------------
+#
+# An "account" is one customer/tenant; a "user" is one email+password login
+# belonging to exactly one account. This section lets an already-logged-in
+# user invite/list/remove *other* logins on their OWN account - they all see
+# and share the same contacts/campaigns/LinkedIn log (see database.py). This
+# is deliberately NOT admin-secret-gated: any teammate can invite/remove
+# another, same as e.g. a shared Slack workspace. It's unrelated to
+# POST /api/admin/accounts above, which creates a brand new tenant.
+
+class InviteTeammateIn(BaseModel):
+    email: EmailStr
+
+
+@app.post("/api/team/invite")
+def api_invite_teammate(payload: InviteTeammateIn, account: dict = Depends(get_current_account)):
+    """
+    Add a teammate (another login) to the caller's own account. The new
+    login gets a random, unknown throwaway password and is immediately
+    e-mailed a link (reusing the same reset-password.html page/flow as
+    'forgot password') to set their own real password before they can log
+    in - nobody, including the person who invited them, ever knows a
+    password for someone else's login.
+    """
+    existing = database.get_user_by_email(payload.email)
+    if existing:
+        raise HTTPException(status_code=409, detail="Er bestaat al een gebruiker met dit e-mailadres.")
+    throwaway_password = secrets.token_urlsafe(24)
+    user = database.create_user(account["id"], payload.email, throwaway_password)
+    token = database.create_password_reset_token(user["id"])
+    setup_link = f"{FRONTEND_PUBLIC_URL}/reset-password.html?token={token}"
+    body = (
+        f"Hoi,\n\n"
+        f"Je bent toegevoegd als teamlid op het Twikey Sales Platform-account van "
+        f"{account['company_name']}.\n\n"
+        f"Klik op onderstaande link om je eigen wachtwoord in te stellen en in te loggen. "
+        f"Deze link is 1 uur geldig en werkt maar één keer:\n\n"
+        f"{setup_link}\n\n"
+        f"- Twikey Sales Platform"
+    )
+    try:
+        send_email(SEND_AS_EMAIL, payload.email, "Je bent toegevoegd aan Twikey Sales Platform", body)
+    except Exception:
+        # The teammate row is already created either way - don't fail the
+        # whole request just because the welcome e-mail didn't go out, but
+        # do log it, otherwise a broken Gmail connection here silently
+        # leaves someone unable to ever set a password for their new login.
+        logger.exception("team invite: failed to send welcome e-mail to %s", payload.email)
+    return {"success": True, "user": {"id": user["id"], "email": user["email"], "created_at": user["created_at"]}}
+
+
+@app.get("/api/team/users")
+def api_list_teammates(account: dict = Depends(get_current_account)):
+    """All teammates (logins) on the caller's own account."""
+    return {"users": database.list_users(account["id"])}
+
+
+@app.delete("/api/team/users/{user_id}")
+def api_remove_teammate(user_id: int, account: dict = Depends(get_current_account)):
+    """
+    Remove a teammate's login from the caller's own account. Refuses to
+    remove your own login this way (use a settings page for that, not a
+    teammate-management one) and refuses to leave an account with zero
+    logins (it would become permanently inaccessible).
+    """
+    if user_id == account["user_id"]:
+        raise HTTPException(status_code=400, detail="Je kunt jezelf niet verwijderen als teamlid.")
+    if database.count_users(account["id"]) <= 1:
+        raise HTTPException(status_code=400, detail="Een account moet minstens één gebruiker hebben.")
+    removed = database.delete_user(account["id"], user_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Geen teamlid gevonden met dit id op jouw account.")
     return {"success": True}
 
 

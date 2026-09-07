@@ -60,12 +60,18 @@ meegepusht — die horen nooit in git te staan.
    in dit veld.
 6. Bij het veld **ADMIN_SECRET** vul je zelf een lange, willekeurige waarde
    in (bijv. gegenereerd met `openssl rand -hex 32`). Bewaar deze waarde
-   ergens veilig (wachtwoordmanager) — je hebt hem straks nodig om je eerste
-   klantaccount aan te maken (stap 4 hieronder), en telkens opnieuw na elke
-   deploy (zie de opmerking daar over ephemere opslag).
-7. Klik op **Apply** / **Create**. Render bouwt en start nu beide services —
+   ergens veilig (wachtwoordmanager) — je hebt hem nodig om je eerste
+   klantaccount aan te maken (stap 4 hieronder).
+7. Optioneel maar aanbevolen — voorkomt dat je steeds opnieuw moet inloggen
+   na elke deploy: zet ook **SEED_ACCOUNT_EMAIL** en **SEED_ACCOUNT_PASSWORD**
+   (bijv. `sales@twikeycampaigns.nl` en hetzelfde wachtwoord dat je in stap 4
+   gebruikt). Dat account wordt dan bij elke opstart automatisch opnieuw
+   aangemaakt als het (door de ephemere schijf hieronder) verdwenen is — je
+   hoeft de curl uit stap 4 dan nooit meer te herhalen na een deploy. Een
+   wachtwoord dat je later zelf wijzigt, blijft gewoon staan.
+8. Klik op **Apply** / **Create**. Render bouwt en start nu beide services —
    dit duurt een paar minuten bij de eerste keer.
-8. Controleer (of stel achteraf in bij de backend-service → **Environment**)
+9. Controleer (of stel achteraf in bij de backend-service → **Environment**)
    dat `BACKEND_PUBLIC_URL` en `FRONTEND_PUBLIC_URL` overeenkomen met de
    werkelijke URLs die Render aan je services heeft gegeven (zichtbaar bovenin
    elke service-pagina). Render voegt soms een suffix toe als de standaardnaam
@@ -122,11 +128,23 @@ Een geslaagd antwoord ziet er zo uit: `{"success":true,"account":{"id":1,...}}`.
 Ga daarna naar de frontend-URL, klik op **Inloggen**, en log in met het
 e-mailadres en wachtwoord hierboven.
 
-**Dit commando moet je opnieuw draaien na elke nieuwe deploy** (zie de
-opmerking over ephemere opslag hierboven) — anders krijg je op het
-inlogscherm "E-mailadres of wachtwoord onjuist", simpelweg omdat het account
-niet meer bestaat. Bewaar dit curl-commando dus ergens waar je het makkelijk
-terugvindt.
+Wil je dat een collega ook kan inloggen en meewerkt aan dezelfde contacten/
+campagnes? Dat hoeft niet via deze curl — eenmaal ingelogd kun je in het
+dashboard op het tabblad **Team** zelf een teamlid uitnodigen (ze krijgen een
+mail om hun eigen wachtwoord in te stellen). Zie de sectie "Teamleden
+toevoegen" in `README.md`. Dit is iets anders dan de curl hierboven: die
+maakt een heel nieuw, apart account/tenant aan (bijv. voor een andere klant),
+terwijl de Team-tab een extra login toevoegt aan het account waar je al
+op bent ingelogd.
+
+**Zonder `SEED_ACCOUNT_EMAIL`/`SEED_ACCOUNT_PASSWORD` (stap 2.7) moet je dit
+commando opnieuw draaien na elke nieuwe deploy** (zie de opmerking over
+ephemere opslag hierboven) — anders krijg je op het inlogscherm
+"E-mailadres of wachtwoord onjuist", simpelweg omdat het account niet meer
+bestaat. Heb je die twee variabelen wél ingesteld, dan gebeurt dit
+automatisch bij elke opstart en hoef je deze curl maar één keer te draaien.
+Bewaar het commando sowieso ergens waar je het makkelijk terugvindt, voor
+als je ooit een tweede klantaccount aanmaakt.
 
 ## Stap 5 — CORS aanscherpen (aanbevolen, niet verplicht)
 

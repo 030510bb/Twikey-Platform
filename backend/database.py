@@ -2,7 +2,17 @@
 Lightweight SQLite storage for the Twikey Sales Platform backend.
 
 This backs every account's Contacts, A/B Test / Analytics and
-LinkedIn-tracking data, plus the login system itself (accounts + sessions).
+LinkedIn-tracking data, plus the login system itself (accounts, users +
+sessions).
+
+An "account" is one customer/tenant (e.g. Twikey Campaigns); a "user" is one
+login (one e-mail + password) belonging to exactly one account. Multiple
+users can belong to the same account and share all of that account's data -
+that's the "teammates" feature (see create_user/list_users/delete_user)
+layered on top of the original one-login-per-account model. Every
+tenant-scoped table (contacts, campaigns, linkedin_*) is still keyed by
+account_id, not user_id - teammates on the same account share that data by
+design, they aren't isolated from each other.
 
 Why SQLite: it needs zero external services or credentials, so everything in
 this project still runs with just "GOOGLE_SERVICE_ACCOUNT_JSON" configured -
@@ -43,13 +53,20 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_name TEXT NOT NULL,
-    login_email TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
     account_id INTEGER NOT NULL REFERENCES accounts(id),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
@@ -57,7 +74,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     token TEXT PRIMARY KEY,
-    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     used INTEGER NOT NULL DEFAULT 0
@@ -184,79 +201,196 @@ def new_token() -> str:
 # Accounts / auth
 # ---------------------------------------------------------------------------
 
-def create_account(company_name: str, login_email: str, password: str) -> dict:
-    """Create a new customer account (tenant) and seed its default LinkedIn templates."""
-    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+def create_account(company_name: str, admin_email: str, admin_password: str) -> dict:
+    """Create a new customer account (tenant) with its first user, and seed
+    the account's default LinkedIn templates. Additional logins for the same
+    account are added afterward with create_user()."""
+    password_hash = bcrypt.hashpw(admin_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO accounts (company_name, login_email, password_hash, created_at) VALUES (?, ?, ?, ?)",
-            (company_name, login_email.lower(), password_hash, now_iso()),
+            "INSERT INTO accounts (company_name, created_at) VALUES (?, ?)",
+            (company_name, now_iso()),
         )
         account_id = cur.lastrowid
+        cur = conn.execute(
+            "INSERT INTO users (account_id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+            (account_id, admin_email.lower(), password_hash, now_iso()),
+        )
+        user_id = cur.lastrowid
         conn.executemany(
             "INSERT INTO linkedin_templates (account_id, label, title, body) VALUES (?, ?, ?, ?)",
             [(account_id, label, title, body) for label, title, body in DEFAULT_LINKEDIN_TEMPLATES],
         )
-        row = conn.execute("SELECT id, company_name, login_email, created_at FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        account_row = conn.execute("SELECT id, company_name, created_at FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        user_row = conn.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
+        result = dict(account_row)
+        result["user_id"] = user_row["id"]
+        result["email"] = user_row["email"]
+        return result
+
+
+def create_user(account_id: int, email: str, password: str) -> dict:
+    """Add another login (teammate) to an existing account. They share every
+    bit of that account's data - contacts, campaigns, LinkedIn log - there is
+    no per-user isolation within an account, only between accounts."""
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO users (account_id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+            (account_id, email.lower(), password_hash, now_iso()),
+        )
+        user_id = cur.lastrowid
+        row = conn.execute("SELECT id, account_id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
         return dict(row)
 
 
-def get_account_by_email(login_email: str):
+def list_users(account_id: int):
+    """All teammates (users) on one account, oldest first. No password hashes."""
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM accounts WHERE login_email = ?", (login_email.lower(),)).fetchone()
-        return dict(row) if row else None
+        rows = conn.execute(
+            "SELECT id, email, created_at FROM users WHERE account_id = ? ORDER BY created_at ASC",
+            (account_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
-def set_password(login_email: str, new_password: str) -> bool:
-    """Reset an account's password (admin-only - see require_admin_secret in
-    auth.py). There is no self-service "forgot password" email flow yet, so
-    this is how a forgotten password actually gets fixed for now. Also
-    invalidates all of that account's existing sessions, so a reset really
-    does lock out whoever had the old password.
-    """
-    password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+def count_users(account_id: int) -> int:
     with get_conn() as conn:
-        cur = conn.execute(
-            "UPDATE accounts SET password_hash = ? WHERE login_email = ?",
-            (password_hash, login_email.lower()),
-        )
-        if cur.rowcount == 0:
+        row = conn.execute("SELECT COUNT(*) AS n FROM users WHERE account_id = ?", (account_id,)).fetchone()
+        return row["n"]
+
+
+def delete_user(account_id: int, user_id: int) -> bool:
+    """Remove a teammate from an account. Returns False if no such user
+    exists on that account (never touches another account's users). Callers
+    are responsible for the "not the last user" and "not yourself" checks -
+    see api_remove_teammate in app.py - since those are policy, not storage."""
+    with get_conn() as conn:
+        # Check the user actually belongs to this account BEFORE deleting
+        # anything (so we never touch another account's sessions/tokens).
+        # Delete the child rows (sessions, reset tokens) before the users
+        # row itself - sessions/password_reset_tokens both have a foreign
+        # key on users(id), so deleting the parent first trips a FOREIGN KEY
+        # constraint failure whenever that user has an active session or
+        # reset token outstanding.
+        owned = conn.execute(
+            "SELECT 1 FROM users WHERE id = ? AND account_id = ?", (user_id, account_id)
+        ).fetchone()
+        if not owned:
             return False
-        account_row = conn.execute("SELECT id FROM accounts WHERE login_email = ?", (login_email.lower(),)).fetchone()
-        conn.execute("DELETE FROM sessions WHERE account_id = ?", (account_row["id"],))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM password_reset_tokens WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ? AND account_id = ?", (user_id, account_id))
         return True
 
 
-def verify_password(login_email: str, password: str):
-    """Return the account dict (without password_hash) if credentials are correct, else None."""
-    account = get_account_by_email(login_email)
-    if not account:
-        return None
-    if not bcrypt.checkpw(password.encode("utf-8"), account["password_hash"].encode("utf-8")):
-        return None
-    account = dict(account)
-    account.pop("password_hash", None)
-    return account
+def ensure_seed_account():
+    """
+    Recreate a starter account automatically if it's missing - the practical
+    fix for Render's free-tier ephemeral disk (see the module docstring):
+    every `git push`/deploy wipes this SQLite file, including all accounts,
+    so without this a customer is locked out after every deploy until
+    someone remembers to re-run the admin bootstrap curl.
+
+    Controlled by three env vars, read directly here (not passed in) so this
+    can be called from anywhere without threading them through:
+      - SEED_ACCOUNT_EMAIL / SEED_ACCOUNT_PASSWORD: both required, else this
+        is a no-op (no seed account without an explicit email+password).
+      - SEED_ACCOUNT_COMPANY_NAME: optional, defaults to "Twikey Campaigns".
+
+    Deliberately only creates the account if that e-mail doesn't already
+    exist - never resets an existing password. That matters once someone
+    has actually changed their password (e.g. via the reset-password flow):
+    a real deploy shouldn't silently revert it back to the seed value. Once
+    a real database replaces SQLite (see the module docstring), this becomes
+    unnecessary and can be removed.
+    """
+    email = os.environ.get("SEED_ACCOUNT_EMAIL")
+    password = os.environ.get("SEED_ACCOUNT_PASSWORD")
+    if not email or not password:
+        return
+    if get_user_by_email(email):
+        return
+    company_name = os.environ.get("SEED_ACCOUNT_COMPANY_NAME", "Twikey Campaigns")
+    create_account(company_name, email, password)
 
 
-def create_session(account_id: int) -> str:
+def get_user_by_email(email: str):
+    """Return the user row (including account_id and company_name via join), or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id AS user_id, u.email, u.password_hash, u.account_id, u.created_at,
+                   a.company_name
+            FROM users u
+            JOIN accounts a ON a.id = u.account_id
+            WHERE u.email = ?
+            """,
+            (email.lower(),),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def set_password(email: str, new_password: str) -> bool:
+    """Reset one user's password (used by both the self-service reset-token
+    flow and the admin fallback endpoint - see auth.py/app.py). Also
+    invalidates that user's existing sessions, so a reset really does lock
+    out whoever had the old password."""
+    password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE users SET password_hash = ? WHERE email = ?",
+            (password_hash, email.lower()),
+        )
+        if cur.rowcount == 0:
+            return False
+        user_row = conn.execute("SELECT id FROM users WHERE email = ?", (email.lower(),)).fetchone()
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_row["id"],))
+        return True
+
+
+def verify_password(email: str, password: str):
+    """Return the identity dict (without password_hash) if credentials are
+    correct, else None. The returned dict's `id` key is the ACCOUNT id (for
+    backward-compatible tenant-scoping in every existing endpoint) alongside
+    `user_id`/`email` identifying the specific person who logged in."""
+    user = get_user_by_email(email)
+    if not user:
+        return None
+    if not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+        return None
+    return {
+        "id": user["account_id"],
+        "company_name": user["company_name"],
+        "created_at": user["created_at"],
+        "user_id": user["user_id"],
+        "email": user["email"],
+    }
+
+
+def create_session(user_id: int, account_id: int) -> str:
     token = secrets.token_urlsafe(32)
     expires_at = (datetime.now(timezone.utc) + timedelta(days=SESSION_LIFETIME_DAYS)).isoformat()
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO sessions (token, account_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (token, account_id, now_iso(), expires_at),
+            "INSERT INTO sessions (token, user_id, account_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+            (token, user_id, account_id, now_iso(), expires_at),
         )
     return token
 
 
 def get_account_by_token(token: str):
-    """Return the account dict for a valid, non-expired session token, else None."""
+    """Return the identity dict for a valid, non-expired session token, else
+    None. Shaped like verify_password()'s return value - `id` is the account
+    id (tenant-scoping key used throughout app.py), plus `user_id`/`email`
+    for the specific logged-in person."""
     with get_conn() as conn:
         row = conn.execute(
             """
-            SELECT a.id, a.company_name, a.login_email, a.created_at, s.expires_at
+            SELECT a.id AS id, a.company_name, a.created_at, s.expires_at,
+                   u.id AS user_id, u.email
             FROM sessions s
+            JOIN users u ON u.id = s.user_id
             JOIN accounts a ON a.id = s.account_id
             WHERE s.token = ?
             """,
@@ -278,7 +412,7 @@ def delete_session(token: str):
 RESET_TOKEN_LIFETIME_HOURS = 1
 
 
-def create_password_reset_token(account_id: int) -> str:
+def create_password_reset_token(user_id: int) -> str:
     """Issue a one-time, short-lived token for the self-service 'forgot
     password' flow. Deliberately short-lived (1 hour) and single-use (see
     consume_password_reset_token) since it's mailed as a plain link."""
@@ -286,29 +420,35 @@ def create_password_reset_token(account_id: int) -> str:
     expires_at = (datetime.now(timezone.utc) + timedelta(hours=RESET_TOKEN_LIFETIME_HOURS)).isoformat()
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO password_reset_tokens (token, account_id, created_at, expires_at, used) VALUES (?, ?, ?, ?, 0)",
-            (token, account_id, now_iso(), expires_at),
+            "INSERT INTO password_reset_tokens (token, user_id, created_at, expires_at, used) VALUES (?, ?, ?, ?, 0)",
+            (token, user_id, now_iso(), expires_at),
         )
     return token
 
 
-def get_account_for_reset_token(token: str):
-    """Return the account dict (without password_hash) for a valid, unused,
-    non-expired reset token, else None. Does not consume the token - call
-    consume_password_reset_token() once the password has actually been
-    changed, so a token that's merely looked up (e.g. loading the reset
-    page) doesn't get burned before the user submits the form."""
+def get_user_for_reset_token(token: str):
+    """Return the user dict (without password_hash, including account_id and
+    company_name) for a valid, unused, non-expired reset token, else None.
+    Does not consume the token - call consume_password_reset_token() once
+    the password has actually been changed, so a token that's merely looked
+    up (e.g. loading the reset page) doesn't get burned before the user
+    submits the form."""
     with get_conn() as conn:
         row = conn.execute(
             "SELECT * FROM password_reset_tokens WHERE token = ?", (token,)
         ).fetchone()
         if not row or row["used"] or row["expires_at"] < now_iso():
             return None
-        account_row = conn.execute(
-            "SELECT id, company_name, login_email, created_at FROM accounts WHERE id = ?",
-            (row["account_id"],),
+        user_row = conn.execute(
+            """
+            SELECT u.id AS user_id, u.email, u.account_id, u.created_at, a.company_name
+            FROM users u
+            JOIN accounts a ON a.id = u.account_id
+            WHERE u.id = ?
+            """,
+            (row["user_id"],),
         ).fetchone()
-        return dict(account_row) if account_row else None
+        return dict(user_row) if user_row else None
 
 
 def consume_password_reset_token(token: str):

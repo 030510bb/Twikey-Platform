@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beheerder inloggen - Twikey Sales Platform</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .login-card {
+            background: white;
+            border-radius: 14px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .login-card .badge {
+            display: inline-block;
+            background: #111827;
+            color: #d1d5db;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            padding: 4px 10px;
+            border-radius: 20px;
+            margin-bottom: 14px;
+        }
+
+        .login-card .logo {
+            font-size: 24px;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .login-card .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 28px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #444;
+            margin-bottom: 6px;
+            margin-top: 16px;
+        }
+
+        input[type="email"],
+        input[type="password"] {
+            width: 100%;
+            padding: 11px 14px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        input[type="email"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #374151;
+            box-shadow: 0 0 0 3px rgba(55, 65, 81, 0.15);
+        }
+
+        button[type="submit"] {
+            width: 100%;
+            margin-top: 24px;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            background: #111827;
+            color: white;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        button[type="submit"]:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        button[type="submit"]:hover:not(:disabled) {
+            opacity: 0.88;
+        }
+
+        #login-error {
+            display: none;
+            margin-top: 16px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: #fef2f2;
+            color: #b91c1c;
+            font-size: 13px;
+        }
+
+        .back-link {
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #6b7280;
+            text-decoration: none;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="badge">Support / Beheer</div>
+        <div class="logo">🛠️ Twikey <span>Support</span></div>
+        <div class="subtitle">Alleen voor Twikey-medewerkers. Klanten loggen in via de gewone inlogpagina.</div>
+
+        <form id="login-form">
+            <label for="login-email">E-mailadres</label>
+            <input type="email" id="login-email" autocomplete="username" required>
+
+            <label for="login-password">Wachtwoord</label>
+            <input type="password" id="login-password" autocomplete="current-password" required>
+
+            <button type="submit" id="login-button">Inloggen</button>
+            <div id="login-error"></div>
+        </form>
+
+        <a class="back-link" href="login.html">&larr; Naar de klant-inlogpagina</a>
+    </div>
+
+    <script>
+        const PRODUCTION_API_BASE = 'https://twikey-platform-backend.onrender.com';
+        const isLocal = location.protocol === 'file:' ||
+            location.hostname === 'localhost' ||
+            location.hostname === '127.0.0.1';
+        const API_BASE = isLocal ? 'http://localhost:8000' : PRODUCTION_API_BASE;
+
+        // Already logged in as an admin? Skip straight to the support dashboard.
+        if (localStorage.getItem('twikey_admin_token')) {
+            location.href = 'admin.html';
+        }
+
+        const form = document.getElementById('login-form');
+        const errorEl = document.getElementById('login-error');
+        const button = document.getElementById('login-button');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('login-email').value.trim();
+            const password = document.getElementById('login-password').value;
+
+            errorEl.style.display = 'none';
+            button.disabled = true;
+            button.textContent = 'Bezig...';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/superadmin/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error(data.detail || `Inloggen mislukt (HTTP ${res.status})`);
+                }
+                // Deliberately separate localStorage keys from the customer
+                // session (twikey_token/twikey_account) - an admin session
+                // and a customer session can safely coexist in the same
+                // browser without clobbering each other.
+                localStorage.setItem('twikey_admin_token', data.token);
+                localStorage.setItem('twikey_admin', JSON.stringify(data.admin));
+                location.href = 'admin.html';
+            } catch (err) {
+                errorEl.textContent = err.message || 'Er ging iets mis. Probeer het opnieuw.';
+                errorEl.style.display = 'block';
+                button.disabled = false;
+                button.textContent = 'Inloggen';
+            }
+        });
+    </script>
+</body>
+</html>

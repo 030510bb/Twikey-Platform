@@ -26,6 +26,22 @@ def get_current_account(authorization: str = Header(default=None)) -> dict:
     return account
 
 
+def get_current_admin(authorization: str = Header(default=None)) -> dict:
+    """Dependency: require a valid admin (support/superadmin) Bearer token -
+    completely separate session space from get_current_account above. An
+    admin token issued by /api/superadmin/login can never satisfy a
+    customer-scoped 🔒 endpoint, and a customer session token can never
+    satisfy a /api/superadmin/* endpoint, because they're looked up in two
+    different tables (admin_sessions vs sessions)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Niet ingelogd als beheerder. Voeg een Authorization: Bearer <token> header toe.")
+    token = authorization.split(" ", 1)[1].strip()
+    admin = database.get_admin_by_token(token)
+    if not admin:
+        raise HTTPException(status_code=401, detail="Beheerderssessie ongeldig of verlopen. Log opnieuw in.")
+    return admin
+
+
 def require_admin_secret(x_admin_secret: str = Header(default=None)) -> None:
     """Dependency: require the X-Admin-Secret header to match the ADMIN_SECRET env var.
 

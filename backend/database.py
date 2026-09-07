@@ -83,6 +83,25 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     used INTEGER NOT NULL DEFAULT 0
 );
 
+-- Support/superadmin logins - deliberately separate from "users" above.
+-- These aren't tied to any one customer account: they're Twikey staff who
+-- can see across every account for support purposes. See the "Superadmin /
+-- support" section further down for the account-overview/detail queries
+-- and auth.py's get_current_admin for how these sessions are checked.
+CREATE TABLE IF NOT EXISTS admins (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    token TEXT PRIMARY KEY,
+    admin_id INTEGER NOT NULL REFERENCES admins(id),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS contacts (
     id SERIAL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -819,3 +838,155 @@ def linkedin_stats(account_id: int) -> dict:
         "total_connections_sent": total_sent,
         "total_connections_accepted": total_accepted,
     }
+
+
+# ---------------------------------------------------------------------------
+# Superadmin / support
+#
+# Separate from the per-account "users" above: an admin login is Twikey
+# staff, not tied to any one customer account, and can see an overview of
+# every account plus a read-mostly detail view (users/contacts/campaigns/
+# LinkedIn stats) for support purposes. Deliberately NOT the same thing as
+# "logging in as" a customer (no impersonation) - see api_superadmin_* in
+# app.py.
+# ---------------------------------------------------------------------------
+
+ADMIN_SESSION_LIFETIME_DAYS = 14  # shorter than a customer session (30 days) - elevated privileges
+
+
+def create_admin(email: str, password: str) -> dict:
+    """Create a support/superadmin login. Bootstrapped the same way as the
+    very first customer account - via the ADMIN_SECRET-gated endpoint, see
+    api_superadmin_create_admin in app.py - since there's no other admin yet
+    to invite one."""
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?) RETURNING id",
+            (email.lower(), password_hash, now_iso()),
+        )
+        admin_id = cur.fetchone()["id"]
+        row = conn.execute("SELECT id, email, created_at FROM admins WHERE id = ?", (admin_id,)).fetchone()
+        return dict(row)
+
+
+def get_admin_by_email(email: str):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, email, password_hash, created_at FROM admins WHERE email = ?", (email.lower(),)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def verify_admin_password(email: str, password: str):
+    """Return the admin identity dict (without password_hash) if credentials
+    are correct, else None."""
+    admin = get_admin_by_email(email)
+    if not admin:
+        return None
+    if not bcrypt.checkpw(password.encode("utf-8"), admin["password_hash"].encode("utf-8")):
+        return None
+    return {"id": admin["id"], "email": admin["email"], "created_at": admin["created_at"]}
+
+
+def create_admin_session(admin_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=ADMIN_SESSION_LIFETIME_DAYS)).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO admin_sessions (token, admin_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (token, admin_id, now_iso(), expires_at),
+        )
+    return token
+
+
+def get_admin_by_token(token: str):
+    """Return the admin identity dict for a valid, non-expired admin session
+    token, else None. Completely separate from get_account_by_token - an
+    admin session can never be used to authenticate a customer-scoped 🔒
+    endpoint, and vice versa."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT a.id AS id, a.email, a.created_at, s.expires_at
+            FROM admin_sessions s
+            JOIN admins a ON a.id = s.admin_id
+            WHERE s.token = ?
+            """,
+            (token,),
+        ).fetchone()
+        if not row:
+            return None
+        if row["expires_at"] < now_iso():
+            conn.execute("DELETE FROM admin_sessions WHERE token = ?", (token,))
+            return None
+        return dict(row)
+
+
+def delete_admin_session(token: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM admin_sessions WHERE token = ?", (token,))
+
+
+def list_accounts_overview() -> list:
+    """Every account with rollup counts, newest first - the support
+    overview list. Deliberately simple per-account subqueries (not one big
+    JOIN/GROUP BY) since the number of accounts is small and this stays easy
+    to read and get right."""
+    with get_conn() as conn:
+        accounts = conn.execute("SELECT id, company_name, created_at FROM accounts ORDER BY created_at DESC").fetchall()
+        result = []
+        for acc in accounts:
+            acc = dict(acc)
+            acc["user_count"] = count_users(acc["id"])
+            acc["contact_count"] = count_contacts(acc["id"])
+            campaigns = conn.execute("SELECT COUNT(*) AS n FROM campaigns WHERE account_id = ?", (acc["id"],)).fetchone()
+            acc["campaign_count"] = campaigns["n"]
+            result.append(acc)
+        return result
+
+
+def get_account_overview_detail(account_id: int, contacts_limit: int = 200):
+    """Read-mostly support view of one account: its users (no password
+    hashes), a capped list of contacts, its campaigns, and LinkedIn stats.
+    Returns None if the account doesn't exist. Deliberately doesn't include
+    Gmail-inbox content or anything from outside this account's own tables."""
+    with get_conn() as conn:
+        account = conn.execute("SELECT id, company_name, created_at FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        if not account:
+            return None
+        users = conn.execute(
+            "SELECT id, email, created_at FROM users WHERE account_id = ? ORDER BY created_at ASC", (account_id,)
+        ).fetchall()
+        contacts = conn.execute(
+            "SELECT * FROM contacts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?",
+            (account_id, contacts_limit),
+        ).fetchall()
+        contact_count = count_contacts(account_id)
+        campaigns = conn.execute(
+            "SELECT * FROM campaigns WHERE account_id = ? ORDER BY created_at DESC", (account_id,)
+        ).fetchall()
+        return {
+            "account": dict(account),
+            "users": [dict(u) for u in users],
+            "contacts": [dict(c) for c in contacts],
+            "contact_count": contact_count,
+            "campaigns": [dict(c) for c in campaigns],
+            "linkedin_stats": linkedin_stats(account_id),
+        }
+
+
+def reset_user_password_for_account(account_id: int, user_id: int, new_password: str) -> bool:
+    """Support-initiated password reset for one specific user, scoped to
+    make sure that user actually belongs to the given account (so a support
+    person can't accidentally - or a buggy caller can't - reset a password
+    on the wrong account). Returns False if no such user/account
+    combination exists. Also invalidates that user's sessions, same as the
+    self-service/admin resets elsewhere."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT email FROM users WHERE id = ? AND account_id = ?", (user_id, account_id)
+        ).fetchone()
+        if not row:
+            return False
+    return set_password(row["email"], new_password)

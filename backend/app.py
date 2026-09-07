@@ -46,7 +46,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 
 import database
-from auth import get_current_account, require_admin_secret
+from auth import get_current_account, get_current_admin, require_admin_secret
 from gmail_client import list_recent_messages, send_email, send_html_email
 from validation import validate_message
 
@@ -353,6 +353,113 @@ def api_remove_teammate(user_id: int, account: dict = Depends(get_current_accoun
     removed = database.delete_user(account["id"], user_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Geen teamlid gevonden met dit id op jouw account.")
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Superadmin / support
+#
+# A completely separate login space from customer accounts/users (see the
+# "admins"/"admin_sessions" tables and get_current_admin in auth.py) - for
+# Twikey staff who need to see across every customer account for support
+# purposes. Deliberately NOT "log in as a customer" (no impersonation): this
+# gives a read-mostly overview (list every account, view one account's
+# users/contacts/campaigns/LinkedIn stats) plus the two admin actions support
+# actually needs day to day (create an account, reset a teammate's password)
+# - all through a real login instead of copy-pasting ADMIN_SECRET curl
+# commands.
+# ---------------------------------------------------------------------------
+
+class CreateAdminIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+@app.post("/api/superadmin/admins", dependencies=[Depends(require_admin_secret)])
+def api_superadmin_create_admin(payload: CreateAdminIn):
+    """
+    Bootstrap a support/superadmin login. Gated by X-Admin-Secret (same
+    shared secret as POST /api/admin/accounts) rather than an admin session,
+    since there's no other admin yet the first time this is called. Use this
+    once per support person who needs access - after that they log in
+    themselves via POST /api/superadmin/login.
+    """
+    if database.get_admin_by_email(payload.email):
+        raise HTTPException(status_code=409, detail="Er bestaat al een beheerder met dit e-mailadres.")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="Wachtwoord moet minstens 8 tekens zijn.")
+    admin = database.create_admin(payload.email, payload.password)
+    return {"success": True, "admin": admin}
+
+
+class AdminLoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+@app.post("/api/superadmin/login")
+def api_superadmin_login(payload: AdminLoginIn):
+    admin = database.verify_admin_password(payload.email, payload.password)
+    if not admin:
+        raise HTTPException(status_code=401, detail="E-mailadres of wachtwoord onjuist.")
+    token = database.create_admin_session(admin["id"])
+    return {"token": token, "admin": admin}
+
+
+@app.post("/api/superadmin/logout")
+def api_superadmin_logout(admin: dict = Depends(get_current_admin), authorization: str = Header(default=None)):
+    token = authorization.split(" ", 1)[1].strip()
+    database.delete_admin_session(token)
+    return {"success": True}
+
+
+@app.get("/api/superadmin/me")
+def api_superadmin_me(admin: dict = Depends(get_current_admin)):
+    return {"admin": admin}
+
+
+@app.get("/api/superadmin/accounts")
+def api_superadmin_list_accounts(admin: dict = Depends(get_current_admin)):
+    """Every customer account with rollup counts (users/contacts/campaigns) - the support overview list."""
+    return {"accounts": database.list_accounts_overview()}
+
+
+@app.post("/api/superadmin/accounts")
+def api_superadmin_create_account(payload: CreateAccountIn, admin: dict = Depends(get_current_admin)):
+    """Same effect as POST /api/admin/accounts (create a new customer account/tenant), but gated by an
+    admin login instead of an X-Admin-Secret header, for use from the support page itself."""
+    existing = database.get_user_by_email(payload.login_email)
+    if existing:
+        raise HTTPException(status_code=409, detail="Er bestaat al een account met dit e-mailadres.")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="Wachtwoord moet minstens 8 tekens zijn.")
+    account = database.create_account(payload.company_name, payload.login_email, payload.password)
+    return {"success": True, "account": account}
+
+
+@app.get("/api/superadmin/accounts/{account_id}")
+def api_superadmin_account_detail(account_id: int, admin: dict = Depends(get_current_admin)):
+    """Read-mostly support view of one account: its teammates, a capped list of contacts, its
+    campaigns, and LinkedIn stats. Not a Gmail-inbox view - email content stays out of this."""
+    detail = database.get_account_overview_detail(account_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Geen account gevonden met dit id.")
+    return detail
+
+
+class SuperadminResetPasswordIn(BaseModel):
+    new_password: str
+
+
+@app.post("/api/superadmin/accounts/{account_id}/users/{user_id}/reset-password")
+def api_superadmin_reset_user_password(account_id: int, user_id: int, payload: SuperadminResetPasswordIn, admin: dict = Depends(get_current_admin)):
+    """Support-initiated password reset for one teammate on one account. Invalidates that user's
+    existing sessions, same as the self-service/admin-secret resets elsewhere."""
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Wachtwoord moet minstens 8 tekens zijn.")
+    found = database.reset_user_password_for_account(account_id, user_id, payload.new_password)
+    if not found:
+        raise HTTPException(status_code=404, detail="Geen gebruiker met dit id op dit account.")
     return {"success": True}
 
 

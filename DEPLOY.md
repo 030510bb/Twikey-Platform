@@ -145,6 +145,12 @@ had ingesteld, dan gebeurde dat zelfs automatisch). Bewaar het commando
 sowieso ergens waar je het makkelijk terugvindt, voor als je ooit een tweede
 klantaccount aanmaakt.
 
+Wil je zelf (of samen met collega's) een overzicht van alle klantaccounts,
+inclusief nieuwe accounts aanmaken en wachtwoorden resetten zonder curl?
+Maak dan een beheerderslogin aan met dezelfde `ADMIN_SECRET` en log in via
+`https://twikey-platform-frontend.onrender.com/admin-login.html` — zie
+"Support / beheerpagina (superadmin)" in `README.md`.
+
 ## Stap 5 — CORS aanscherpen (aanbevolen, niet verplicht)
 
 Standaard staat `CORS_ORIGINS=*` in `render.yaml`, zodat alles meteen werkt.

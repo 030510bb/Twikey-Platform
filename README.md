@@ -55,6 +55,9 @@ en `.gitignore` die al in dit project zitten.
   gegevens van het ingelogde account en stuurt niet-ingelogde bezoekers terug
   naar `login.html`. Bevat ook de Team-tab (teamleden uitnodigen/verwijderen —
   zie "Teamleden toevoegen" hieronder).
+- `frontend/admin-login.html` / `frontend/admin.html` — het aparte support-
+  inlogscherm en -dashboard voor Twikey-medewerkers (niet voor klanten).
+  Zie "Support / beheerpagina" hieronder.
 - `frontend/lead-magnet.html` — een kleine landingspagina die de campagne-
   links naar toe leiden: toont de aangeboden lead magnet en een kort
   formulier, dat bij versturen een "form fill"-event registreert voor de
@@ -183,11 +186,52 @@ dat elke klant zijn eigen Google Workspace-domein + service-account instelt
 (de hele stappen 1–2 hierboven, per klant) — dat is een bewuste vervolgstap,
 nog niet gebouwd.
 
+## Support / beheerpagina (superadmin)
+
+Naast klantaccounts (`accounts`/`users` hierboven) bestaat er een volledig
+gescheiden inlog voor Twikey-medewerkers: `frontend/admin-login.html` →
+`frontend/admin.html`. Dit is geen "inloggen als een klant" (geen
+impersonatie) — het is een support-overzicht:
+
+- **Alle accounts in één lijst**, met aantal gebruikers/contacten/campagnes
+  per account.
+- **Nieuw klantaccount aanmaken** vanuit de pagina zelf, in plaats van met
+  een curl-commando.
+- **Meekijken in één account**: teamleden, campagnes, en een (tot 200
+  getoonde) lijst contacten — voor als je een klant helpt debuggen. Bevat
+  geen Gmail-postvakinhoud, alleen wat in de database staat.
+- **Wachtwoord resetten voor een specifiek teamlid** van een account.
+
+Beheerders (support-medewerkers) zijn een aparte tabel (`admins`) met hun
+eigen sessies (`admin_sessions`), losstaand van de klant-`users`/`sessions`.
+Een klant-sessietoken werkt dus nooit op een `/api/superadmin/*`-endpoint,
+en andersom een beheerderstoken nooit op een klant-endpoint zoals
+`/api/auth/me` — dat is met een geautomatiseerde test geverifieerd.
+
+**De eerste beheerder aanmaken** gaat, net als het allereerste klantaccount,
+via `ADMIN_SECRET` (er is nog geen andere beheerder om er een uit te
+nodigen):
+
+```bash
+curl -X POST http://localhost:8000/api/superadmin/admins \
+  -H "X-Admin-Secret: <jouw ADMIN_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"jouw-email@twikey.com","password":"<kies een echt wachtwoord>"}'
+```
+
+Log daarna in via `admin-login.html` met dat e-mailadres/wachtwoord. Wil je
+een collega ook toegang geven, draai dan dit commando nogmaals met hun
+gegevens — er is (bewust, vooralsnog) geen "beheerder uitnodigen"-knop in de
+pagina zelf, in tegenstelling tot de Team-tab voor klanten.
+
 ## Alle endpoints
 
 Endpoints hieronder gemarkeerd met 🔒 vereisen een `Authorization: Bearer
 <token>`-header (het token dat je van `/api/auth/login` terugkrijgt). Zonder
-geldig token geeft elk 🔒-endpoint een 401 terug.
+geldig token geeft elk 🔒-endpoint een 401 terug. Endpoints gemarkeerd met
+🔒\* vereisen in plaats daarvan een *beheerderstoken* (van
+`/api/superadmin/login`) — een gewoon klanttoken werkt daar niet op, en
+omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 
 | Endpoint | Beschrijving |
 |---|---|
@@ -202,6 +246,14 @@ geldig token geeft elk 🔒-endpoint een 401 terug.
 | `POST /api/team/invite` 🔒 | Teamlid toevoegen aan je eigen account (`email`). Mailt een eenmalige link om zelf een wachtwoord te kiezen. Zie "Teamleden toevoegen". |
 | `GET /api/team/users` 🔒 | Lijst van teamleden op je eigen account. |
 | `DELETE /api/team/users/{id}` 🔒 | Een teamlid verwijderen van je eigen account. Niet mogelijk voor jezelf, en niet als het account daarmee 0 gebruikers zou overhouden. |
+| `POST /api/superadmin/admins` | Eerste/extra beheerderslogin aanmaken. Vereist `X-Admin-Secret`. Zie "Support / beheerpagina". |
+| `POST /api/superadmin/login` | Inloggen als beheerder (`email`, `password`) → `{token, admin}`. Publiek, los van klant-login. |
+| `POST /api/superadmin/logout` 🔒\* | Huidige beheerderssessie ongeldig maken. |
+| `GET /api/superadmin/me` 🔒\* | Gegevens van de ingelogde beheerder. |
+| `GET /api/superadmin/accounts` 🔒\* | Alle accounts met aantal gebruikers/contacten/campagnes. |
+| `POST /api/superadmin/accounts` 🔒\* | Nieuw klantaccount aanmaken (zelfde als `/api/admin/accounts`, maar via beheerderslogin i.p.v. `X-Admin-Secret`). |
+| `GET /api/superadmin/accounts/{id}` 🔒\* | Detail van één account: teamleden, campagnes, contacten (max. 200), LinkedIn-cijfers. |
+| `POST /api/superadmin/accounts/{id}/users/{user_id}/reset-password` 🔒\* | Wachtwoord van één teamlid resetten. |
 | `POST /api/send` 🔒 | Verstuur een losse mail (`to`, `subject`, `message`). |
 | `GET /api/inbox` 🔒 | Laatste inbox-berichten + ongelezen/vandaag-tellingen. |
 | `GET /api/contacts` 🔒 | Lijst van alle contacten (van je eigen account). |

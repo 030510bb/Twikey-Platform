@@ -165,6 +165,33 @@ CREATE TABLE IF NOT EXISTS buyer_personas (
     UNIQUE(account_id, name)
 );
 
+-- Fase 3b: bedrijfsprofiel per account ("intakeformulier", crm-roadmap.md
+-- Fase 3). Eén rij per account - waardepropositie + USP's (één per regel,
+-- zelfde simpele opslag-conventie als objection_templates.keywords) die
+-- gebruikt worden om AI-mailsuggesties op maat te genereren i.p.v. de vaste
+-- 4 lead-magnet varianten (zie ai_client.generate_variant_suggestions).
+CREATE TABLE IF NOT EXISTS account_profiles (
+    account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
+    value_proposition TEXT NOT NULL DEFAULT '',
+    usps TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
+-- Eén AI-verdiepingsronde (bewust geen doorlopend chatgesprek, zie
+-- crm-roadmap.md Fase 3-scope-beslissing): bij het genereren van
+-- verdiepende vragen slaat dit een klein aantal gerichte vervolgvragen op;
+-- `answer` blijft NULL totdat de klant 'm invult. Een nieuwe ronde vervangen
+-- (nog) onbeantwoorde vragen - beantwoorde vragen blijven bewaard als
+-- geschiedenis, zie generate_profile_questions().
+CREATE TABLE IF NOT EXISTS account_profile_questions (
+    id SERIAL PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    question TEXT NOT NULL,
+    answer TEXT,
+    created_at TEXT NOT NULL,
+    answered_at TEXT
+);
+
 -- Audit trail: one row per CRM-lifecycle event (created/imported, tag
 -- added/removed, (re)assigned, marked excluded, note, etc). This is
 -- deliberately NOT where campaign sends / opens / clicks / LinkedIn actions
@@ -461,6 +488,19 @@ ALTER TABLE sequence_sends ADD COLUMN IF NOT EXISTS rendered_body TEXT;
 -- drops any event without one). attempted_at is set on every attempt,
 -- success or failure, and is what the timeline falls back to for failures.
 ALTER TABLE sequence_sends ADD COLUMN IF NOT EXISTS attempted_at TEXT;
+
+-- Fase 3b: optionele omschrijving per buyer persona (pijnpunten/context,
+-- "buyer personas" uit het intakeformulier) - meegegeven aan Claude bij het
+-- genereren van variant-suggesties zodat die persona-specifiek zijn, niet
+-- alleen gebaseerd op de algemene waardepropositie.
+ALTER TABLE buyer_personas ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+
+-- Fase 3c: omzetcategorie van het bedrijf van dit contact (vrije tekst,
+-- zelfde stijl als sector - bv. "0-1M", "1-10M", "10-50M", "50M+"). Samen
+-- met sector en buyer persona de derde dimensie voor ICP-scoring (zie
+-- icp_scores() hieronder): welke combinatie van sector x omzet x persona
+-- de beste open/click/reply-resultaten oplevert.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS revenue_range TEXT DEFAULT '';
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -990,6 +1030,7 @@ def add_contact(
     linkedin_url: str = "",
     job_title: str = "",
     sector: str = "",
+    revenue_range: str = "",
     source: str = "manual",
     _conn=None,
 ) -> dict:
@@ -999,8 +1040,8 @@ def add_contact(
         conn.execute(
             """
             INSERT INTO contacts (account_id, first_name, last_name, email, company, linkedin_url,
-                                   job_title, sector, source, company_domain, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   job_title, sector, revenue_range, source, company_domain, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id, email) DO UPDATE SET
                 first_name=excluded.first_name,
                 last_name=excluded.last_name,
@@ -1008,10 +1049,11 @@ def add_contact(
                 linkedin_url=CASE WHEN excluded.linkedin_url = '' THEN contacts.linkedin_url ELSE excluded.linkedin_url END,
                 job_title=CASE WHEN excluded.job_title = '' THEN contacts.job_title ELSE excluded.job_title END,
                 sector=CASE WHEN excluded.sector = '' THEN contacts.sector ELSE excluded.sector END,
+                revenue_range=CASE WHEN excluded.revenue_range = '' THEN contacts.revenue_range ELSE excluded.revenue_range END,
                 company_domain=excluded.company_domain
             """,
             (account_id, first_name, last_name, email, company, linkedin_url,
-             job_title, sector, source, domain, now_iso()),
+             job_title, sector, revenue_range, source, domain, now_iso()),
         )
         row = conn.execute(
             "SELECT * FROM contacts WHERE account_id = ? AND email = ?", (account_id, email)
@@ -1125,9 +1167,10 @@ def get_contact(contact_id: int, account_id: int):
 def update_contact(contact_id: int, account_id: int, **fields) -> dict:
     """Generic per-field updater for the CRM fields that aren't tags/assignment
     (those have their own dedicated functions below). Accepts any of:
-    job_title, sector, company, linkedin_url, is_customer, has_open_quote,
-    do_not_contact. Logs one contact_activity row summarising what changed."""
-    allowed = {"job_title", "sector", "company", "linkedin_url", "is_customer", "has_open_quote", "do_not_contact"}
+    job_title, sector, revenue_range, company, linkedin_url, is_customer,
+    has_open_quote, do_not_contact. Logs one contact_activity row summarising
+    what changed."""
+    allowed = {"job_title", "sector", "revenue_range", "company", "linkedin_url", "is_customer", "has_open_quote", "do_not_contact"}
     bool_fields = {"is_customer", "has_open_quote", "do_not_contact"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     updates = {k: (1 if v else 0) if k in bool_fields else v for k, v in updates.items()}
@@ -1309,6 +1352,102 @@ def set_contact_persona(contact_id: int, account_id: int, persona_id) -> dict:
         )
         row = conn.execute("SELECT * FROM contacts WHERE id = ?", (contact_id,)).fetchone()
         return dict(row)
+
+
+def update_buyer_persona(persona_id: int, account_id: int, name: str = None, description: str = None) -> dict:
+    """Fase 3b: past naam en/of omschrijving (pijnpunten/context) van een
+    bestaande persona aan. Alleen meegegeven velden worden gewijzigd."""
+    with get_conn() as conn:
+        owned = conn.execute(
+            "SELECT * FROM buyer_personas WHERE id = ? AND account_id = ?", (persona_id, account_id)
+        ).fetchone()
+        if not owned:
+            return None
+        new_name = name.strip() if name is not None else owned["name"]
+        new_description = description if description is not None else owned["description"]
+        conn.execute(
+            "UPDATE buyer_personas SET name = ?, description = ? WHERE id = ?",
+            (new_name, new_description, persona_id),
+        )
+        row = conn.execute("SELECT * FROM buyer_personas WHERE id = ?", (persona_id,)).fetchone()
+        return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# Bedrijfsprofiel / intake (Fase 3b, crm-roadmap.md) - waardepropositie +
+# USP's per account, plus één AI-verdiepingsronde, gebruikt om
+# AI-mailsuggesties op maat te genereren (zie ai_client.py en
+# POST /api/campaigns/suggest-variants in app.py).
+# ---------------------------------------------------------------------------
+
+def get_account_profile(account_id: int) -> dict:
+    """Returns {"value_proposition", "usps" (list), "updated_at"} - or a row
+    of empty defaults if the account never saved a profile, so callers never
+    have to special-case "no profile yet"."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM account_profiles WHERE account_id = ?", (account_id,)
+        ).fetchone()
+        if not row:
+            return {"account_id": account_id, "value_proposition": "", "usps": [], "updated_at": None}
+        usps = [line.strip() for line in (row["usps"] or "").split("\n") if line.strip()]
+        return {"account_id": account_id, "value_proposition": row["value_proposition"], "usps": usps, "updated_at": row["updated_at"]}
+
+
+def upsert_account_profile(account_id: int, value_proposition: str, usps: list) -> dict:
+    usps_text = "\n".join(u.strip() for u in (usps or []) if u.strip())
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO account_profiles (account_id, value_proposition, usps, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (account_id) DO UPDATE SET
+                value_proposition = EXCLUDED.value_proposition,
+                usps = EXCLUDED.usps,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (account_id, (value_proposition or "").strip(), usps_text, now_iso()),
+        )
+    return get_account_profile(account_id)
+
+
+def list_profile_questions(account_id: int) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM account_profile_questions WHERE account_id = ? ORDER BY id ASC", (account_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def replace_pending_profile_questions(account_id: int, questions: list) -> list:
+    """Stores a fresh AI-verdiepingsronde: removes any question from a
+    previous round that was never answered (a stale/skipped question), keeps
+    already-answered ones as history, then inserts the new questions
+    unanswered. Returns the full up-to-date list."""
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM account_profile_questions WHERE account_id = ? AND answer IS NULL", (account_id,)
+        )
+        created = now_iso()
+        for q in questions:
+            conn.execute(
+                "INSERT INTO account_profile_questions (account_id, question, answer, created_at) VALUES (?, ?, NULL, ?)",
+                (account_id, q, created),
+            )
+    return list_profile_questions(account_id)
+
+
+def answer_profile_questions(account_id: int, answers: dict) -> list:
+    """answers: {question_id: answer_text}. Silently ignores ids that don't
+    belong to this account (defensive, same pattern as the rest of this
+    file's tenant checks)."""
+    with get_conn() as conn:
+        for qid, answer in answers.items():
+            conn.execute(
+                "UPDATE account_profile_questions SET answer = ?, answered_at = ? WHERE id = ? AND account_id = ?",
+                (answer, now_iso(), qid, account_id),
+            )
+    return list_profile_questions(account_id)
 
 
 # ---------------------------------------------------------------------------
@@ -2507,6 +2646,193 @@ def campaign_results(campaign_id: int, account_id: int) -> list:
             (campaign_id, account_id),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# ICP-scoring (Fase 3, crm-roadmap.md: "analyse welke combinaties (sector x
+# persona x omzet) het beste presteren"). Scoort elke waarde van sector,
+# buyer persona en omzetcategorie (los, en als combinatie) op basis van de
+# al bestaande open/click/reply-data uit campagnes en replies - geen nieuwe
+# tracking nodig, dit hergebruikt gewoon wat er al gemeten wordt.
+#
+# Waarom reply het zwaarst weegt: een open kan per ongeluk zijn (afbeeldingen
+# automatisch geladen), een klik is interesse, maar een reply is het enige
+# signaal dat de ontvanger daadwerkelijk heeft gereageerd - de sterkste
+# indicatie van een goede fit. Vandaar 50/30/20 (reply/click/open).
+#
+# MIN_SAMPLE voorkomt dat één toevallige open op 1 verzonden mail als
+# "100% score" bovenaan komt te staan - zulke groepen worden wel getoond
+# (voor transparantie) maar krijgen sufficient_data=False en tellen niet
+# mee voor de aanbevolen ICP.
+# ---------------------------------------------------------------------------
+
+ICP_MIN_SAMPLE = 3
+_ICP_UNKNOWN = "Onbekend"
+
+
+def _icp_contact_stats(account_id: int, conn) -> dict:
+    """Per-contact {sent, opened, clicked, replied} - campagne-tracking plus
+    opvolgsequenties (die laatste hebben geen open/click-tracking, alleen
+    verzonden, zie sequence_sends.SCHEMA-commentaar elders in dit bestand)."""
+    stats = {}
+
+    for row in conn.execute(
+        """
+        SELECT cr.contact_id,
+               SUM(CASE WHEN cr.sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent,
+               SUM(CASE WHEN cr.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
+               SUM(CASE WHEN cr.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked
+        FROM campaign_recipients cr
+        JOIN campaigns camp ON camp.id = cr.campaign_id
+        WHERE camp.account_id = ?
+        GROUP BY cr.contact_id
+        """,
+        (account_id,),
+    ).fetchall():
+        s = stats.setdefault(row["contact_id"], {"sent": 0, "opened": 0, "clicked": 0, "replied": 0})
+        s["sent"] += row["sent"] or 0
+        s["opened"] += row["opened"] or 0
+        s["clicked"] += row["clicked"] or 0
+
+    for row in conn.execute(
+        """
+        SELECT se.contact_id, SUM(CASE WHEN ss.sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent
+        FROM sequence_sends ss
+        JOIN sequence_enrollments se ON se.id = ss.enrollment_id
+        WHERE se.account_id = ?
+        GROUP BY se.contact_id
+        """,
+        (account_id,),
+    ).fetchall():
+        s = stats.setdefault(row["contact_id"], {"sent": 0, "opened": 0, "clicked": 0, "replied": 0})
+        s["sent"] += row["sent"] or 0
+
+    for row in conn.execute(
+        "SELECT DISTINCT contact_id FROM incoming_replies WHERE account_id = ? AND contact_id IS NOT NULL",
+        (account_id,),
+    ).fetchall():
+        s = stats.setdefault(row["contact_id"], {"sent": 0, "opened": 0, "clicked": 0, "replied": 0})
+        s["replied"] = 1
+
+    return stats
+
+
+def _icp_score_group(agg: dict) -> dict:
+    sent = agg["emails_sent"]
+    reached = agg["contacts_reached"]
+    open_rate = agg["opens"] / sent if sent else 0.0
+    click_rate = agg["clicks"] / sent if sent else 0.0
+    reply_rate = agg["replied_contacts"] / reached if reached else 0.0
+    score = round(100 * (0.5 * reply_rate + 0.3 * click_rate + 0.2 * open_rate), 1)
+    return {
+        **agg,
+        "open_rate": round(open_rate, 3),
+        "click_rate": round(click_rate, 3),
+        "reply_rate": round(reply_rate, 3),
+        "score": score,
+        "sufficient_data": sent >= ICP_MIN_SAMPLE,
+    }
+
+
+def icp_scores(account_id: int) -> dict:
+    """Scoort sector/persona/omzetcategorie (los en gecombineerd) op
+    open/click/reply-performance. Zie de module-commentaar hierboven voor de
+    scoreformule en de MIN_SAMPLE-afkap."""
+    with get_conn() as conn:
+        contacts = conn.execute(
+            """
+            SELECT c.id, c.sector, c.revenue_range, bp.name AS persona_name
+            FROM contacts c LEFT JOIN buyer_personas bp ON bp.id = c.persona_id
+            WHERE c.account_id = ?
+            """,
+            (account_id,),
+        ).fetchall()
+        contact_stats = _icp_contact_stats(account_id, conn)
+
+    def bucket(value):
+        return value.strip() if value and value.strip() else None
+
+    dims = {"sector": {}, "persona": {}, "revenue_range": {}}
+    combos = {}
+    missing = {"sector": 0, "persona": 0, "revenue_range": 0}
+    contacts_total = len(contacts)
+
+    def add(groups: dict, key, contact_id):
+        g = groups.setdefault(key, {"contacts": 0, "contacts_reached": 0, "emails_sent": 0, "opens": 0, "clicks": 0, "replied_contacts": 0})
+        g["contacts"] += 1
+        s = contact_stats.get(contact_id)
+        if s and s["sent"] > 0:
+            g["contacts_reached"] += 1
+            g["emails_sent"] += s["sent"]
+            g["opens"] += s["opened"]
+            g["clicks"] += s["clicked"]
+            g["replied_contacts"] += s["replied"]
+
+    for c in contacts:
+        sector = bucket(c["sector"])
+        persona = bucket(c["persona_name"])
+        revenue = bucket(c["revenue_range"])
+        if not sector:
+            missing["sector"] += 1
+        if not persona:
+            missing["persona"] += 1
+        if not revenue:
+            missing["revenue_range"] += 1
+
+        if sector:
+            add(dims["sector"], sector, c["id"])
+        if persona:
+            add(dims["persona"], persona, c["id"])
+        if revenue:
+            add(dims["revenue_range"], revenue, c["id"])
+        if sector and persona and revenue:
+            add(combos, (sector, persona, revenue), c["id"])
+
+    def scored_list(groups: dict, label_key="value"):
+        out = [{**_icp_score_group(agg), label_key: key} for key, agg in groups.items()]
+        out.sort(key=lambda r: (r["sufficient_data"], r["score"]), reverse=True)
+        return out
+
+    dimensions = {name: scored_list(groups) for name, groups in dims.items()}
+
+    combo_list = []
+    for (sector, persona, revenue), agg in combos.items():
+        combo_list.append({**_icp_score_group(agg), "sector": sector, "persona": persona, "revenue_range": revenue})
+    combo_list.sort(key=lambda r: (r["sufficient_data"], r["score"]), reverse=True)
+
+    recommended = None
+    sufficient_combos = [c for c in combo_list if c["sufficient_data"]]
+    if sufficient_combos:
+        recommended = {"basis": "combinatie", **sufficient_combos[0]}
+    else:
+        best_per_dim = {}
+        for name in ("sector", "persona", "revenue_range"):
+            candidates = [r for r in dimensions[name] if r["sufficient_data"]]
+            if candidates:
+                best_per_dim[name] = candidates[0]
+        if best_per_dim:
+            recommended = {
+                "basis": "losse_dimensies",
+                "note": (
+                    "Nog geen enkele sector x persona x omzet-combinatie met genoeg data "
+                    f"(minimaal {ICP_MIN_SAMPLE} verzonden mails) - dit zijn de sterkste "
+                    "losse signalen tot nu toe."
+                ),
+                **{name: r for name, r in best_per_dim.items()},
+            }
+
+    return {
+        "dimensions": dimensions,
+        "combinations": combo_list,
+        "recommended_icp": recommended,
+        "data_quality": {
+            "contacts_total": contacts_total,
+            "contacts_missing_sector": missing["sector"],
+            "contacts_missing_persona": missing["persona"],
+            "contacts_missing_revenue_range": missing["revenue_range"],
+            "min_sample_size": ICP_MIN_SAMPLE,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

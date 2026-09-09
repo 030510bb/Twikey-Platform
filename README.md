@@ -417,7 +417,7 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `GET /api/contacts/{id}` 🔒 | Eén contact incl. tags/toewijzing. |
 | `GET /api/contacts/{id}/timeline` 🔒 | Audit trail: CRM-events + campagne-mails + opvolgsequentie-mails + LinkedIn-outreach, nieuwste eerst. Verzonden/mislukte mails bevatten (vanaf Fase 3) de daadwerkelijk verstuurde `subject`/`body`, niet alleen een sjabloonverwijzing. |
 | `POST /api/contacts` 🔒 | Eén contact toevoegen/bijwerken. |
-| `PATCH /api/contacts/{id}` 🔒 | CRM-velden bijwerken (`job_title`, `sector`, `company`, `linkedin_url`, `is_customer`, `has_open_quote`, `do_not_contact`). |
+| `PATCH /api/contacts/{id}` 🔒 | CRM-velden bijwerken (`job_title`, `sector`, `revenue_range`, `company`, `linkedin_url`, `is_customer`, `has_open_quote`, `do_not_contact`). |
 | `POST /api/contacts/bulk` 🔒 | Meerdere contacten in één keer toevoegen. |
 | `POST /api/contacts/import-csv` 🔒 | CSV-bestand importeren (multipart `file`), flexibele NL/EN-kolomherkenning. |
 | `GET /api/contacts/export-csv` 🔒 | Alle contacten als CSV downloaden. |
@@ -425,7 +425,14 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `POST /api/contacts/{id}/tags` 🔒 / `DELETE /api/contacts/{id}/tags/{tag_id}` 🔒 | Tag aan een contact koppelen/loskoppelen. |
 | `POST /api/contacts/{id}/assign` 🔒 | Contact toewijzen aan een teamlid (`user_id`, of `null` om los te koppelen). |
 | `GET /api/buyer-personas` 🔒 / `POST /api/buyer-personas` 🔒 / `DELETE /api/buyer-personas/{id}` 🔒 | Buyer persona's beheren voor je account (Fase 3). Verwijderen maakt de koppeling bij contacten/sequenties/campagne-varianten leeg i.p.v. te blokkeren. |
+| `PUT /api/buyer-personas/{id}` 🔒 | Naam en/of omschrijving (pijnpunt/context) van een persona bijwerken (Fase 3b) — de omschrijving wordt meegegeven aan Claude bij AI-mailsuggesties. |
 | `PUT /api/contacts/{id}/persona` 🔒 | De buyer persona van één contact instellen (`persona_id`) of loskoppelen (`persona_id: null`) — een contact heeft er hoogstens één tegelijk. |
+| `GET /api/account-profile` 🔒 / `PUT /api/account-profile` 🔒 | Bedrijfsprofiel (Fase 3b): waardepropositie + USP's, gebruikt voor AI-mailsuggesties. GET geeft ook de laatste verdiepingsvragen + antwoorden terug. |
+| `POST /api/account-profile/generate-questions` 🔒 | Genereert 2-4 AI-verdiepingsvragen (of een vaste fallback-set zonder AI-key) om het profiel scherper te krijgen. |
+| `POST /api/account-profile/answer-questions` 🔒 | Antwoorden op verdiepingsvragen opslaan (`answers: [{id, answer}]`). |
+| `POST /api/campaigns/suggest-variants` 🔒 | AI-gesuggereerde mail-varianten (`offer_name`/`subject_template`/`body_template`) op basis van het bedrijfsprofiel, optioneel per `persona_id` — slaat niets op, alleen voor de variant-editor in het dashboard. Valt zonder AI-key terug op een sjabloon gevuld met de eigen waardepropositie/USP's. |
+| `GET /api/campaigns/default-variants` 🔒 | De vaste 4 lead-magnet varianten, voor het voorladen van de variant-editor. |
+| `GET /api/analytics/icp-scores` 🔒 | ICP-scoring (Fase 3b): sector/buyer persona/omzetcategorie — los en gecombineerd — gescoord op open/klik/reply-rate uit bestaande campagnedata, met een aanbevolen "ideal customer profile". |
 | `GET /api/reminders` 🔒 / `POST /api/reminders` 🔒 / `POST /api/reminders/{id}/complete` 🔒 | Herinneringen (agenderen) per contact. |
 | `GET /api/exclusions` 🔒 / `POST /api/exclusions` 🔒 / `DELETE /api/exclusions/{id}` 🔒 | Uitsluitlijst (domein/bedrijf) beheren. |
 | `POST /api/exclusions/import-csv` 🔒 | CSV met te vermijden domeinen/bedrijven importeren. |

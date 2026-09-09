@@ -67,3 +67,121 @@ def draft_reply(reply_text: str, objection_category: str = "", suggested_reply: 
         messages=[{"role": "user", "content": "\n\n".join(user_parts)}],
     )
     return "".join(block.text for block in message.content if block.type == "text").strip()
+
+
+# ---------------------------------------------------------------------------
+# Fase 3b (crm-roadmap.md): AI-gedreven intake & mailsuggesties.
+#
+# Same division of labour as draft_reply() above: this module only ever
+# talks to Claude and RAISES on any failure (missing/bad key, network,
+# rate limit, unparsable response) - it never decides what to show the user
+# when that happens. app.py catches these exceptions and falls back to a
+# static, non-AI alternative (same defensive pattern as
+# _categorize_reply/draft_reply for incoming replies), so both endpoints
+# keep working with zero external dependencies even without an
+# ANTHROPIC_API_KEY - the same guarantee the rest of this project makes.
+# ---------------------------------------------------------------------------
+
+def _text_of(message) -> str:
+    return "".join(block.text for block in message.content if block.type == "text").strip()
+
+
+def _profile_context(value_proposition: str, usps: list, personas: list = None) -> str:
+    parts = [f"Waardepropositie:\n{value_proposition or '(nog niet ingevuld)'}"]
+    if usps:
+        parts.append("USP's:\n" + "\n".join(f"- {u}" for u in usps))
+    if personas:
+        persona_lines = []
+        for p in personas:
+            name = p.get("name") if isinstance(p, dict) else str(p)
+            desc = p.get("description") if isinstance(p, dict) else ""
+            persona_lines.append(f"- {name}" + (f": {desc}" if desc else ""))
+        parts.append("Buyer persona's:\n" + "\n".join(persona_lines))
+    return "\n\n".join(parts)
+
+
+def generate_profile_questions(value_proposition: str, usps: list, personas: list = None) -> list:
+    """Eén AI-verdiepingsronde (bewust geen doorlopend chatgesprek, zie
+    crm-roadmap.md): geeft 2-4 gerichte vervolgvragen terug om vage of
+    onvolledige antwoorden in het intakeformulier aan te scherpen."""
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    system = (
+        "Je helpt een B2B sales-team hun intakeformulier aan te scherpen. Op basis "
+        "van hun (mogelijk nog vage of onvolledige) waardepropositie, USP's en "
+        "buyer persona's, stel je 2 tot 4 korte, concrete vervolgvragen die hen "
+        "helpen dit scherper te krijgen - bijvoorbeeld ontbrekende cijfers/bewijs, "
+        "een te vage USP, of een buyer persona zonder duidelijk pijnpunt. Schrijf "
+        "in het Nederlands. Geef ALLEEN de vragen terug, één per regel, elk "
+        "beginnend met '- ', zonder inleiding, nummering of afsluiting."
+    )
+    message = client.messages.create(
+        model=_MODEL,
+        max_tokens=400,
+        system=system,
+        messages=[{"role": "user", "content": _profile_context(value_proposition, usps, personas)}],
+    )
+    lines = _text_of(message).splitlines()
+    questions = [line.strip().lstrip("-").strip() for line in lines if line.strip().lstrip("-").strip()]
+    if not questions:
+        raise ValueError("Claude gaf geen bruikbare vragen terug")
+    return questions[:4]
+
+
+def generate_variant_suggestions(value_proposition: str, usps: list, persona: dict = None, count: int = 2) -> list:
+    """Genereert `count` mail-variant-suggesties (offer_name/subject_template/
+    body_template, met {{firstName}}/{{lastName}}/{{company}} merge-velden)
+    op basis van het bedrijfsprofiel, optioneel toegespitst op één buyer
+    persona - vervangt/vult aan op de vaste 4 lead-magnet varianten
+    (crm-roadmap.md Fase 3: 'uitgaande mails voorgesteld o.b.v. dit profiel')."""
+    import json
+
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    system = (
+        "Je schrijft korte, Nederlandse eerste-contact outreach-mails (informeel-"
+        "zakelijk, je-vorm) voor een B2B sales-team, op basis van hun "
+        "waardepropositie en USP's. Gebruik de merge-velden {{firstName}}, "
+        "{{lastName}} en {{company}} waar relevant - laat ze letterlijk staan, "
+        "vul ze niet in. Subject: kort en persoonlijk. Body: max ~80 woorden, "
+        "mag eenvoudige <br><br> gebruiken voor alinea's, geen aanhef/afsluiting "
+        "met naam (dat voegt de verzender zelf toe). "
+        "Geef het antwoord ALLEEN als geldige JSON: een array van objecten met "
+        'de sleutels "offer_name", "subject_template" en "body_template". Geen '
+        "uitleg, geen markdown-codeblok, alleen de JSON-array."
+    )
+    context = _profile_context(value_proposition, usps)
+    if persona:
+        context += f"\n\nSchrijf specifiek voor deze buyer persona: {persona.get('name')}"
+        if persona.get("description"):
+            context += f" ({persona['description']})"
+    context += f"\n\nGenereer precies {count} verschillende variant(en)."
+
+    message = client.messages.create(
+        model=_MODEL,
+        max_tokens=800,
+        system=system,
+        messages=[{"role": "user", "content": context}],
+    )
+    raw = _text_of(message)
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+    variants = json.loads(raw)
+    if not isinstance(variants, list) or not variants:
+        raise ValueError("Claude gaf geen bruikbare variant-lijst terug")
+    cleaned = []
+    for v in variants[:count]:
+        if not all(k in v for k in ("offer_name", "subject_template", "body_template")):
+            continue
+        cleaned.append({
+            "offer_name": v["offer_name"],
+            "subject_template": v["subject_template"],
+            "body_template": v["body_template"],
+        })
+    if not cleaned:
+        raise ValueError("Claude gaf geen variant terug met de verwachte velden")
+    return cleaned

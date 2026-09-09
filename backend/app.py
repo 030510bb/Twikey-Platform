@@ -708,6 +708,7 @@ _CSV_COLUMN_ALIASES = {
     "company": {"company", "bedrijf", "bedrijfsnaam", "organisatie"},
     "job_title": {"job_title", "jobtitle", "title", "functie", "functietitel"},
     "sector": {"sector", "branche", "industry"},
+    "revenue_range": {"revenue_range", "revenue", "omzet", "jaaromzet", "omzetcategorie", "company_revenue"},
     "linkedin_url": {"linkedin_url", "linkedin", "linkedinurl", "linkedin profiel"},
     "tags": {"tags", "tag", "labels"},
     "domain": {"domain", "domein", "website"},
@@ -759,6 +760,7 @@ class ContactIn(BaseModel):
     linkedin_url: str = ""
     job_title: str = ""
     sector: str = ""
+    revenue_range: str = ""  # Fase 3c: omzetcategorie, o.a. gebruikt voor ICP-scoring
 
 
 @app.get("/api/contacts")
@@ -790,14 +792,14 @@ def api_export_contacts_csv(account: dict = Depends(get_current_account)):
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
-        "first_name", "last_name", "email", "company", "job_title", "sector", "linkedin_url",
+        "first_name", "last_name", "email", "company", "job_title", "sector", "revenue_range", "linkedin_url",
         "tags", "assigned_to", "source", "is_customer", "has_open_quote", "do_not_contact",
         "excluded_reason", "created_at",
     ])
     for c in contacts:
         writer.writerow([
             c["first_name"], c["last_name"], c["email"], c["company"], c.get("job_title", ""),
-            c.get("sector", ""), c["linkedin_url"], ",".join(t["name"] for t in c.get("tags", [])),
+            c.get("sector", ""), c.get("revenue_range", ""), c["linkedin_url"], ",".join(t["name"] for t in c.get("tags", [])),
             c.get("assigned_to_email") or "", c.get("source", ""), bool(c.get("is_customer")),
             bool(c.get("has_open_quote")), bool(c.get("do_not_contact")), c.get("excluded_reason") or "",
             c["created_at"],
@@ -840,6 +842,7 @@ def api_add_contact(payload: ContactIn, account: dict = Depends(get_current_acco
         linkedin_url=payload.linkedin_url,
         job_title=payload.job_title,
         sector=payload.sector,
+        revenue_range=payload.revenue_range,
         source="manual",
     )
     _apply_hubspot_exclusion(account["id"], contact)
@@ -849,6 +852,7 @@ def api_add_contact(payload: ContactIn, account: dict = Depends(get_current_acco
 class ContactUpdateIn(BaseModel):
     job_title: str | None = None
     sector: str | None = None
+    revenue_range: str | None = None
     company: str | None = None
     linkedin_url: str | None = None
     is_customer: bool | None = None
@@ -882,6 +886,7 @@ def api_add_contacts_bulk(payload: BulkContactsIn, account: dict = Depends(get_c
             linkedin_url=c.linkedin_url,
             job_title=c.job_title,
             sector=c.sector,
+            revenue_range=c.revenue_range,
             source="manual",
         )
         _apply_hubspot_exclusion(account["id"], contact)
@@ -914,6 +919,7 @@ async def api_import_contacts_csv(
             linkedin_url=row.get("linkedin_url", ""),
             job_title=row.get("job_title", ""),
             sector=row.get("sector", ""),
+            revenue_range=row.get("revenue_range", ""),
             source=source,
         )
         for tag_name in [t.strip() for t in row.get("tags", "").split(",") if t.strip()]:
@@ -995,6 +1001,24 @@ def api_delete_buyer_persona(persona_id: int, account: dict = Depends(get_curren
     return {"success": True}
 
 
+class BuyerPersonaUpdateIn(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+@app.put("/api/buyer-personas/{persona_id}")
+def api_update_buyer_persona(persona_id: int, payload: BuyerPersonaUpdateIn, account: dict = Depends(get_current_account)):
+    """Fase 3b: omschrijving (pijnpunten/context) van een persona bewerken -
+    gebruikt door het Profiel-tabblad en meegegeven aan Claude bij het
+    genereren van variant-suggesties (zie suggest_campaign_variants)."""
+    if payload.name is not None and not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Naam mag niet leeg zijn.")
+    persona = database.update_buyer_persona(persona_id, account["id"], name=payload.name, description=payload.description)
+    if not persona:
+        raise HTTPException(status_code=404, detail="Buyer persona niet gevonden.")
+    return {"success": True, "persona": persona}
+
+
 class ContactPersonaIn(BaseModel):
     persona_id: int | None = None
 
@@ -1005,6 +1029,132 @@ def api_set_contact_persona(contact_id: int, payload: ContactPersonaIn, account:
     if not contact:
         raise HTTPException(status_code=404, detail="Contact of buyer persona niet gevonden.")
     return {"success": True, "contact": contact}
+
+
+# ---------------------------------------------------------------------------
+# Bedrijfsprofiel / intake + AI-mailsuggesties (Fase 3b, crm-roadmap.md)
+#
+# Eén AI-verdiepingsronde (geen doorlopend chatgesprek - expliciete
+# scope-keuze) om het intakeformulier scherper te krijgen, en op basis
+# daarvan AI-gesuggereerde mail-varianten per (optionele) buyer persona -
+# i.p.v. de vaste 4 lead-magnet varianten in DEFAULT_VARIANTS. Zoals overal
+# elders in dit project: als er geen ANTHROPIC_API_KEY is ingesteld (of de
+# aanroep faalt), valt elke endpoint hieronder terug op een simpel,
+# voorspelbaar niet-AI alternatief in plaats van te falen - zie
+# ai_client.py's module-docstring voor die conventie.
+# ---------------------------------------------------------------------------
+
+_FALLBACK_PROFILE_QUESTIONS = [
+    "Welk concreet, meetbaar resultaat behalen klanten gemiddeld (bijv. tijdsbesparing, kostenbesparing, %)?",
+    "Wat is het belangrijkste pijnpunt van je doelgroep dat jullie oplossen, in hun eigen woorden?",
+    "Wie is de typische beslisser, en waar liggen zij 's nachts wakker van?",
+    "Wat maakt jullie aanpak anders dan het alternatief dat prospects nu gebruiken?",
+]
+
+
+@app.get("/api/account-profile")
+def api_get_account_profile(account: dict = Depends(get_current_account)):
+    return {
+        "profile": database.get_account_profile(account["id"]),
+        "questions": database.list_profile_questions(account["id"]),
+    }
+
+
+class AccountProfileIn(BaseModel):
+    value_proposition: str = ""
+    usps: list[str] = []
+
+
+@app.put("/api/account-profile")
+def api_update_account_profile(payload: AccountProfileIn, account: dict = Depends(get_current_account)):
+    profile = database.upsert_account_profile(account["id"], payload.value_proposition, payload.usps)
+    return {"success": True, "profile": profile}
+
+
+@app.post("/api/account-profile/generate-questions")
+def api_generate_profile_questions(account: dict = Depends(get_current_account)):
+    profile = database.get_account_profile(account["id"])
+    personas = database.list_buyer_personas(account["id"])
+    questions, source = _FALLBACK_PROFILE_QUESTIONS, "template"
+    if ai_client.is_configured():
+        try:
+            questions = ai_client.generate_profile_questions(profile["value_proposition"], profile["usps"], personas)
+            source = "ai"
+        except Exception as exc:  # noqa: BLE001 - fall back to the static question set
+            logger.warning("AI-verdiepingsvragen genereren mislukt voor account %s: %s", account["id"], exc)
+    stored = database.replace_pending_profile_questions(account["id"], questions)
+    return {"success": True, "source": source, "questions": stored}
+
+
+class ProfileAnswerIn(BaseModel):
+    id: int
+    answer: str
+
+
+class ProfileAnswersIn(BaseModel):
+    answers: list[ProfileAnswerIn]
+
+
+@app.post("/api/account-profile/answer-questions")
+def api_answer_profile_questions(payload: ProfileAnswersIn, account: dict = Depends(get_current_account)):
+    answers = {a.id: a.answer for a in payload.answers}
+    questions = database.answer_profile_questions(account["id"], answers)
+    return {"success": True, "questions": questions}
+
+
+class SuggestVariantsIn(BaseModel):
+    persona_id: int | None = None
+    count: int = 2
+
+
+@app.post("/api/campaigns/suggest-variants")
+def api_suggest_campaign_variants(payload: SuggestVariantsIn, account: dict = Depends(get_current_account)):
+    """Geeft variant-suggesties (offer_name/subject_template/body_template)
+    terug om in de A/B Test-variant-editor te tonen - slaat niets op, de
+    klant kiest/bewerkt eerst voordat een campagne daadwerkelijk wordt
+    aangemaakt met POST /api/campaigns."""
+    count = max(1, min(payload.count, 4))
+    profile = database.get_account_profile(account["id"])
+    persona = None
+    if payload.persona_id is not None:
+        persona = next(
+            (p for p in database.list_buyer_personas(account["id"]) if p["id"] == payload.persona_id), None
+        )
+        if not persona:
+            raise HTTPException(status_code=404, detail="Buyer persona niet gevonden.")
+
+    source = "template"
+    variants = None
+    if ai_client.is_configured():
+        try:
+            variants = ai_client.generate_variant_suggestions(
+                profile["value_proposition"], profile["usps"], persona, count
+            )
+            source = "ai"
+        except Exception as exc:  # noqa: BLE001 - fall back to the profile-based template below
+            logger.warning("AI-variant-suggesties genereren mislukt voor account %s: %s", account["id"], exc)
+
+    if not variants:
+        # Niet-AI fallback: vult de vaste template rechtstreeks met de eigen
+        # waardepropositie/USP's van het account, zodat de knop altijd iets
+        # bruikbaars teruggeeft, ook zonder ANTHROPIC_API_KEY.
+        value_prop = profile["value_proposition"] or "wat wij voor jullie kunnen betekenen"
+        usp_line = f" {profile['usps'][0]}." if profile["usps"] else ""
+        persona_label = f" voor {persona['name']}" if persona else ""
+        letters = ["A", "B", "C", "D"]
+        variants = [
+            {
+                "offer_name": f"Aanbod {letters[i]}{persona_label}",
+                "subject_template": "{{firstName}}, kort voorstel voor {{company}}" + (f" ({persona['name']})" if persona else ""),
+                "body_template": (
+                    f"Hi {{{{firstName}}}},<br><br>{value_prop}{usp_line}<br><br>"
+                    "Benieuwd of dit ook voor {{company}} interessant is?"
+                ),
+            }
+            for i in range(count)
+        ]
+
+    return {"success": True, "source": source, "variants": variants}
 
 
 # ---------------------------------------------------------------------------
@@ -1744,6 +1894,17 @@ class CampaignIn(BaseModel):
     persona_id: int | None = None  # Fase 3: stuur deze campagne alleen naar contacten met deze buyer persona
 
 
+@app.get("/api/campaigns/default-variants")
+def api_default_campaign_variants(account: dict = Depends(get_current_account)):
+    """De vaste 4 lead-magnet varianten - los opvraagbaar zodat de
+    variant-editor in het dashboard ze kan voorladen zonder de tekst hier
+    te dupliceren. Platform-brede, niet-klantspecifieke content (net als de
+    "4 Lead Magnet Offers"-uitleg in de A/B Test-tab); `account` is hier
+    alleen om consistent achter login te blijven, net als elke andere
+    endpoint in dit bestand."""
+    return {"variants": DEFAULT_VARIANTS}
+
+
 @app.get("/api/campaigns")
 def api_list_campaigns(account: dict = Depends(get_current_account)):
     return {"campaigns": database.list_campaigns(account["id"])}
@@ -1825,6 +1986,16 @@ def api_campaign_results(campaign_id: int, account: dict = Depends(get_current_a
     if not campaign:
         raise HTTPException(status_code=404, detail="Campagne niet gevonden")
     return {"campaign": campaign["campaign"], "results": database.campaign_results(campaign_id, aid)}
+
+
+@app.get("/api/analytics/icp-scores")
+def api_icp_scores(account: dict = Depends(get_current_account)):
+    """Fase 3: scoort sector/buyer persona/omzetcategorie (los en
+    gecombineerd) op basis van bestaande open/click/reply-data, om te zien
+    welke combinatie de beste resultaten oplevert ("ideal customer
+    profile") - zie database.icp_scores() voor de scoreformule en de
+    ICP_MIN_SAMPLE-afkap tegen ruis bij kleine steekproeven."""
+    return database.icp_scores(account["id"])
 
 
 # ---------------------------------------------------------------------------

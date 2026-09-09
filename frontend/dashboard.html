@@ -23,79 +23,143 @@
             padding: 20px;
         }
 
-        header {
+        /* Sidebar navigation (Fase 3b, crm-roadmap.md - vervangt de vorige
+           horizontale tab-bar, gegroepeerd per belangrijk onderdeel:
+           Dashboard+Contacten los, Outreach/Gesprekken/Inzicht gegroepeerd,
+           accountbrede instellingen onderaan vastgepind). */
+        .app-shell {
+            display: flex;
+            min-height: 100vh;
+            align-items: flex-start;
+        }
+
+        .sidebar {
+            width: 250px;
+            flex-shrink: 0;
+            background: white;
+            border-right: 1px solid #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            position: sticky;
+            top: 0;
+            height: 100vh;
+        }
+
+        .sidebar-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 20px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .sidebar-brand .logo-mark {
+            width: 34px;
+            height: 34px;
+            border-radius: 9px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            border-radius: 12px;
-            margin-bottom: 30px;
-            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);
-            position: relative;
+            flex-shrink: 0;
+        }
+
+        .sidebar-brand .brand-text strong {
+            display: block;
+            font-size: 15px;
+            color: #1a202c;
+            line-height: 1.2;
+        }
+
+        .sidebar-brand .brand-text span {
+            font-size: 11px;
+            color: #94a3b8;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 12px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .sidebar-group-label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #a0aec0;
+            padding: 14px 10px 4px;
+        }
+
+        .sidebar-footer {
+            border-top: 1px solid #e2e8f0;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .sidebar-nav .tab-button,
+        .sidebar-footer .tab-button {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            text-align: left;
+            padding: 10px 10px;
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 0;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        .sidebar-nav .tab-button:hover,
+        .sidebar-footer .tab-button:hover {
+            background: #f1f5f9;
+            color: #667eea;
+        }
+
+        .sidebar-nav .tab-button.active,
+        .sidebar-footer .tab-button.active {
+            background: #eef2ff;
+            color: #667eea;
         }
 
         #account-bar {
-            position: absolute;
-            top: 20px;
-            right: 30px;
             display: flex;
             align-items: center;
-            gap: 12px;
-            font-size: 13px;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 12px 10px 0;
+            margin-top: 4px;
+            border-top: 1px solid #e2e8f0;
+            font-size: 12px;
+            color: #64748b;
         }
 
         #account-bar button {
-            background: rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(255, 255, 255, 0.4);
-            color: white;
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            color: #4a5568;
             padding: 6px 12px;
             border-radius: 6px;
             cursor: pointer;
             font-size: 12px;
+            font-weight: 600;
         }
 
         #account-bar button:hover {
-            background: rgba(255, 255, 255, 0.3);
+            background: #e2e8f0;
         }
 
-        header h1 {
-            font-size: 32px;
-            margin-bottom: 10px;
-        }
-
-        header p {
-            font-size: 16px;
-            opacity: 0.9;
-        }
-
-        .tabs {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-            border-bottom: 2px solid #e2e8f0;
-            padding-bottom: 0;
-        }
-
-        .tab-button {
-            padding: 15px 25px;
-            border: none;
-            background: transparent;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: 600;
-            color: #666;
-            border-bottom: 3px solid transparent;
-            margin-bottom: -2px;
-            transition: all 0.3s ease;
-        }
-
-        .tab-button:hover {
-            color: #667eea;
-        }
-
-        .tab-button.active {
-            color: #667eea;
-            border-bottom-color: #667eea;
+        .main-content {
+            flex: 1;
+            min-width: 0;
         }
 
         .tab-content {
@@ -457,49 +521,102 @@
                 grid-template-columns: 1fr;
             }
 
-            .tabs {
+            .app-shell {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: static;
+                flex-direction: row;
+                flex-wrap: wrap;
+                border-right: none;
+                border-bottom: 1px solid #e2e8f0;
+            }
+
+            .sidebar-brand {
+                border-bottom: none;
+                border-right: 1px solid #e2e8f0;
+            }
+
+            .sidebar-nav {
+                flex-direction: row;
                 overflow-x: auto;
-                flex-wrap: nowrap;
+                padding: 10px;
             }
 
-            .tab-button {
+            .sidebar-group-label {
+                display: none;
+            }
+
+            .sidebar-footer {
+                flex-direction: row;
+                border-top: none;
+                border-left: 1px solid #e2e8f0;
+                overflow-x: auto;
+            }
+
+            #account-bar {
+                border-top: none;
+                padding: 0 0 0 10px;
+                margin-top: 0;
+            }
+
+            .sidebar-nav .tab-button,
+            .sidebar-footer .tab-button {
                 white-space: nowrap;
-                padding: 12px 15px;
-            }
-
-            header h1 {
-                font-size: 24px;
             }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header>
-            <h1>🚀 Twikey - Complete Sales Platform</h1>
-            <p>Email Sync + LinkedIn Automation + Message Validation + A/B Test Lead Magnets</p>
-            <div id="account-bar">
-                <span id="account-company-name">-</span>
-                <button id="logout-button" onclick="logout()">Uitloggen</button>
+    <div class="app-shell">
+        <!-- Sidebar navigation, gegroepeerd per belangrijk onderdeel
+             (crm-roadmap.md Fase 3b): Dashboard+Contacten los, Outreach/
+             Gesprekken/Inzicht gegroepeerd, accountbrede instellingen +
+             uitloggen onderaan vastgepind. -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="logo-mark"></div>
+                <div class="brand-text">
+                    <strong>Twikey</strong>
+                    <span>Sales Platform</span>
+                </div>
             </div>
-        </header>
 
-        <!-- Tabs Navigation -->
-        <div class="tabs">
-            <button class="tab-button active" onclick="switchTab('dashboard')">📊 Dashboard</button>
-            <button class="tab-button" onclick="switchTab('contacts')">👤 Contacten</button>
-            <button class="tab-button" onclick="switchTab('email')">📧 Email Sync</button>
-            <button class="tab-button" onclick="switchTab('linkedin')">🔗 LinkedIn</button>
-            <button class="tab-button" onclick="switchTab('validation')">🔍 Validation</button>
-            <button class="tab-button" onclick="switchTab('abtest')">🧪 A/B Test</button>
-            <button class="tab-button" onclick="switchTab('analytics')">📈 Analytics</button>
-            <button class="tab-button" onclick="switchTab('team')">👥 Team</button>
-            <button class="tab-button" onclick="switchTab('integrations')">🔌 Integraties</button>
-            <button class="tab-button" onclick="switchTab('replies')">💬 Replies</button>
-            <button class="tab-button" onclick="switchTab('sequences')">🔁 Sequenties</button>
-            <button class="tab-button" onclick="switchTab('support')">🆘 Support</button>
-        </div>
+            <nav class="sidebar-nav">
+                <button class="tab-button active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+                <button class="tab-button" onclick="switchTab('contacts')">👤 Contacten</button>
+
+                <div class="sidebar-group-label">Outreach</div>
+                <button class="tab-button" onclick="switchTab('email')">📧 Email Sync</button>
+                <button class="tab-button" onclick="switchTab('linkedin')">🔗 LinkedIn</button>
+                <button class="tab-button" onclick="switchTab('abtest')">🧪 A/B Test</button>
+                <button class="tab-button" onclick="switchTab('sequences')">🔁 Sequenties</button>
+
+                <div class="sidebar-group-label">Gesprekken</div>
+                <button class="tab-button" onclick="switchTab('replies')">💬 Replies</button>
+                <button class="tab-button" onclick="switchTab('validation')">🔍 Validation</button>
+
+                <div class="sidebar-group-label">Inzicht</div>
+                <button class="tab-button" onclick="switchTab('analytics')">📈 Analytics</button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <button class="tab-button" onclick="switchTab('profile')">🧭 Profiel</button>
+                <button class="tab-button" onclick="switchTab('team')">👥 Team</button>
+                <button class="tab-button" onclick="switchTab('integrations')">🔌 Integraties</button>
+                <button class="tab-button" onclick="switchTab('support')">🆘 Support</button>
+                <div id="account-bar">
+                    <span id="account-company-name">-</span>
+                    <button id="logout-button" onclick="logout()">Uitloggen</button>
+                </div>
+            </div>
+        </aside>
+
+        <div class="main-content">
+        <div class="container">
 
         <!-- TAB 1: DASHBOARD -->
         <div id="dashboard" class="tab-content active">
@@ -800,6 +917,22 @@
             </div>
 
             <div class="card">
+                <h2><span class="icon">✉️</span>Mail-varianten</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Laat leeg om de 4 standaard lead-magnet varianten hieronder te gebruiken,
+                    of stel je eigen varianten samen — handmatig, of met AI-suggesties op
+                    basis van je <a href="#" onclick="switchTab('profile'); return false;">bedrijfsprofiel</a>.
+                </p>
+                <div id="abtest-variants-list"></div>
+                <div style="margin-top:10px;">
+                    <button class="button button-secondary" onclick="addAbtestVariantRow()">+ Variant toevoegen</button>
+                    <button class="button button-secondary" onclick="loadDefaultAbtestVariants()">Standaardvarianten laden</button>
+                    <button class="button button-secondary" onclick="generateAbtestVariantSuggestions()">✨ AI-suggesties genereren</button>
+                </div>
+                <div id="abtest-variants-alert" style="margin-top:8px;"></div>
+            </div>
+
+            <div class="card">
                 <h2><span class="icon">🎁</span>4 Lead Magnet Offers</h2>
                 
                 <div class="offer-card offer-a">
@@ -926,6 +1059,35 @@
                 <div id="analytics-recommendation"></div>
                 <button class="button button-primary" id="analytics-round2-button" style="display:none;" onclick="launchRound2()">🚀 Launch Round 2 with Winner</button>
             </div>
+
+            <!-- Fase 3: ICP-scoring (crm-roadmap.md - welke combinatie van
+                 sector x buyer persona x omzet presteert het beste, o.b.v.
+                 bestaande open/click/reply-data). -->
+            <div class="card">
+                <h2><span class="icon">🧬</span>ICP-analyse</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Scoort sector, buyer persona en omzetcategorie — los en gecombineerd —
+                    op basis van de open-, klik- en reply-cijfers van al je verzonden mails,
+                    om te zien welk klantprofiel het beste past ("ideal customer profile").
+                </p>
+                <div id="icp-recommended"></div>
+                <div id="icp-data-quality" style="color:#999; font-size:12px; margin:10px 0;"></div>
+                <div id="icp-combinations"></div>
+                <div class="grid-2" style="margin-top:15px;">
+                    <div>
+                        <h3 style="font-size:14px; margin-bottom:8px;">Per sector</h3>
+                        <div id="icp-dim-sector"></div>
+                    </div>
+                    <div>
+                        <h3 style="font-size:14px; margin-bottom:8px;">Per buyer persona</h3>
+                        <div id="icp-dim-persona"></div>
+                    </div>
+                </div>
+                <div style="margin-top:15px; max-width:calc(50% - 8px);">
+                    <h3 style="font-size:14px; margin-bottom:8px;">Per omzetcategorie</h3>
+                    <div id="icp-dim-revenue_range"></div>
+                </div>
+            </div>
         </div>
 
         <div id="team" class="tab-content">
@@ -973,6 +1135,13 @@
                     <div class="input-group"><label>Bedrijf</label><input type="text" id="contact-company"></div>
                     <div class="input-group"><label>Functie</label><input type="text" id="contact-job-title"></div>
                     <div class="input-group"><label>Sector</label><input type="text" id="contact-sector"></div>
+                    <div class="input-group">
+                        <label>Omzet</label>
+                        <input type="text" id="contact-revenue-range" placeholder="bijv. 1-10M" list="revenue-range-suggestions">
+                        <datalist id="revenue-range-suggestions">
+                            <option value="0-1M"><option value="1-10M"><option value="10-50M"><option value="50M+">
+                        </datalist>
+                    </div>
                 </div>
                 <button class="button button-primary" style="margin-top:10px;" onclick="addContact()">Toevoegen</button>
                 <p style="color:#999; font-size:13px; margin-top:10px;">
@@ -1000,7 +1169,7 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>Naam</th><th>Bedrijf</th><th>Functie / sector</th><th>Tags</th><th>Buyer persona</th>
+                            <th>Naam</th><th>Bedrijf</th><th>Functie / sector / omzet</th><th>Tags</th><th>Buyer persona</th>
                             <th>Toegewezen</th><th>Status</th><th></th>
                         </tr>
                     </thead>
@@ -1229,7 +1398,7 @@
                 <h2><span class="icon">📂</span>Contacten importeren / exporteren</h2>
                 <p style="color:#666; margin-bottom: 15px;">
                     Importeer een CSV met contacten (kolommen als voornaam, achternaam,
-                    e-mail, bedrijf, functie, sector, tags worden automatisch herkend,
+                    e-mail, bedrijf, functie, sector, omzet, tags worden automatisch herkend,
                     ook in het Nederlands), of exporteer alle contacten inclusief tags,
                     toewijzing en uitsluitingsstatus.
                 </p>
@@ -1348,6 +1517,52 @@
             </div>
         </div>
 
+        <!-- Fase 3b: bedrijfsprofiel / intake (crm-roadmap.md) -->
+        <div id="profile" class="tab-content">
+            <div class="card">
+                <h2><span class="icon">🧭</span>Bedrijfsprofiel</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Deze gegevens gebruiken we om AI-mailsuggesties op maat te genereren
+                    (zie "AI-suggesties genereren" op het A/B Test-tabblad), i.p.v. altijd
+                    dezelfde vaste 4 lead-magnet varianten.
+                </p>
+                <div id="profile-save-alert"></div>
+                <div class="input-group">
+                    <label>Waardepropositie</label>
+                    <textarea id="profile-value-proposition" placeholder="Wat lossen jullie op, voor wie, en met welk resultaat?" style="min-height:80px;"></textarea>
+                </div>
+                <div class="input-group">
+                    <label>USP's (één per regel)</label>
+                    <textarea id="profile-usps" placeholder="30% snellere betalingen&#10;Geen implementatietijd&#10;..." style="min-height:80px;"></textarea>
+                </div>
+                <button class="button button-primary" onclick="saveAccountProfile()">Profiel opslaan</button>
+                <span id="profile-updated-at" style="color:#999; font-size:12px; margin-left:10px;"></span>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">✨</span>AI-verdiepingsronde</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Laat Claude een paar gerichte vervolgvragen stellen om vage of
+                    onvolledige antwoorden hierboven aan te scherpen (werkt ook zonder
+                    AI-koppeling, dan krijg je een vaste set nuttige vragen).
+                </p>
+                <button class="button button-secondary" onclick="generateProfileQuestions()">Verdiepende vragen genereren</button>
+                <div id="profile-questions-list" style="margin-top:15px;"></div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">🎯</span>Buyer persona's</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Voeg per persona een korte omschrijving (pijnpunt/context) toe — hoe
+                    specifieker, hoe beter de AI-mailsuggesties voor die persona.
+                    Persona's zelf aanmaken/verwijderen doe je op het Contacten-tabblad.
+                </p>
+                <div id="profile-personas-list">
+                    <p style="color:#666;">Laden...</p>
+                </div>
+            </div>
+        </div>
+
         <div id="support" class="tab-content">
             <div class="card">
                 <h2><span class="icon">📚</span>Kennisbank / FAQ</h2>
@@ -1375,6 +1590,9 @@
                     </tbody>
                 </table>
             </div>
+        </div>
+
+        </div>
         </div>
     </div>
 
@@ -1478,10 +1696,11 @@
             }
             if (tabName === 'abtest') {
                 loadAbtestContactCount();
-                loadBuyerPersonas();
+                loadBuyerPersonas().then(renderAbtestVariants);
             }
             if (tabName === 'analytics') {
                 loadCampaignsList();
+                loadIcpScores();
             }
             if (tabName === 'dashboard') {
                 loadDashboardStats();
@@ -1505,6 +1724,11 @@
             if (tabName === 'support') {
                 loadKbArticles();
                 loadSupportTickets();
+            }
+            if (tabName === 'profile') {
+                loadAccountProfile();
+                loadBuyerPersonas();
+                loadPersonaProfileList();
             }
             if (tabName === 'replies') {
                 loadAutoReplySetting();
@@ -2574,6 +2798,105 @@
             }
         }
 
+        // --- Bedrijfsprofiel / intake (Fase 3b) --------------------------------
+
+        async function loadAccountProfile() {
+            try {
+                const data = await apiGet('/api/account-profile');
+                document.getElementById('profile-value-proposition').value = data.profile.value_proposition || '';
+                document.getElementById('profile-usps').value = (data.profile.usps || []).join('\n');
+                document.getElementById('profile-updated-at').textContent = data.profile.updated_at
+                    ? `Laatst opgeslagen: ${new Date(data.profile.updated_at).toLocaleString('nl-NL')}` : '';
+                renderProfileQuestions(data.questions || []);
+            } catch (err) {
+                contactsAlert('profile-save-alert', `Profiel laden mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function saveAccountProfile() {
+            const value_proposition = document.getElementById('profile-value-proposition').value.trim();
+            const usps = document.getElementById('profile-usps').value.split('\n').map(s => s.trim()).filter(Boolean);
+            try {
+                const data = await apiPut('/api/account-profile', { value_proposition, usps });
+                contactsAlert('profile-save-alert', '✓ Profiel opgeslagen.', 'success');
+                document.getElementById('profile-updated-at').textContent =
+                    `Laatst opgeslagen: ${new Date(data.profile.updated_at).toLocaleString('nl-NL')}`;
+            } catch (err) {
+                contactsAlert('profile-save-alert', `Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function generateProfileQuestions() {
+            const container = document.getElementById('profile-questions-list');
+            container.innerHTML = '<p style="color:#666;">Vragen genereren...</p>';
+            try {
+                const data = await apiPost('/api/account-profile/generate-questions', {});
+                renderProfileQuestions(data.questions || []);
+            } catch (err) {
+                container.innerHTML = `<div class="alert alert-warning">Mislukt: ${err.message}</div>`;
+            }
+        }
+
+        function renderProfileQuestions(questions) {
+            const container = document.getElementById('profile-questions-list');
+            if (!questions.length) {
+                container.innerHTML = '<p style="color:#666;">Nog geen vragen gegenereerd.</p>';
+                return;
+            }
+            container.innerHTML = questions.map(q => `
+                <div class="input-group" style="margin-bottom:10px;">
+                    <label>${escapeHtml(q.question)}${q.answered_at ? ' <span style="color:#28a745; font-size:12px;">(beantwoord)</span>' : ''}</label>
+                    <textarea id="profile-answer-${q.id}" style="min-height:50px;">${escapeHtml(q.answer || '')}</textarea>
+                </div>
+            `).join('') + '<button class="button button-primary" onclick="saveProfileAnswers()">Antwoorden opslaan</button>';
+            window._profileQuestionIds = questions.map(q => q.id);
+        }
+
+        async function saveProfileAnswers() {
+            const ids = window._profileQuestionIds || [];
+            const answers = ids
+                .map(id => ({ id, answer: (document.getElementById(`profile-answer-${id}`)?.value || '').trim() }))
+                .filter(a => a.answer);
+            if (!answers.length) return;
+            try {
+                const data = await apiPost('/api/account-profile/answer-questions', { answers });
+                renderProfileQuestions(data.questions || []);
+                contactsAlert('profile-save-alert', '✓ Antwoorden opgeslagen.', 'success');
+            } catch (err) {
+                contactsAlert('profile-save-alert', `Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function loadPersonaProfileList() {
+            const container = document.getElementById('profile-personas-list');
+            try {
+                const data = await apiGet('/api/buyer-personas');
+                if (!data.personas.length) {
+                    container.innerHTML = '<p style="color:#666;">Nog geen buyer persona\'s — maak er één aan op het Contacten-tabblad.</p>';
+                    return;
+                }
+                container.innerHTML = data.personas.map(p => `
+                    <div class="input-group" style="margin-bottom:10px;">
+                        <label>${escapeHtml(p.name)}</label>
+                        <textarea id="persona-desc-${p.id}" placeholder="Pijnpunt/context voor deze persona..." style="min-height:50px;">${escapeHtml(p.description || '')}</textarea>
+                        <button class="button button-secondary" style="margin-top:6px;" onclick="savePersonaDescription(${p.id})">Opslaan</button>
+                    </div>
+                `).join('');
+            } catch (err) {
+                container.innerHTML = `<div class="alert alert-warning">Laden mislukt: ${err.message}</div>`;
+            }
+        }
+
+        async function savePersonaDescription(personaId) {
+            const description = document.getElementById(`persona-desc-${personaId}`).value.trim();
+            try {
+                await apiPut(`/api/buyer-personas/${personaId}`, { description });
+                contactsAlert('profile-save-alert', '✓ Omschrijving opgeslagen.', 'success');
+            } catch (err) {
+                contactsAlert('profile-save-alert', `Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
         function assignSelectHtml(contact) {
             const options = ['<option value="">Niet-toegewezen</option>']
                 .concat(allTeammates.map(u => `<option value="${u.id}" ${contact.assigned_to === u.id ? 'selected' : ''}>${u.email}</option>`));
@@ -2623,7 +2946,7 @@
                     <tr>
                         <td><a href="#" onclick="openTimelineModal(${c.id}, '${(c.first_name + ' ' + c.last_name).replace(/'/g, "\\'")}'); return false;">${c.first_name} ${c.last_name}</a><br><span style="color:#666; font-size:12px;">${c.email}</span></td>
                         <td>${c.company || ''}</td>
-                        <td>${c.job_title || ''}${c.sector ? ' · ' + c.sector : ''}</td>
+                        <td>${c.job_title || ''}${c.sector ? ' · ' + c.sector : ''}${c.revenue_range ? ' · ' + c.revenue_range : ''}</td>
                         <td style="max-width:180px;">${tagsHtml(c)}</td>
                         <td>${personaSelectHtml(c)}</td>
                         <td>${assignSelectHtml(c)}</td>
@@ -2651,6 +2974,7 @@
                 company: document.getElementById('contact-company').value.trim(),
                 job_title: document.getElementById('contact-job-title').value.trim(),
                 sector: document.getElementById('contact-sector').value.trim(),
+                revenue_range: document.getElementById('contact-revenue-range').value.trim(),
             };
             if (!payload.first_name || !payload.email) {
                 contactsAlert('contacts-add-alert', 'Voornaam en e-mail zijn verplicht.', 'warning');
@@ -2659,7 +2983,7 @@
             try {
                 await apiPost('/api/contacts', payload);
                 contactsAlert('contacts-add-alert', '✓ Contact toegevoegd.', 'success');
-                ['contact-first-name', 'contact-last-name', 'contact-email', 'contact-company', 'contact-job-title', 'contact-sector']
+                ['contact-first-name', 'contact-last-name', 'contact-email', 'contact-company', 'contact-job-title', 'contact-sector', 'contact-revenue-range']
                     .forEach(id => { document.getElementById(id).value = ''; });
                 loadContacts();
             } catch (err) {
@@ -3059,6 +3383,103 @@
             }
         }
 
+        // --- A/B Test: variant-editor (Fase 3b) --------------------------------
+        // In-memory lijst; leeg = backend gebruikt de 4 vaste standaardvarianten
+        // (zie DEFAULT_VARIANTS in app.py). Niet gepersisteerd totdat de test
+        // daadwerkelijk gelanceerd wordt.
+        let ABTEST_VARIANTS = [];
+
+        function nextAbtestGroupLabel(idx) {
+            return idx < 26 ? String.fromCharCode(65 + idx) : String(idx + 1);
+        }
+
+        function renderAbtestVariants() {
+            const container = document.getElementById('abtest-variants-list');
+            if (!container) return;
+            if (!ABTEST_VARIANTS.length) {
+                container.innerHTML = '<p style="color:#666; font-size:13px;">Geen eigen varianten toegevoegd — de 4 standaardvarianten worden gebruikt bij het launchen.</p>';
+                return;
+            }
+            container.innerHTML = ABTEST_VARIANTS.map((v, idx) => `
+                <div class="card" style="background:#f8fafc; margin-bottom:10px;">
+                    <div class="input-group">
+                        <label>Groep ${escapeHtml(v.group_label || nextAbtestGroupLabel(idx))} — Aanbod naam</label>
+                        <input type="text" value="${escapeHtml(v.offer_name)}" oninput="updateAbtestVariant(${idx}, 'offer_name', this.value)">
+                    </div>
+                    <div class="input-group">
+                        <label>Subject</label>
+                        <input type="text" value="${escapeHtml(v.subject_template)}" oninput="updateAbtestVariant(${idx}, 'subject_template', this.value)">
+                    </div>
+                    <div class="input-group">
+                        <label>Body (HTML mag; {{firstName}}, {{lastName}}, {{company}} zijn merge-velden)</label>
+                        <textarea oninput="updateAbtestVariant(${idx}, 'body_template', this.value)">${escapeHtml(v.body_template)}</textarea>
+                    </div>
+                    <div class="input-group">
+                        <label>Persona (optioneel — koppelt deze variant aan één buyer persona)</label>
+                        <select onchange="updateAbtestVariant(${idx}, 'persona_id', this.value ? parseInt(this.value, 10) : null)">
+                            <option value="">Generiek (geen persona)</option>
+                            ${BUYER_PERSONAS.map(p => `<option value="${p.id}" ${v.persona_id === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <button class="button button-secondary" onclick="removeAbtestVariant(${idx})">Verwijder variant</button>
+                </div>
+            `).join('');
+        }
+
+        function updateAbtestVariant(idx, field, value) {
+            if (!ABTEST_VARIANTS[idx]) return;
+            ABTEST_VARIANTS[idx][field] = value;
+        }
+
+        function removeAbtestVariant(idx) {
+            ABTEST_VARIANTS.splice(idx, 1);
+            renderAbtestVariants();
+        }
+
+        function addAbtestVariantRow() {
+            ABTEST_VARIANTS.push({
+                group_label: nextAbtestGroupLabel(ABTEST_VARIANTS.length),
+                offer_name: '', subject_template: '', body_template: '', persona_id: null,
+            });
+            renderAbtestVariants();
+        }
+
+        async function loadDefaultAbtestVariants() {
+            try {
+                const data = await apiGet('/api/campaigns/default-variants');
+                ABTEST_VARIANTS = data.variants.map(v => ({ ...v, persona_id: v.persona_id || null }));
+                renderAbtestVariants();
+            } catch (err) {
+                contactsAlert('abtest-variants-alert', `Laden mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function generateAbtestVariantSuggestions() {
+            const personaValue = document.getElementById('abtest-persona').value;
+            const personaId = personaValue ? parseInt(personaValue, 10) : null;
+            contactsAlert('abtest-variants-alert', 'Suggesties genereren...', 'success');
+            try {
+                const data = await apiPost('/api/campaigns/suggest-variants', { persona_id: personaId, count: 2 });
+                data.variants.forEach(v => {
+                    ABTEST_VARIANTS.push({
+                        group_label: nextAbtestGroupLabel(ABTEST_VARIANTS.length),
+                        offer_name: v.offer_name,
+                        subject_template: v.subject_template,
+                        body_template: v.body_template,
+                        persona_id: personaId,
+                    });
+                });
+                renderAbtestVariants();
+                contactsAlert(
+                    'abtest-variants-alert',
+                    `✓ ${data.variants.length} suggestie(s) toegevoegd (bron: ${data.source === 'ai' ? 'AI' : 'sjabloon, want geen AI-koppeling geconfigureerd'}). Controleer/pas aan voor je start.`,
+                    'success',
+                );
+            } catch (err) {
+                contactsAlert('abtest-variants-alert', `Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
         async function launchTest() {
             const name = document.getElementById('abtest-name').value.trim() || 'A/B Test';
             const statusBadge = document.getElementById('abtest-launch-status');
@@ -3068,8 +3489,23 @@
             statusBadge.textContent = 'Campagne aanmaken...';
             const personaValue = document.getElementById('abtest-persona').value;
             const personaId = personaValue ? parseInt(personaValue, 10) : null;
+            const payload = { name, persona_id: personaId };
+            if (ABTEST_VARIANTS.length) {
+                const incomplete = ABTEST_VARIANTS.some(v => !v.offer_name?.trim() || !v.subject_template?.trim() || !v.body_template?.trim());
+                if (incomplete) {
+                    statusBadge.className = 'status-badge status-warning';
+                    statusBadge.textContent = '✗ Vul elke variant volledig in (of verwijder lege varianten)';
+                    button.disabled = false;
+                    return;
+                }
+                payload.variants = ABTEST_VARIANTS.map(v => ({
+                    group_label: v.group_label, offer_name: v.offer_name,
+                    subject_template: v.subject_template, body_template: v.body_template,
+                    persona_id: v.persona_id || null,
+                }));
+            }
             try {
-                const created = await apiPost('/api/campaigns', { name, persona_id: personaId });
+                const created = await apiPost('/api/campaigns', payload);
                 currentCampaignId = created.campaign.id;
 
                 statusBadge.textContent = 'Versturen...';
@@ -3078,6 +3514,8 @@
                 statusBadge.className = 'status-badge status-success';
                 statusBadge.textContent = `✓ Verstuurd: ${result.sent}/${result.total}` +
                     (result.failed ? ` (${result.failed} mislukt)` : '');
+                ABTEST_VARIANTS = [];
+                renderAbtestVariants();
 
                 switchTab('analytics');
                 await loadCampaignsList();
@@ -3109,6 +3547,71 @@
                 loadCampaignResults(targetId);
             } catch (err) {
                 select.innerHTML = `<option value="">Kon campagnes niet laden: ${escapeHtml(err.message)}</option>`;
+            }
+        }
+
+        // --- ICP-analyse (Fase 3) -----------------------------------------
+
+        function pct(rate) {
+            return `${Math.round((rate || 0) * 100)}%`;
+        }
+
+        function icpRowsHtml(rows, labelFn) {
+            if (!rows.length) return '<p style="color:#666; font-size:13px;">Nog geen data.</p>';
+            return `<table><thead><tr><th></th><th>Contacten</th><th>Verzonden</th><th>Open</th><th>Klik</th><th>Reply</th><th>Score</th></tr></thead><tbody>` +
+                rows.map(r => `
+                    <tr${r.sufficient_data ? '' : ' style="opacity:0.55;"'}>
+                        <td>${escapeHtml(labelFn(r))}</td>
+                        <td>${r.contacts}</td>
+                        <td>${r.emails_sent}</td>
+                        <td>${pct(r.open_rate)}</td>
+                        <td>${pct(r.click_rate)}</td>
+                        <td>${pct(r.reply_rate)}</td>
+                        <td><strong>${r.score}</strong>${r.sufficient_data ? '' : ' <span style="font-size:11px;">(te weinig data)</span>'}</td>
+                    </tr>
+                `).join('') + '</tbody></table>';
+        }
+
+        async function loadIcpScores() {
+            const recEl = document.getElementById('icp-recommended');
+            const dqEl = document.getElementById('icp-data-quality');
+            const comboEl = document.getElementById('icp-combinations');
+            try {
+                const data = await apiGet('/api/analytics/icp-scores');
+
+                const dq = data.data_quality;
+                dqEl.textContent = `${dq.contacts_total} contacten geanalyseerd — ` +
+                    `${dq.contacts_missing_sector} zonder sector, ${dq.contacts_missing_persona} zonder buyer persona, ` +
+                    `${dq.contacts_missing_revenue_range} zonder omzetcategorie. Minimaal ${dq.min_sample_size} verzonden mails nodig voor een betrouwbare score.`;
+
+                const rec = data.recommended_icp;
+                if (!rec) {
+                    recEl.innerHTML = '<div class="alert alert-info">Nog onvoldoende verzend- en respons-data om een ICP te bepalen. Verstuur eerst wat campagnes/sequenties met sector, buyer persona en omzet ingevuld op je contacten.</div>';
+                } else if (rec.basis === 'combinatie') {
+                    recEl.innerHTML = `<div class="alert alert-success">
+                        🎯 <strong>Aanbevolen ICP:</strong> sector <strong>${escapeHtml(rec.sector)}</strong>,
+                        buyer persona <strong>${escapeHtml(rec.persona)}</strong>, omzet <strong>${escapeHtml(rec.revenue_range)}</strong>
+                        — score ${rec.score} (${pct(rec.open_rate)} open, ${pct(rec.click_rate)} klik, ${pct(rec.reply_rate)} reply op ${rec.emails_sent} verzonden mails).
+                    </div>`;
+                } else {
+                    const parts = ['sector', 'persona', 'revenue_range']
+                        .filter(k => rec[k])
+                        .map(k => `${k === 'revenue_range' ? 'omzet' : k} <strong>${escapeHtml(rec[k].value)}</strong> (score ${rec[k].score})`);
+                    recEl.innerHTML = `<div class="alert alert-info">
+                        ${escapeHtml(rec.note)}<br>${parts.join(', ')}
+                    </div>`;
+                }
+
+                comboEl.innerHTML = data.combinations.length
+                    ? '<h3 style="font-size:14px; margin:15px 0 8px;">Sterkste combinaties (sector × persona × omzet)</h3>' +
+                      icpRowsHtml(data.combinations.slice(0, 10), r => `${r.sector} · ${r.persona} · ${r.revenue_range}`)
+                    : '';
+
+                document.getElementById('icp-dim-sector').innerHTML = icpRowsHtml(data.dimensions.sector, r => r.value);
+                document.getElementById('icp-dim-persona').innerHTML = icpRowsHtml(data.dimensions.persona, r => r.value);
+                document.getElementById('icp-dim-revenue_range').innerHTML = icpRowsHtml(data.dimensions.revenue_range, r => r.value);
+            } catch (err) {
+                recEl.innerHTML = `<div class="alert alert-warning">ICP-analyse laden mislukt: ${escapeHtml(err.message)}</div>`;
             }
         }
 

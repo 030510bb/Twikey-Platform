@@ -200,12 +200,101 @@ rendered-content in de tijdlijn, persona-verwijdering) plus de volledige
 bestaande `test_crm.py`/`test_fase2.py`-suites opnieuw gedraaid — alles
 groen, geen regressies.
 
+## Fase 3b (gebouwd, getest, geleverd — 9 sept. 2026): sidebar-menu, intake + AI-mailsuggesties, ICP-scoring
+
+Drie uitbreidingen, gebouwd in één vervolgsessie op Fase 3a hierboven.
+
+**1. Sidebar-menu (echt doorgevoerd, niet meer alleen een mockup).**
+De horizontale tabbalk in `dashboard.html` is vervangen door een verticale
+sidebar, gegroepeerd per belangrijk onderdeel: Dashboard + Contacten los
+bovenaan, dan de groepen "Outreach" (Email Sync, LinkedIn, A/B Test,
+Sequenties), "Gesprekken" (Replies, Validation) en "Inzicht" (Analytics),
+met accountbrede instellingen (Profiel, Team, Integraties, Support) plus
+Uitloggen onderaan vastgepind. Dit was eerder alleen een Design-canvas
+mockup (zie Fase 3a) - nu is het de daadwerkelijke navigatie van de app.
+Bestaande tab-content/JS is ongewijzigd; alleen de navigatie eromheen is
+herbouwd, geverifieerd met een browsertest (Playwright) van meerdere
+tabbladen.
+
+**2. Bedrijfsprofiel/intake + AI-verdiepingsronde + AI-mailsuggesties**
+(dit is het grootste deel van de hieronder beschreven "Fase 3"-visie, nu
+gebouwd als kernversie - zie "nog open" onderaan voor wat bewust is
+uitgesteld):
+- Nieuw tabblad "Profiel": waardepropositie + USP's (vrije tekst, één USP
+  per regel), plus per buyer persona een optionele omschrijving
+  (pijnpunt/context) - `account_profiles`- en `buyer_personas.description`
+  in de database, `GET/PUT /api/account-profile`,
+  `PUT /api/buyer-personas/{id}`.
+- **AI-verdiepingsronde** (bewust één ronde, geen doorlopend chatgesprek -
+  expliciete scope-keuze): een knop genereert 2-4 gerichte vervolgvragen via
+  Claude om vage antwoorden aan te scherpen (`POST
+  /api/account-profile/generate-questions`,
+  `POST /api/account-profile/answer-questions`). Zonder ANTHROPIC_API_KEY
+  (of bij een mislukte aanroep) valt dit terug op een vaste, altijd nuttige
+  set vragen - zelfde "werkt ook zonder AI-koppeling"-garantie als de rest
+  van dit project.
+- **AI-mailsuggesties**: het A/B Test-tabblad heeft nu een echte
+  variant-editor (rijen toevoegen/verwijderen, per rij een optionele
+  buyer persona) in plaats van alleen de 4 vaste standaardvarianten te
+  kunnen launchen. Een knop "AI-suggesties genereren"
+  (`POST /api/campaigns/suggest-variants`) laat Claude 1-2 subject/body-
+  varianten voorstellen op basis van het bedrijfsprofiel (en, indien
+  gekozen, één buyer persona) - zonder AI-koppeling valt dit terug op een
+  eenvoudige sjabloon-invulling met de eigen waardepropositie/USP's, zodat
+  de knop altijd iets bruikbaars teruggeeft. Niets wordt automatisch
+  verzonden of opgeslagen; de klant bewerkt/keurt eerst goed voordat een
+  campagne daadwerkelijk wordt aangemaakt (`POST /api/campaigns` accepteert
+  al langer een vrije `variants`-lijst, zie Fase 3a - dit hergebruikt dat
+  pad, de UI faciliteert het nu pas echt).
+- **Bewust uitgesteld** (kernversie-scope-keuze): een volledig doorlopend
+  AI-chatgesprek tijdens de intake (i.p.v. één verdiepingsronde), en
+  periodieke, automatisch gegenereerde verbetervoorstellen (heeft meer
+  verzenddata nodig om zinvol te zijn) - zie de "Fase 3 (nog niet
+  gescoped)"-tekst hieronder, nu bijgewerkt met wat al wel gebouwd is.
+
+**3. ICP-scoring** (het "analyse welke combinaties het beste presteren"-punt
+uit Fase 3, naar voren gehaald op verzoek):
+- Nieuw veld `contacts.revenue_range` (omzetcategorie, vrije tekst zoals
+  sector - bv. "1-10M"), instelbaar via het contactformulier, CSV-import
+  (kolommen "omzet"/"revenue"/"jaaromzet" e.d. worden herkend) en CSV-export.
+- `database.icp_scores()` / `GET /api/analytics/icp-scores`: scoort sector,
+  buyer persona en omzetcategorie - los én als combinatie - op basis van de
+  al bestaande open/klik/reply-data (geen nieuwe tracking nodig). Score =
+  50% reply-rate + 30% click-rate + 20% open-rate (reply weegt het zwaarst:
+  het enige signaal dat de ontvanger daadwerkelijk heeft gereageerd).
+  Combinaties/dimensies met minder dan 3 verzonden mails krijgen
+  `sufficient_data: false` en tellen niet mee voor de aanbevolen ICP, om te
+  voorkomen dat één toevallige open op 1 mail als "100% score" bovenaan
+  komt te staan.
+- Nieuwe "ICP-analyse"-kaart op het Analytics-tabblad: een aanbevolen-ICP-
+  banner (sector × persona × omzet met de beste score, of - als nog geen
+  enkele combinatie genoeg data heeft - de sterkste losse dimensies met een
+  duidelijke toelichting waarom), een tabel met de sterkste combinaties, en
+  een score-tabel per sector/persona/omzetcategorie apart.
+
+Getest: `test_fase3b.py` (bedrijfsprofiel opslaan, AI-verdiepingsronde met
+en zonder AI-key, persona-omschrijving bewerken, variant-suggesties met
+fallback, end-to-end een AI-suggestie gebruiken om een campagne te
+launchen) en `test_icp.py` (een duidelijk "hot" vs. "cold" segment
+opgebouwd met echte campagne-tracking en een reply, en geverifieerd dat de
+scoring, ranking en aanbevolen-ICP-logica de juiste winnaar aanwijst) - plus
+de volledige bestaande suites (`test_crm.py`, `test_fase2.py`,
+`test_fase3.py`) opnieuw gedraaid, alles groen, geen regressies.
+
 ## Fase 3 (nog niet gescoped) — AI-gedreven intake & optimalisatie
 
-Later toegevoegd, nog niet uitgewerkt:
+**Update 9 sept. 2026**: de kern hiervan is gebouwd, zie "Fase 3b"
+hierboven. Wat bewust nog open staat:
 
-- **Intakeformulier per nieuwe klant**: waardepropositie, USP's, buyer
-  personas - bij aansluiting in te vullen.
+- Een volledig doorlopend AI-chatgesprek tijdens de intake (i.p.v. de
+  gebouwde ene verdiepingsronde) - expliciete scope-keuze, niet gebouwd.
+- Periodieke, automatisch gegenereerde verbetervoorstellen om de
+  succesratio te verhogen (bovenop de nu gebouwde ICP-scoring/analyse) -
+  heeft meer verzameld verzend-/respons-data nodig om zinvol te zijn dan er
+  in de bouwomgeving beschikbaar was.
+
+Oorspronkelijke, nog niet uitgewerkte visie (voor de context):
+
 - De tool stelt zelf verdiepende vragen (via Claude) om dit scherp te
   krijgen, in plaats van alleen een statisch formulier.
 - Uitgaande mails worden op basis van dit profiel voorgesteld (subject/body-
@@ -226,6 +315,13 @@ platform-brede `ANTHROPIC_API_KEY`) en reply-/objectie-data
 (`incoming_replies`, `reply_drafts`, `objection_templates`) uit Fase 2 zijn
 gebouwd en getest. Fase 3 kan dus vanaf nu concreet uitgewerkt worden zodra
 Benjamin daar behoefte aan heeft.
+
+**Update 9 sept. 2026 (later dezelfde dag) — grotendeels gebouwd**: zie
+"Fase 3b" hierboven - intakeformulier, AI-verdiepingsronde,
+AI-mailsuggesties en de combinatie-analyse (nu "ICP-scoring") zijn gebouwd,
+getest en geleverd. Alleen het doorlopende AI-chatgesprek tijdens intake en
+de periodieke auto-verbetervoorstellen staan nog open, zoals hierboven
+toegelicht.
 
 ## Openstaande vragen voor Fase 2 (opgelost bij oplevering, 9 sept. 2026)
 

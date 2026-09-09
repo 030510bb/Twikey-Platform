@@ -763,7 +763,7 @@ class ContactIn(BaseModel):
 
 @app.get("/api/contacts")
 def api_list_contacts(
-    q: str = None, tag: str = None, assigned_to: str = None,
+    q: str = None, tag: str = None, persona_id: int = None, assigned_to: str = None,
     exclude_excluded: bool = False, exclude_dnc: bool = False,
     account: dict = Depends(get_current_account),
 ):
@@ -774,7 +774,7 @@ def api_list_contacts(
     if assigned_to is not None:
         resolved_assigned_to = "none" if assigned_to == "none" else int(assigned_to)
     contacts = database.list_contacts(
-        aid, q=q, tag=tag, assigned_to=resolved_assigned_to,
+        aid, q=q, tag=tag, persona_id=persona_id, assigned_to=resolved_assigned_to,
         exclude_excluded=exclude_excluded, exclude_dnc=exclude_dnc,
     )
     return {"contacts": contacts, "count": database.count_contacts(aid)}
@@ -963,6 +963,48 @@ def api_remove_contact_tag(contact_id: int, tag_id: int, account: dict = Depends
     if not database.remove_tag_from_contact(contact_id, account["id"], tag_id):
         raise HTTPException(status_code=404, detail="Contact niet gevonden.")
     return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Buyer personas (Fase 3, crm-roadmap.md) - een beheerde lijst per account.
+# Anders dan tags heeft een contact hoogstens één persona tegelijk, zodat de
+# koppeling naar "de mail flow voor deze persona" (sequences, campagnes)
+# ondubbelzinnig blijft.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/buyer-personas")
+def api_list_buyer_personas(account: dict = Depends(get_current_account)):
+    return {"personas": database.list_buyer_personas(account["id"])}
+
+
+class BuyerPersonaIn(BaseModel):
+    name: str
+
+
+@app.post("/api/buyer-personas")
+def api_create_buyer_persona(payload: BuyerPersonaIn, account: dict = Depends(get_current_account)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Naam mag niet leeg zijn.")
+    return {"success": True, "persona": database.create_buyer_persona(account["id"], payload.name)}
+
+
+@app.delete("/api/buyer-personas/{persona_id}")
+def api_delete_buyer_persona(persona_id: int, account: dict = Depends(get_current_account)):
+    if not database.delete_buyer_persona(persona_id, account["id"]):
+        raise HTTPException(status_code=404, detail="Buyer persona niet gevonden.")
+    return {"success": True}
+
+
+class ContactPersonaIn(BaseModel):
+    persona_id: int | None = None
+
+
+@app.put("/api/contacts/{contact_id}/persona")
+def api_set_contact_persona(contact_id: int, payload: ContactPersonaIn, account: dict = Depends(get_current_account)):
+    contact = database.set_contact_persona(contact_id, account["id"], payload.persona_id)
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact of buyer persona niet gevonden.")
+    return {"success": True, "contact": contact}
 
 
 # ---------------------------------------------------------------------------
@@ -1523,6 +1565,7 @@ class SequenceStepIn(BaseModel):
 class SequenceIn(BaseModel):
     name: str
     steps: list[SequenceStepIn]
+    persona_id: int | None = None
 
 
 @app.get("/api/sequences")
@@ -1535,7 +1578,8 @@ def api_create_sequence(payload: SequenceIn, account: dict = Depends(get_current
     if not payload.steps:
         raise HTTPException(status_code=400, detail="Een sequence heeft minstens 1 stap nodig.")
     steps = [s.model_dump() for s in payload.steps]
-    return {"success": True, "sequence": database.create_sequence(account["id"], payload.name, steps)}
+    sequence = database.create_sequence(account["id"], payload.name, steps, persona_id=payload.persona_id)
+    return {"success": True, "sequence": sequence}
 
 
 @app.get("/api/sequences/{sequence_id}")
@@ -1577,6 +1621,14 @@ def api_list_enrollments(sequence_id: int, account: dict = Depends(get_current_a
     return {"enrollments": database.list_enrollments(sequence_id, account["id"])}
 
 
+@app.post("/api/sequences/auto-enroll-by-persona")
+def api_auto_enroll_by_persona(account: dict = Depends(get_current_account)):
+    """Fase 3: schrijft in één keer elk contact met een buyer persona (dat nog
+    nergens actief loopt) in op de actieve sequence die aan diezelfde persona
+    gekoppeld is. Zie database.auto_enroll_by_persona()."""
+    return {"success": True, **database.auto_enroll_by_persona(account["id"])}
+
+
 @app.post("/api/cron/process-sequences", dependencies=[Depends(require_admin_secret)])
 def api_process_sequences():
     """Verstuurt elke vervallen sequence-stap, over ALLE accounts heen - dus
@@ -1605,10 +1657,15 @@ def api_process_sequences():
         body = _render_template(step["body_template"], contact)
         try:
             _send_plain_for_account(account_id, enrollment["email"], subject, body)
-            database.record_sequence_send(enrollment["id"], step["id"], sent=True)
+            database.record_sequence_send(
+                enrollment["id"], step["id"], sent=True, rendered_subject=subject, rendered_body=body,
+            )
             processed += 1
         except Exception as exc:  # noqa: BLE001
-            database.record_sequence_send(enrollment["id"], step["id"], sent=False, error=str(exc))
+            database.record_sequence_send(
+                enrollment["id"], step["id"], sent=False, error=str(exc),
+                rendered_subject=subject, rendered_body=body,
+            )
             errors += 1
     return {"success": True, "processed": processed, "skipped": skipped, "errors": errors}
 
@@ -1677,12 +1734,14 @@ class VariantIn(BaseModel):
     offer_name: str
     subject_template: str
     body_template: str
+    persona_id: int | None = None  # Fase 3: koppelt deze variant aan één buyer persona
 
 
 class CampaignIn(BaseModel):
     name: str
     variants: list[VariantIn] | None = None  # omit to use the 4 default lead-magnet offers
     include_excluded: bool = False  # override de uitsluitlijst (bestaande klant/lopende offerte)
+    persona_id: int | None = None  # Fase 3: stuur deze campagne alleen naar contacten met deze buyer persona
 
 
 @app.get("/api/campaigns")
@@ -1699,7 +1758,9 @@ def api_create_campaign(payload: CampaignIn, account: dict = Depends(get_current
             detail="Geen contacten aanwezig. Voeg eerst contacten toe via POST /api/contacts voordat je een campagne maakt.",
         )
     variants = [v.model_dump() for v in payload.variants] if payload.variants else DEFAULT_VARIANTS
-    result = database.create_campaign(aid, payload.name, variants, include_excluded=payload.include_excluded)
+    result = database.create_campaign(
+        aid, payload.name, variants, include_excluded=payload.include_excluded, only_persona_id=payload.persona_id,
+    )
     return {"success": True, **result}
 
 
@@ -1742,10 +1803,15 @@ def api_launch_campaign(campaign_id: int, account: dict = Depends(get_current_ac
 
         try:
             _send_html_for_account(aid, r["email"], subject, full_html)
-            database.record_send_result(r["recipient_id"], sent=True)
+            database.record_send_result(
+                r["recipient_id"], sent=True, rendered_subject=subject, rendered_body=full_html,
+            )
             sent += 1
         except Exception as exc:  # noqa: BLE001
-            database.record_send_result(r["recipient_id"], sent=False, error=str(exc))
+            database.record_send_result(
+                r["recipient_id"], sent=False, error=str(exc),
+                rendered_subject=subject, rendered_body=full_html,
+            )
             failed += 1
 
     database.mark_campaign_launched(campaign_id)

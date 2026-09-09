@@ -415,7 +415,7 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `POST /api/email-settings/test` 🔒 | Stuurt een echte testmail met de opgegeven (nog niet per se opgeslagen) instellingen, naar `test_to` of anders het eigen inlogadres. |
 | `GET /api/contacts` 🔒 | Lijst van contacten. Query-params: `q` (zoeken), `tag`, `assigned_to` (user-id of `none`), `exclude_excluded`, `exclude_dnc`. |
 | `GET /api/contacts/{id}` 🔒 | Eén contact incl. tags/toewijzing. |
-| `GET /api/contacts/{id}/timeline` 🔒 | Audit trail: CRM-events + campagne-mails + LinkedIn-outreach, nieuwste eerst. |
+| `GET /api/contacts/{id}/timeline` 🔒 | Audit trail: CRM-events + campagne-mails + opvolgsequentie-mails + LinkedIn-outreach, nieuwste eerst. Verzonden/mislukte mails bevatten (vanaf Fase 3) de daadwerkelijk verstuurde `subject`/`body`, niet alleen een sjabloonverwijzing. |
 | `POST /api/contacts` 🔒 | Eén contact toevoegen/bijwerken. |
 | `PATCH /api/contacts/{id}` 🔒 | CRM-velden bijwerken (`job_title`, `sector`, `company`, `linkedin_url`, `is_customer`, `has_open_quote`, `do_not_contact`). |
 | `POST /api/contacts/bulk` 🔒 | Meerdere contacten in één keer toevoegen. |
@@ -424,6 +424,8 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `GET /api/tags` 🔒 / `POST /api/tags` 🔒 / `DELETE /api/tags/{id}` 🔒 | Tags beheren voor je account. |
 | `POST /api/contacts/{id}/tags` 🔒 / `DELETE /api/contacts/{id}/tags/{tag_id}` 🔒 | Tag aan een contact koppelen/loskoppelen. |
 | `POST /api/contacts/{id}/assign` 🔒 | Contact toewijzen aan een teamlid (`user_id`, of `null` om los te koppelen). |
+| `GET /api/buyer-personas` 🔒 / `POST /api/buyer-personas` 🔒 / `DELETE /api/buyer-personas/{id}` 🔒 | Buyer persona's beheren voor je account (Fase 3). Verwijderen maakt de koppeling bij contacten/sequenties/campagne-varianten leeg i.p.v. te blokkeren. |
+| `PUT /api/contacts/{id}/persona` 🔒 | De buyer persona van één contact instellen (`persona_id`) of loskoppelen (`persona_id: null`) — een contact heeft er hoogstens één tegelijk. |
 | `GET /api/reminders` 🔒 / `POST /api/reminders` 🔒 / `POST /api/reminders/{id}/complete` 🔒 | Herinneringen (agenderen) per contact. |
 | `GET /api/exclusions` 🔒 / `POST /api/exclusions` 🔒 / `DELETE /api/exclusions/{id}` 🔒 | Uitsluitlijst (domein/bedrijf) beheren. |
 | `POST /api/exclusions/import-csv` 🔒 | CSV met te vermijden domeinen/bedrijven importeren. |
@@ -434,7 +436,7 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `GET /api/superadmin/support/tickets` 🔒\* / `POST /api/superadmin/support/tickets/{id}/reply` 🔒\* | Supportvragen van alle accounts bekijken/beantwoorden. |
 | `POST /api/validate-message` 🔒 | Valideer een bericht (`text`, `platform`). |
 | `GET /api/campaigns` 🔒 | Lijst van campagnes (van je eigen account). |
-| `POST /api/campaigns` 🔒 | Nieuwe A/B-campagne aanmaken (verdeelt contacten round-robin over de varianten). |
+| `POST /api/campaigns` 🔒 | Nieuwe A/B-campagne aanmaken (verdeelt contacten round-robin over de varianten). Elke variant mag een `persona_id` hebben (Fase 3) — een contact met een matchende persona krijgt altijd die variant; optioneel `persona_id` op de campagne zelf beperkt de hele ronde tot contacten met die persona. |
 | `POST /api/campaigns/{id}/launch` 🔒 | Verstuurt de campagne-mails echt (via het eigen SMTP-adres als dat is ingesteld, anders via Gmail), met tracking. |
 | `GET /api/campaigns/{id}/results` 🔒 | Verzonden/opens/clicks/form-fills per groep. |
 | `GET /track/open/{token}.png` | Open-tracking pixel (wordt automatisch in mails ingesloten). |
@@ -459,10 +461,11 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `POST /api/replies/drafts/{id}/approve` 🔒 | Een conceptantwoord (evt. aangepast via `draft_body`) goedkeuren en echt versturen. |
 | `POST /api/replies/drafts/{id}/dismiss` 🔒 | Een conceptantwoord afwijzen zonder te versturen. |
 | `GET /api/settings/auto-reply` 🔒 / `POST /api/settings/auto-reply` 🔒 | "Automatisch versturen"-instelling bekijken/wijzigen (standaard uit). |
-| `GET /api/sequences` 🔒 / `POST /api/sequences` 🔒 | Opvolgsequenties bekijken (incl. inschrijvingstellingen) / een nieuwe sequence met stappen aanmaken. |
+| `GET /api/sequences` 🔒 / `POST /api/sequences` 🔒 | Opvolgsequenties bekijken (incl. inschrijvingstellingen) / een nieuwe sequence met stappen aanmaken. Optioneel `persona_id` (Fase 3) koppelt de sequence aan één buyer persona. |
 | `GET /api/sequences/{id}` 🔒 | Detail van één sequence incl. stappen. |
 | `POST /api/sequences/{id}/status` 🔒 | Sequence op `active`/`paused` zetten. |
 | `POST /api/sequences/{id}/enroll` 🔒 | Eén of meer contacten inschrijven op een sequence. |
+| `POST /api/sequences/auto-enroll-by-persona` 🔒 | Fase 3: schrijft elk contact met een buyer persona (dat nergens actief loopt) automatisch in op de actieve sequence die aan diezelfde persona gekoppeld is. Idempotent. |
 | `GET /api/sequences/{id}/enrollments` 🔒 | Ingeschreven contacten van een sequence met hun status/voortgang. |
 | `POST /api/cron/process-sequences` | Verstuurt alle due opvolgmails over alle accounts heen. Vereist `X-Admin-Secret`, bedoeld voor een externe scheduler — zie `DEPLOY.md`. |
 

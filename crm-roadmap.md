@@ -121,6 +121,85 @@ stond):
 - Vanuit een reply kan direct een reminder/agenderen worden ingesteld (bv. klant
   zegt "bel me over 3 maanden") in plaats van de sequence te hervatten.
 
+## Fase 3a (gebouwd, getest, geleverd — 9 sept. 2026): buyer persona's & rijkere audit trail
+
+Twee losstaande, kleinere uitbreidingen bovenop Fase 2, niet te verwarren met
+de grotere "Fase 3 (nog niet gescoped)"-visie hieronder (AI-intakeformulier
+per klant) — dat blijft voorlopig ongebouwd.
+
+**1. Buyer persona's + persona-specifieke mail flows.**
+- `buyer_personas`: een beheerde lijst per account (zelfde idee als tags,
+  maar een contact heeft **hoogstens één** persona tegelijk —
+  `contacts.persona_id` — zodat "welke flow hoort bij dit contact"
+  ondubbelzinnig is). CRUD via `GET/POST /api/buyer-personas`,
+  `DELETE /api/buyer-personas/{id}` (verwijderen maakt de koppeling bij elk
+  contact/sequence/variant die 'm nog gebruikte weer leeg, i.p.v. te
+  blokkeren). Contact koppelen/loskoppelen: `PUT /api/contacts/{id}/persona`.
+  In het dashboard: kolom + filter "Buyer persona" op het Contacten-tabblad
+  (inline dropdown per rij, met "+ Nieuwe persona..." om er meteen een aan te
+  maken).
+- **Opvolgsequenties**: een sequence kan optioneel aan één persona gekoppeld
+  worden (`sequences.persona_id`, veld in de "Nieuwe opvolgmail-sequence"-
+  kaart). Het inschrijfpaneel filtert dan automatisch tot contacten met die
+  persona. Nieuwe knop "Automatisch inschrijven o.b.v. persona"
+  (`POST /api/sequences/auto-enroll-by-persona`) schrijft in één keer elk
+  contact met een persona (dat nergens actief loopt) in op de actieve
+  sequence die bij die persona hoort — contacten zonder persona, of met een
+  persona zonder bijpassende actieve sequence, worden overgeslagen (bewust
+  geen generieke fallback hier; dat blijft de bestaande handmatige
+  inschrijf-flow). Idempotent: nogmaals draaien schrijft niemand dubbel in.
+- **Campagnes**: twee onafhankelijke mechanismen, allebei opgebouwd bovenop
+  de bestaande `campaign_variants`:
+  1. Een variant kan aan een persona gekoppeld worden
+     (`campaign_variants.persona_id`, `VariantIn.persona_id` in de API). Bij
+     het aanmaken van een campagne krijgt een contact met een matchende
+     persona altijd die variant (round-robin *binnen* de persona-variant(en)
+     als er meerdere zijn — A/B-testen blijft dus mogelijk per persona);
+     iedereen anders round-robint zoals voorheen over de persona-loze
+     ("generieke") varianten. Heeft een campagne uitsluitend persona-
+     varianten, dan valt een niet-matchend contact terug op een gewone
+     round-robin over alle varianten, zodat niemand stilzwijgend wordt
+     overgeslagen.
+  2. Het A/B Test-tabblad heeft geen eigen variant-editor (launcht altijd de
+     4 vaste standaard-aanbiedingen) — daarom is er daar een eenvoudiger,
+     campagnebreed alternatief: een "Buyer persona"-keuzelijst bij het
+     starten van een test die de hele ronde filtert tot alleen contacten met
+     die persona (`CampaignIn.persona_id` → `create_campaign(...,
+     only_persona_id=...)`). Losstaand van mechanisme 1 hierboven, dat wél
+     per-variant-inhoud ondersteunt voor toekomstig gebruik (bv. via de API
+     of een latere variant-editor).
+
+**2. Rijkere audit trail: échte mailinhoud, niet alleen het sjabloon.**
+- `campaign_recipients` en `sequence_sends` hebben nu `rendered_subject`/
+  `rendered_body`: de exacte, gepersonaliseerde tekst die (bij een poging
+  tot) verzenden daadwerkelijk gebruikt is — gevuld op het moment van
+  verzenden (`record_send_result()`, `record_sequence_send()`), ongeacht of
+  het lukte. Bewust gekozen (i.p.v. achteraf het sjabloon opnieuw invullen):
+  zo blijft de audit trail correct ook als een sjabloon later wordt
+  aangepast of verwijderd. Kanttekening: bestaat alleen voor verzendingen
+  vanaf nu — oudere rijen (van vóór deze update) tonen in de tijdlijn geen
+  inhoud.
+- `sequence_sends` had voorheen geen tijdstip bij een mislukte verzending
+  (`sent_at` werd alleen bij succes gezet) — toegevoegd: `attempted_at`,
+  altijd gezet, zodat een mislukte opvolgmail nu ook in de tijdlijn
+  verschijnt in plaats van stilzwijgend te verdwijnen.
+- `contact_timeline()`/`GET /api/contacts/{id}/timeline` nam voorheen geen
+  opvolgsequentie-mails mee (alleen campagne-mails + CRM-events +
+  LinkedIn) — toegevoegd, met dezelfde subject/body-velden.
+- Tijdlijn-weergave in het dashboard (contactmodal) herbouwd van een platte
+  lijst naar een Datum/Gebeurtenis-tabel met kleur per event-type
+  (verzonden/mislukt/geopend/geklikt/LinkedIn), geïnspireerd op de
+  Events-tab van het Twikey-product zelf. Een verstuurde/mislukte mail met
+  bewaarde inhoud krijgt een "e-mail bekijken"-link die de opgeslagen
+  subject + brontekst (HTML voor campagnes, platte tekst voor sequenties;
+  inline getoond, niet als gerenderde e-mail) uitklapt.
+
+Getest: nieuwe suite `test_fase3.py` (persona-CRUD, contact-koppeling +
+filter, sequence/campagne-persona-routing, auto-enroll idempotentie,
+rendered-content in de tijdlijn, persona-verwijdering) plus de volledige
+bestaande `test_crm.py`/`test_fase2.py`-suites opnieuw gedraaid — alles
+groen, geen regressies.
+
 ## Fase 3 (nog niet gescoped) — AI-gedreven intake & optimalisatie
 
 Later toegevoegd, nog niet uitgewerkt:

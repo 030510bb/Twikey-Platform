@@ -777,6 +777,13 @@
                     <label>Test Name:</label>
                     <input type="text" id="abtest-name" value="Round 1 - Primary Tier">
                 </div>
+                <div class="input-group">
+                    <label>Buyer persona (optioneel)</label>
+                    <select id="abtest-persona"><option value="">Alle contacten</option></select>
+                    <p style="color:#999; font-size:12px; margin-top:4px;">
+                        Kies een persona om deze ronde alleen naar contacten met die persona te sturen.
+                    </p>
+                </div>
                 <div class="metric-row">
                     <span class="metric-label">Contacten die meedoen</span>
                     <span class="metric-value" id="abtest-contact-count-2">-</span>
@@ -980,6 +987,7 @@
                 <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
                     <input type="text" id="contacts-search" placeholder="Zoek op naam, e-mail of bedrijf..." style="flex:1; min-width:200px;" oninput="debouncedLoadContacts()">
                     <select id="contacts-filter-tag" onchange="loadContacts()"><option value="">Alle tags</option></select>
+                    <select id="contacts-filter-persona" onchange="loadContacts()"><option value="">Alle persona's</option></select>
                     <select id="contacts-filter-assigned" onchange="loadContacts()">
                         <option value="">Iedereen</option>
                         <option value="none">Niet-toegewezen</option>
@@ -992,12 +1000,12 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>Naam</th><th>Bedrijf</th><th>Functie / sector</th><th>Tags</th>
+                            <th>Naam</th><th>Bedrijf</th><th>Functie / sector</th><th>Tags</th><th>Buyer persona</th>
                             <th>Toegewezen</th><th>Status</th><th></th>
                         </tr>
                     </thead>
                     <tbody id="contacts-body">
-                        <tr><td colspan="7" style="color:#666;">Laden...</td></tr>
+                        <tr><td colspan="8" style="color:#666;">Laden...</td></tr>
                     </tbody>
                 </table>
                 </div>
@@ -1047,7 +1055,7 @@
 
         <!-- Simple timeline modal -->
         <div id="timeline-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
-            <div style="background:#fff; border-radius:10px; padding:25px; max-width:600px; width:90%; max-height:80vh; overflow-y:auto;">
+            <div style="background:#fff; border-radius:10px; padding:25px; max-width:720px; width:90%; max-height:80vh; overflow-y:auto;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                     <h2 style="margin:0;">Tijdlijn: <span id="timeline-contact-name"></span></h2>
                     <button class="button button-secondary" onclick="closeTimelineModal()">Sluiten</button>
@@ -1315,6 +1323,15 @@
                 </p>
                 <div id="sequence-create-alert"></div>
                 <div class="input-group"><label>Naam</label><input type="text" id="sequence-name" placeholder="Opvolging na eerste mail"></div>
+                <div class="input-group">
+                    <label>Buyer persona (optioneel)</label>
+                    <select id="sequence-persona"><option value="">Geen specifieke persona</option></select>
+                    <p style="color:#999; font-size:12px; margin-top:4px;">
+                        Gekoppeld aan een persona? Dan filtert "Contacten inschrijven" hieronder
+                        automatisch op contacten met diezelfde persona, en kan
+                        "Automatisch inschrijven o.b.v. persona" deze sequence zelf kiezen.
+                    </p>
+                </div>
                 <div id="sequence-steps-editor"></div>
                 <button class="button button-secondary" style="margin-top:8px;" onclick="addSequenceStepRow()">+ Stap toevoegen</button>
                 <div style="margin-top:15px;">
@@ -1461,6 +1478,7 @@
             }
             if (tabName === 'abtest') {
                 loadAbtestContactCount();
+                loadBuyerPersonas();
             }
             if (tabName === 'analytics') {
                 loadCampaignsList();
@@ -1479,6 +1497,7 @@
             if (tabName === 'contacts') {
                 loadTeammatesForAssignDropdown();
                 loadTags();
+                loadBuyerPersonas();
                 loadContacts();
                 loadReminders();
                 loadExclusions();
@@ -1496,7 +1515,7 @@
             if (tabName === 'sequences') {
                 // contacts must be loaded before rendering sequences, since each
                 // sequence's enroll-panel <select> is built from allContactsForEnroll
-                loadContactsForSequenceEnroll().then(loadSequences);
+                loadBuyerPersonas().then(() => loadContactsForSequenceEnroll().then(loadSequences));
                 if (!sequenceStepCount) addSequenceStepRow();
             }
         }
@@ -2305,11 +2324,14 @@
                 subject_template: row.querySelector('.seq-step-subject').value,
                 body_template: row.querySelector('.seq-step-body').value,
             }));
+            const personaValue = document.getElementById('sequence-persona').value;
+            const personaId = personaValue ? parseInt(personaValue, 10) : null;
             if (!name || !steps.length) { alertEl.innerHTML = '<div class="alert alert-warning">Vul een naam in en voeg minstens 1 stap toe.</div>'; return; }
             try {
-                await apiPost('/api/sequences', { name, steps });
+                await apiPost('/api/sequences', { name, steps, persona_id: personaId });
                 alertEl.innerHTML = '<div class="alert alert-success">✓ Sequence aangemaakt.</div>';
                 document.getElementById('sequence-name').value = '';
+                document.getElementById('sequence-persona').value = '';
                 document.getElementById('sequence-steps-editor').innerHTML = '';
                 sequenceStepCount = 0;
                 addSequenceStepRow();
@@ -2333,12 +2355,17 @@
             try {
                 const data = await apiGet('/api/sequences');
                 const sequences = data.sequences || [];
-                listEl.innerHTML = sequences.length ? sequences.map(s => `
+                listEl.innerHTML = (sequences.length ? sequences.map(s => {
+                    const matchingContacts = s.persona_id
+                        ? allContactsForEnroll.filter(c => c.persona_id === s.persona_id)
+                        : allContactsForEnroll;
+                    return `
                     <div style="border:1px solid #eee; border-radius:8px; padding:15px; margin-bottom:15px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                             <div>
                                 <strong>${escapeHtml(s.name)}</strong>
                                 <span style="color:#666;"> - ${s.steps.length} stap(pen), status: ${s.status === 'active' ? 'actief' : 'gepauzeerd'}</span>
+                                ${s.persona_name ? `<span style="display:inline-block; background:#eef2ff; color:#3730a3; border-radius:10px; padding:2px 8px; font-size:12px; margin-left:6px;">persona: ${escapeHtml(s.persona_name)}</span>` : ''}
                                 <div style="color:#666; font-size:13px; margin-top:4px;">
                                     ${s.enrollment_counts.total} ingeschreven (${s.enrollment_counts.active} actief, ${s.enrollment_counts.completed} afgerond, ${s.enrollment_counts.stopped_reply} gestopt na reply)
                                 </div>
@@ -2350,14 +2377,17 @@
                             </div>
                         </div>
                         <div id="enroll-panel-${s.id}" style="display:none; margin-top:12px; border-top:1px solid #eee; padding-top:12px;">
+                            ${s.persona_name ? `<p style="color:#666; font-size:12px; margin-bottom:6px;">Lijst gefilterd op persona "${escapeHtml(s.persona_name)}".</p>` : ''}
                             <select id="enroll-select-${s.id}" multiple size="6" style="width:100%;">
-                                ${allContactsForEnroll.map(c => `<option value="${c.id}">${escapeHtml(c.first_name + ' ' + (c.last_name || ''))} - ${escapeHtml(c.email)}</option>`).join('')}
+                                ${matchingContacts.map(c => `<option value="${c.id}">${escapeHtml(c.first_name + ' ' + (c.last_name || ''))} - ${escapeHtml(c.email)}</option>`).join('')}
                             </select>
                             <button class="button button-primary" style="margin-top:8px;" onclick="enrollSelectedContacts(${s.id})">Inschrijven</button>
                         </div>
                         <div id="enrollments-${s.id}" style="margin-top:12px;"></div>
                     </div>
-                `).join('') : '<p style="color:#666;">Nog geen sequenties.</p>';
+                `;}).join('') : '<p style="color:#666;">Nog geen sequenties.</p>') + `
+                    <button class="button button-secondary" onclick="autoEnrollByPersona()">🎯 Automatisch inschrijven o.b.v. persona</button>
+                `;
             } catch (err) {
                 listEl.innerHTML = `<div class="alert alert-warning">Laden mislukt: ${err.message}</div>`;
             }
@@ -2384,6 +2414,19 @@
             try {
                 const data = await apiPost(`/api/sequences/${id}/enroll`, { contact_ids: contactIds });
                 document.getElementById('sequences-alert').innerHTML = `<div class="alert alert-success">${data.enrolled} contact(en) ingeschreven.</div>`;
+                loadSequences();
+            } catch (err) {
+                document.getElementById('sequences-alert').innerHTML = `<div class="alert alert-warning">Mislukt: ${err.message}</div>`;
+            }
+        }
+
+        async function autoEnrollByPersona() {
+            try {
+                const data = await apiPost('/api/sequences/auto-enroll-by-persona', {});
+                document.getElementById('sequences-alert').innerHTML =
+                    `<div class="alert alert-success">${data.enrolled} contact(en) automatisch ingeschreven op basis van hun buyer persona` +
+                    (data.skipped_no_matching_sequence ? ` (${data.skipped_no_matching_sequence} overgeslagen: geen actieve sequence voor hun persona)` : '') +
+                    `.</div>`;
                 loadSequences();
             } catch (err) {
                 document.getElementById('sequences-alert').innerHTML = `<div class="alert alert-warning">Mislukt: ${err.message}</div>`;
@@ -2461,6 +2504,76 @@
             }
         }
 
+        let BUYER_PERSONAS = [];
+
+        function personaOptionsHtml() {
+            return BUYER_PERSONAS.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+        }
+
+        async function loadBuyerPersonas() {
+            try {
+                const data = await apiGet('/api/buyer-personas');
+                BUYER_PERSONAS = data.personas || [];
+
+                const filterSelect = document.getElementById('contacts-filter-persona');
+                if (filterSelect) {
+                    const current = filterSelect.value;
+                    filterSelect.innerHTML = '<option value="">Alle persona\'s</option>' + personaOptionsHtml();
+                    filterSelect.value = current;
+                }
+
+                const seqSelect = document.getElementById('sequence-persona');
+                if (seqSelect) {
+                    const current = seqSelect.value;
+                    seqSelect.innerHTML = '<option value="">Geen specifieke persona</option>' + personaOptionsHtml();
+                    seqSelect.value = current;
+                }
+
+                const abtestSelect = document.getElementById('abtest-persona');
+                if (abtestSelect) {
+                    const current = abtestSelect.value;
+                    abtestSelect.innerHTML = '<option value="">Alle contacten</option>' + personaOptionsHtml();
+                    abtestSelect.value = current;
+                }
+            } catch (err) {
+                // Non-fatal
+            }
+        }
+
+        function personaSelectHtml(contact) {
+            const options = BUYER_PERSONAS.map(p =>
+                `<option value="${p.id}" ${contact.persona_id === p.id ? 'selected' : ''}>${p.name}</option>`
+            ).join('');
+            return `<select onchange="handlePersonaSelect(${contact.id}, this)" style="padding:4px; font-size:13px;">
+                <option value="">— geen —</option>${options}
+                <option value="__new__">+ Nieuwe persona...</option>
+            </select>`;
+        }
+
+        async function handlePersonaSelect(contactId, selectEl) {
+            let value = selectEl.value;
+            if (value === '__new__') {
+                const name = prompt('Naam van de nieuwe buyer persona:');
+                if (!name || !name.trim()) { loadContacts(); return; }
+                try {
+                    const res = await apiPost('/api/buyer-personas', { name: name.trim() });
+                    await loadBuyerPersonas();
+                    value = String(res.persona.id);
+                } catch (err) {
+                    contactsAlert('contacts-list-alert', `Persona aanmaken mislukt: ${err.message}`, 'warning');
+                    loadContacts();
+                    return;
+                }
+            }
+            try {
+                await apiPut(`/api/contacts/${contactId}/persona`, { persona_id: value ? parseInt(value, 10) : null });
+                loadContacts();
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Buyer persona instellen mislukt: ${err.message}`, 'warning');
+                loadContacts();
+            }
+        }
+
         function assignSelectHtml(contact) {
             const options = ['<option value="">Niet-toegewezen</option>']
                 .concat(allTeammates.map(u => `<option value="${u.id}" ${contact.assigned_to === u.id ? 'selected' : ''}>${u.email}</option>`));
@@ -2488,20 +2601,22 @@
 
         async function loadContacts() {
             const tbody = document.getElementById('contacts-body');
-            tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">Laden...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="color:#666;">Laden...</td></tr>';
             const params = new URLSearchParams();
             const q = document.getElementById('contacts-search').value.trim();
             const tag = document.getElementById('contacts-filter-tag').value;
+            const persona = document.getElementById('contacts-filter-persona').value;
             const assigned = document.getElementById('contacts-filter-assigned').value;
             const excludeExcluded = document.getElementById('contacts-filter-exclude-excluded').checked;
             if (q) params.set('q', q);
             if (tag) params.set('tag', tag);
+            if (persona) params.set('persona_id', persona);
             if (assigned) params.set('assigned_to', assigned);
             if (excludeExcluded) params.set('exclude_excluded', 'true');
             try {
                 const data = await apiGet(`/api/contacts?${params.toString()}`);
                 if (!data.contacts.length) {
-                    tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">Geen contacten gevonden.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="8" style="color:#666;">Geen contacten gevonden.</td></tr>';
                     return;
                 }
                 tbody.innerHTML = data.contacts.map(c => `
@@ -2510,6 +2625,7 @@
                         <td>${c.company || ''}</td>
                         <td>${c.job_title || ''}${c.sector ? ' · ' + c.sector : ''}</td>
                         <td style="max-width:180px;">${tagsHtml(c)}</td>
+                        <td>${personaSelectHtml(c)}</td>
                         <td>${assignSelectHtml(c)}</td>
                         <td>${statusBadgeHtml(c)}<br>
                             <label style="font-weight:normal; font-size:11px;"><input type="checkbox" style="width:auto;" ${c.is_customer ? 'checked' : ''} onchange="toggleContactFlag(${c.id}, 'is_customer', this.checked)"> Klant</label>
@@ -2523,7 +2639,7 @@
                 `).join('');
             } catch (err) {
                 contactsAlert('contacts-list-alert', `Kon contacten niet laden: ${err.message}`, 'warning');
-                tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">-</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" style="color:#666;">-</td></tr>';
             }
         }
 
@@ -2592,23 +2708,72 @@
             }
         }
 
+        const TIMELINE_EVENT_COLORS = {
+            email_sent: '#b45309',
+            email_failed: '#b91c1c',
+            email_opened: '#15803d',
+            email_clicked: '#15803d',
+            email_form_filled: '#15803d',
+            linkedin_action: '#1d4ed8',
+        };
+
+        let currentTimeline = [];
+
+        function timelineRowHtml(e, idx) {
+            const color = TIMELINE_EVENT_COLORS[e.type] || '#333';
+            const hasContent = (e.type === 'email_sent' || e.type === 'email_failed') && (e.subject || e.body);
+            const dateStr = e.at ? new Date(e.at).toLocaleString('nl-NL') : '-';
+            const detailRow = hasContent ? `
+                <tr id="timeline-detail-${idx}" style="display:none;">
+                    <td></td>
+                    <td style="padding:0 8px 12px;">
+                        <div style="background:#f9fafb; border:1px solid #eee; border-radius:6px; padding:10px 12px; font-size:13px;">
+                            ${e.subject ? `<div style="margin-bottom:6px;"><strong>Onderwerp:</strong> ${escapeHtml(e.subject)}</div>` : ''}
+                            <div style="white-space:pre-wrap; color:#444;">${escapeHtml(e.body || '(geen inhoud bewaard voor deze verzending)')}</div>
+                        </div>
+                    </td>
+                </tr>` : '';
+            return `
+                <tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:10px 8px; color:#999; font-size:12px; white-space:nowrap; vertical-align:top;">${dateStr}</td>
+                    <td style="padding:10px 8px;">
+                        <span style="color:${color}; font-weight:600;">${escapeHtml(e.description)}</span>
+                        ${hasContent ? ` <a href="#" id="timeline-toggle-${idx}" onclick="toggleTimelineDetail(${idx}); return false;" style="font-size:12px; margin-left:6px;">e-mail bekijken ▸</a>` : ''}
+                    </td>
+                </tr>${detailRow}`;
+        }
+
+        function toggleTimelineDetail(idx) {
+            const row = document.getElementById(`timeline-detail-${idx}`);
+            const toggle = document.getElementById(`timeline-toggle-${idx}`);
+            const open = row.style.display !== 'none';
+            row.style.display = open ? 'none' : 'table-row';
+            toggle.textContent = open ? 'e-mail bekijken ▸' : 'e-mail verbergen ▾';
+        }
+
         async function openTimelineModal(contactId, name) {
             document.getElementById('timeline-contact-name').textContent = name;
             document.getElementById('timeline-body').innerHTML = '<p style="color:#666;">Laden...</p>';
             document.getElementById('timeline-modal').style.display = 'flex';
             try {
                 const data = await apiGet(`/api/contacts/${contactId}/timeline`);
-                if (!data.timeline.length) {
+                currentTimeline = data.timeline || [];
+                if (!currentTimeline.length) {
                     document.getElementById('timeline-body').innerHTML = '<p style="color:#666;">Nog geen activiteit.</p>';
                     return;
                 }
-                document.getElementById('timeline-body').innerHTML = '<ul style="list-style:none; padding:0; margin:0;">' +
-                    data.timeline.map(e => `
-                        <li style="padding:10px 0; border-bottom:1px solid #eee;">
-                            <div>${e.description}</div>
-                            <div style="color:#999; font-size:12px;">${new Date(e.at).toLocaleString('nl-NL')} · ${e.type}</div>
-                        </li>
-                    `).join('') + '</ul>';
+                document.getElementById('timeline-body').innerHTML = `
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr style="border-bottom:2px solid #e5e7eb;">
+                                <th style="text-align:left; padding:6px 8px; font-size:12px; color:#666;">Datum</th>
+                                <th style="text-align:left; padding:6px 8px; font-size:12px; color:#666;">Gebeurtenis</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${currentTimeline.map((e, idx) => timelineRowHtml(e, idx)).join('')}
+                        </tbody>
+                    </table>`;
             } catch (err) {
                 document.getElementById('timeline-body').innerHTML = `<div class="alert alert-warning">Kon tijdlijn niet laden: ${err.message}</div>`;
             }
@@ -2901,8 +3066,10 @@
             button.disabled = true;
             statusBadge.className = 'status-badge status-pending';
             statusBadge.textContent = 'Campagne aanmaken...';
+            const personaValue = document.getElementById('abtest-persona').value;
+            const personaId = personaValue ? parseInt(personaValue, 10) : null;
             try {
-                const created = await apiPost('/api/campaigns', { name });
+                const created = await apiPost('/api/campaigns', { name, persona_id: personaId });
                 currentCampaignId = created.campaign.id;
 
                 statusBadge.textContent = 'Versturen...';

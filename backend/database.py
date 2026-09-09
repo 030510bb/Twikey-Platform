@@ -35,6 +35,7 @@ customer) - a real next step, not built here.
 
 import os
 import secrets
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -148,6 +149,20 @@ CREATE TABLE IF NOT EXISTS contact_tags (
     contact_id INTEGER NOT NULL REFERENCES contacts(id),
     tag_id INTEGER NOT NULL REFERENCES tags(id),
     PRIMARY KEY (contact_id, tag_id)
+);
+
+-- Fase 3: buyer personas. Net als tags een beheerde, gedeelde vocabulaire
+-- per account, maar bewust GEEN many-to-many zoals tags: een contact heeft
+-- op elk moment hoogstens één buyer persona (contacts.persona_id, zie
+-- MIGRATIONS hieronder), zodat "de mail flow voor deze persona" ondubbelzinnig
+-- is bij het kiezen van een sequence (sequences.persona_id) of
+-- campagne-variant (campaign_variants.persona_id) - zie crm-roadmap.md Fase 3.
+CREATE TABLE IF NOT EXISTS buyer_personas (
+    id SERIAL PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(account_id, name)
 );
 
 -- Audit trail: one row per CRM-lifecycle event (created/imported, tag
@@ -420,6 +435,32 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auto_reply_enabled INTEGER NOT NUL
 -- elke poll alleen naar nieuwe berichten hoeft te zoeken (SEARCH UID > x) in
 -- plaats van de hele mailbox opnieuw te doorzoeken.
 ALTER TABLE smtp_settings ADD COLUMN IF NOT EXISTS imap_last_uid INTEGER NOT NULL DEFAULT 0;
+
+-- Fase 3: buyer personas - één optionele persona per contact (zie
+-- buyer_personas hierboven in SCHEMA), en een optionele persona-koppeling op
+-- een opvolgsequence resp. een campagne-variant, zodat elke buyer persona
+-- zijn eigen mail flow kan hebben. NULL betekent "geen specifieke persona" -
+-- zo'n sequence/variant blijft de generieke fallback voor contacten zonder
+-- (matchende) persona.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS persona_id INTEGER REFERENCES buyer_personas(id);
+ALTER TABLE sequences ADD COLUMN IF NOT EXISTS persona_id INTEGER REFERENCES buyer_personas(id);
+ALTER TABLE campaign_variants ADD COLUMN IF NOT EXISTS persona_id INTEGER REFERENCES buyer_personas(id);
+
+-- Fase 3: audit trail met mailinhoud. Vanaf nu wordt de daadwerkelijk
+-- verstuurde (gepersonaliseerde) tekst opgeslagen op het moment van
+-- verzenden, i.p.v. alleen een verwijzing naar het sjabloon. Oudere rijen
+-- houden deze kolommen leeg - de timeline valt dan terug op het sjabloon
+-- zoals dat nu is (zie contact_timeline()).
+ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS rendered_subject TEXT;
+ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS rendered_body TEXT;
+ALTER TABLE sequence_sends ADD COLUMN IF NOT EXISTS rendered_subject TEXT;
+ALTER TABLE sequence_sends ADD COLUMN IF NOT EXISTS rendered_body TEXT;
+
+-- sequence_sends.sent_at is only set on SUCCESS, so a failed attempt had no
+-- timestamp at all and could never show up in contact_timeline() (which
+-- drops any event without one). attempted_at is set on every attempt,
+-- success or failure, and is what the timeline falls back to for failures.
+ALTER TABLE sequence_sends ADD COLUMN IF NOT EXISTS attempted_at TEXT;
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -992,20 +1033,21 @@ def add_contact(
         return result
 
 
-def list_contacts(account_id: int, q: str = None, tag: str = None, assigned_to=None,
+def list_contacts(account_id: int, q: str = None, tag: str = None, persona_id: int = None, assigned_to=None,
                    exclude_excluded: bool = False, exclude_dnc: bool = False) -> list:
     """List contacts for one account, newest first, each with its tags (list
     of {id, name}) and assignee (id/email or None) attached. Optional filters:
     q (matches first/last name, email or company, case-insensitive substring),
-    tag (tag name), assigned_to (user id, or the string "none" for
+    tag (tag name), persona_id (buyer persona id), assigned_to (user id, or the string "none" for
     unassigned), exclude_excluded (drop contacts with a non-empty
     excluded_reason - e.g. before building a campaign), exclude_dnc (drop
     contacts marked "niet meer benaderen")."""
     with get_conn() as conn:
         sql = """
-            SELECT c.*, u.email AS assigned_to_email
+            SELECT c.*, u.email AS assigned_to_email, bp.name AS persona_name
             FROM contacts c
             LEFT JOIN users u ON u.id = c.assigned_to
+            LEFT JOIN buyer_personas bp ON bp.id = c.persona_id
             WHERE c.account_id = ?
         """
         params = [account_id]
@@ -1016,6 +1058,9 @@ def list_contacts(account_id: int, q: str = None, tag: str = None, assigned_to=N
             )"""
             like = f"%{q.lower()}%"
             params += [like, like, like, like]
+        if persona_id is not None:
+            sql += " AND c.persona_id = ?"
+            params.append(persona_id)
         if assigned_to == "none":
             sql += " AND c.assigned_to IS NULL"
         elif assigned_to is not None:
@@ -1058,8 +1103,10 @@ def get_contact(contact_id: int, account_id: int):
     with get_conn() as conn:
         row = conn.execute(
             """
-            SELECT c.*, u.email AS assigned_to_email
-            FROM contacts c LEFT JOIN users u ON u.id = c.assigned_to
+            SELECT c.*, u.email AS assigned_to_email, bp.name AS persona_name
+            FROM contacts c
+            LEFT JOIN users u ON u.id = c.assigned_to
+            LEFT JOIN buyer_personas bp ON bp.id = c.persona_id
             WHERE c.id = ? AND c.account_id = ?
             """,
             (contact_id, account_id),
@@ -1189,6 +1236,79 @@ def remove_tag_from_contact(contact_id: int, account_id: int, tag_id: int) -> bo
         if tag:
             log_contact_activity(account_id, contact_id, "tag_removed", f"Tag verwijderd: {tag['name']}", _conn=conn)
         return True
+
+
+# ---------------------------------------------------------------------------
+# Buyer personas (Fase 3, crm-roadmap.md)
+#
+# A managed, per-account vocabulary like tags, but a contact has AT MOST ONE
+# persona at a time (contacts.persona_id) rather than a many-to-many join -
+# so "which mail flow does this contact get" (sequences.persona_id,
+# campaign_variants.persona_id) is always unambiguous.
+# ---------------------------------------------------------------------------
+
+def create_buyer_persona(account_id: int, name: str) -> dict:
+    name = name.strip()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO buyer_personas (account_id, name, created_at) VALUES (?, ?, ?) ON CONFLICT (account_id, name) DO NOTHING",
+            (account_id, name, now_iso()),
+        )
+        row = conn.execute(
+            "SELECT * FROM buyer_personas WHERE account_id = ? AND name = ?", (account_id, name)
+        ).fetchone()
+        return dict(row)
+
+
+def list_buyer_personas(account_id: int) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM buyer_personas WHERE account_id = ? ORDER BY name ASC", (account_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_buyer_persona(persona_id: int, account_id: int) -> bool:
+    """Deletes the persona and clears it from any contact/sequence/campaign
+    variant still pointing at it (rather than blocking on the FK) - those
+    simply fall back to "geen specifieke persona" behaviour afterwards."""
+    with get_conn() as conn:
+        owned = conn.execute(
+            "SELECT 1 FROM buyer_personas WHERE id = ? AND account_id = ?", (persona_id, account_id)
+        ).fetchone()
+        if not owned:
+            return False
+        conn.execute("UPDATE contacts SET persona_id = NULL WHERE persona_id = ?", (persona_id,))
+        conn.execute("UPDATE sequences SET persona_id = NULL WHERE persona_id = ?", (persona_id,))
+        conn.execute("UPDATE campaign_variants SET persona_id = NULL WHERE persona_id = ?", (persona_id,))
+        conn.execute("DELETE FROM buyer_personas WHERE id = ?", (persona_id,))
+        return True
+
+
+def set_contact_persona(contact_id: int, account_id: int, persona_id) -> dict:
+    """Sets (or clears, with persona_id=None) a contact's single buyer
+    persona. Returns the updated contact, or None if the contact (or a
+    non-null persona_id) doesn't belong to this account."""
+    with get_conn() as conn:
+        owned = conn.execute("SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)).fetchone()
+        if not owned:
+            return None
+        persona_name = None
+        if persona_id is not None:
+            persona = conn.execute(
+                "SELECT name FROM buyer_personas WHERE id = ? AND account_id = ?", (persona_id, account_id)
+            ).fetchone()
+            if not persona:
+                return None
+            persona_name = persona["name"]
+        conn.execute("UPDATE contacts SET persona_id = ? WHERE id = ?", (persona_id, contact_id))
+        log_contact_activity(
+            account_id, contact_id, "persona_set",
+            f"Buyer persona ingesteld: {persona_name}" if persona_name else "Buyer persona verwijderd",
+            _conn=conn,
+        )
+        row = conn.execute("SELECT * FROM contacts WHERE id = ?", (contact_id,)).fetchone()
+        return dict(row)
 
 
 # ---------------------------------------------------------------------------
@@ -1345,9 +1465,15 @@ def log_contact_activity(account_id: int, contact_id: int, event_type: str, desc
 def contact_timeline(contact_id: int, account_id: int):
     """Everything that happened to one lead, newest first: CRM events
     (created/imported/tag/assignment/exclusion changes) plus every campaign
-    email sent/opened/clicked/form-filled to them, plus every LinkedIn
-    outreach action logged against them. Returns None if the contact doesn't
-    belong to this account."""
+    email and opvolgsequence-mail sent/opened/clicked/form-filled to them,
+    plus every LinkedIn outreach action logged against them. Returns None if
+    the contact doesn't belong to this account.
+
+    Fase 3: every "email_sent"/"email_failed" event also carries subject/body
+    (the exact rendered text - see record_send_result()/record_sequence_send())
+    when that was captured at send time; older sends (or ones from before
+    this column existed) simply omit these keys, and the frontend falls back
+    to showing "geen inhoud bewaard" for those."""
     with get_conn() as conn:
         owned = conn.execute("SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)).fetchone()
         if not owned:
@@ -1362,7 +1488,8 @@ def contact_timeline(contact_id: int, account_id: int):
 
         for r in conn.execute(
             """
-            SELECT camp.name AS campaign_name, cv.offer_name, cr.sent_at, cr.send_error, cr.opened_at, cr.clicked_at, cr.form_filled_at
+            SELECT camp.name AS campaign_name, cv.offer_name, cr.sent_at, cr.send_error, cr.opened_at,
+                   cr.clicked_at, cr.form_filled_at, cr.rendered_subject, cr.rendered_body
             FROM campaign_recipients cr
             JOIN campaigns camp ON camp.id = cr.campaign_id
             JOIN campaign_variants cv ON cv.id = cr.variant_id
@@ -1372,15 +1499,45 @@ def contact_timeline(contact_id: int, account_id: int):
         ).fetchall():
             label = f"{r['campaign_name']} ({r['offer_name']})"
             if r["sent_at"]:
-                events.append({"type": "email_sent", "description": f"E-mail verstuurd - {label}", "at": r["sent_at"]})
+                events.append({
+                    "type": "email_sent", "description": f"E-mail verstuurd - {label}", "at": r["sent_at"],
+                    "subject": r["rendered_subject"], "body": r["rendered_body"],
+                })
             if r["send_error"]:
-                events.append({"type": "email_failed", "description": f"Verzenden mislukt - {label}: {r['send_error']}", "at": r["sent_at"] or ""})
+                events.append({
+                    "type": "email_failed", "description": f"Verzenden mislukt - {label}: {r['send_error']}", "at": r["sent_at"] or "",
+                    "subject": r["rendered_subject"], "body": r["rendered_body"],
+                })
             if r["opened_at"]:
                 events.append({"type": "email_opened", "description": f"E-mail geopend - {label}", "at": r["opened_at"]})
             if r["clicked_at"]:
                 events.append({"type": "email_clicked", "description": f"Link geklikt - {label}", "at": r["clicked_at"]})
             if r["form_filled_at"]:
                 events.append({"type": "email_form_filled", "description": f"Formulier ingevuld - {label}", "at": r["form_filled_at"]})
+
+        for s in conn.execute(
+            """
+            SELECT seq.name AS sequence_name, ss.sent_at, ss.attempted_at, ss.send_error,
+                   ss.rendered_subject, ss.rendered_body
+            FROM sequence_sends ss
+            JOIN sequence_enrollments se ON se.id = ss.enrollment_id
+            JOIN sequences seq ON seq.id = se.sequence_id
+            WHERE se.contact_id = ?
+            """,
+            (contact_id,),
+        ).fetchall():
+            label = f"opvolgsequence '{s['sequence_name']}'"
+            if s["sent_at"]:
+                events.append({
+                    "type": "email_sent", "description": f"E-mail verstuurd - {label}", "at": s["sent_at"],
+                    "subject": s["rendered_subject"], "body": s["rendered_body"],
+                })
+            elif s["send_error"]:
+                events.append({
+                    "type": "email_failed", "description": f"Verzenden mislukt - {label}: {s['send_error']}",
+                    "at": s["attempted_at"] or "",
+                    "subject": s["rendered_subject"], "body": s["rendered_body"],
+                })
 
         for l in conn.execute(
             "SELECT action, template_label, note, created_at FROM linkedin_outreach WHERE contact_id = ?",
@@ -1777,12 +1934,14 @@ def set_auto_reply_enabled(account_id: int, enabled: bool):
 # (skip_enrollment - zie app.py's verwerkings-endpoint).
 # ---------------------------------------------------------------------------
 
-def create_sequence(account_id: int, name: str, steps: list) -> dict:
-    """steps: [{"wait_days": int, "subject_template": str, "body_template": str}, ...] in order."""
+def create_sequence(account_id: int, name: str, steps: list, persona_id: int = None) -> dict:
+    """steps: [{"wait_days": int, "subject_template": str, "body_template": str}, ...] in order.
+    persona_id (optional): ties this sequence to one buyer persona (Fase 3) -
+    see auto_enroll_by_persona() below for how that's used."""
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO sequences (account_id, name, created_at) VALUES (?, ?, ?) RETURNING id",
-            (account_id, name, now_iso()),
+            "INSERT INTO sequences (account_id, name, persona_id, created_at) VALUES (?, ?, ?, ?) RETURNING id",
+            (account_id, name, persona_id, now_iso()),
         )
         sequence_id = cur.fetchone()["id"]
         for i, step in enumerate(steps):
@@ -1797,7 +1956,12 @@ def create_sequence(account_id: int, name: str, steps: list) -> dict:
 def get_sequence(sequence_id: int, account_id: int):
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM sequences WHERE id = ? AND account_id = ?", (sequence_id, account_id)
+            """
+            SELECT s.*, bp.name AS persona_name
+            FROM sequences s LEFT JOIN buyer_personas bp ON bp.id = s.persona_id
+            WHERE s.id = ? AND s.account_id = ?
+            """,
+            (sequence_id, account_id),
         ).fetchone()
         if not row:
             return None
@@ -1812,7 +1976,12 @@ def get_sequence(sequence_id: int, account_id: int):
 def list_sequences(account_id: int) -> list:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM sequences WHERE account_id = ? ORDER BY created_at DESC", (account_id,)
+            """
+            SELECT s.*, bp.name AS persona_name
+            FROM sequences s LEFT JOIN buyer_personas bp ON bp.id = s.persona_id
+            WHERE s.account_id = ? ORDER BY s.created_at DESC
+            """,
+            (account_id,),
         ).fetchall()
         result = []
         for row in rows:
@@ -1882,6 +2051,56 @@ def enroll_contact(sequence_id: int, account_id: int, contact_id: int):
         return dict(row)
 
 
+def auto_enroll_by_persona(account_id: int) -> dict:
+    """Fase 3: "automatisch inschrijven o.b.v. persona" - voor elk contact met
+    een buyer persona dat nog nergens actief is ingeschreven, zoekt de actieve
+    sequence die aan diezelfde persona gekoppeld is (sequences.persona_id) en
+    schrijft het contact daarin in. Contacten zonder persona, of met een
+    persona zonder bijpassende actieve sequence, worden overgeslagen (geen
+    generieke fallback-sequence - dat blijft een bewuste, aparte keuze via de
+    bestaande handmatige inschrijf-flow). Idempotent: opnieuw draaien
+    schrijft niemand dubbel in."""
+    with get_conn() as conn:
+        candidates = conn.execute(
+            """
+            SELECT c.id AS contact_id, c.persona_id
+            FROM contacts c
+            WHERE c.account_id = ? AND c.persona_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM sequence_enrollments se
+                  WHERE se.contact_id = c.id AND se.status = 'active'
+              )
+            """,
+            (account_id,),
+        ).fetchall()
+        enrolled, skipped_no_sequence = 0, 0
+        for row in candidates:
+            seq = conn.execute(
+                "SELECT id FROM sequences WHERE account_id = ? AND persona_id = ? AND status = 'active' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (account_id, row["persona_id"]),
+            ).fetchone()
+            if not seq:
+                skipped_no_sequence += 1
+                continue
+            existing = conn.execute(
+                "SELECT 1 FROM sequence_enrollments WHERE sequence_id = ? AND contact_id = ?",
+                (seq["id"], row["contact_id"]),
+            ).fetchone()
+            if existing:
+                continue
+            conn.execute(
+                """
+                INSERT INTO sequence_enrollments
+                    (sequence_id, account_id, contact_id, current_step, status, next_send_at, enrolled_at)
+                VALUES (?, ?, ?, 0, 'active', ?, ?)
+                """,
+                (seq["id"], account_id, row["contact_id"], now_iso(), now_iso()),
+            )
+            enrolled += 1
+        return {"enrolled": enrolled, "skipped_no_matching_sequence": skipped_no_sequence}
+
+
 def list_enrollments(sequence_id: int, account_id: int) -> list:
     with get_conn() as conn:
         rows = conn.execute(
@@ -1919,14 +2138,22 @@ def due_enrollments(now: str = None) -> list:
         return [dict(r) for r in rows]
 
 
-def record_sequence_send(enrollment_id: int, step_id: int, sent: bool, error: str = None):
+def record_sequence_send(enrollment_id: int, step_id: int, sent: bool, error: str = None,
+                          rendered_subject: str = None, rendered_body: str = None):
     """Logs the send attempt and advances the enrollment to the next step
     (schedules it wait_days from now), or marks the enrollment 'completed'
-    if that was the last step."""
+    if that was the last step. rendered_subject/rendered_body (Fase 3): the
+    exact, personalized text that was (attempted to be) sent - stored so the
+    contact's audit trail can show precisely what they received, not just
+    the template."""
     with get_conn() as conn:
+        now = now_iso()
         conn.execute(
-            "INSERT INTO sequence_sends (enrollment_id, step_id, sent_at, send_error) VALUES (?, ?, ?, ?)",
-            (enrollment_id, step_id, now_iso() if sent else None, error),
+            """
+            INSERT INTO sequence_sends (enrollment_id, step_id, sent_at, send_error, rendered_subject, rendered_body, attempted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (enrollment_id, step_id, now if sent else None, error, rendered_subject, rendered_body, now),
         )
         enrollment = conn.execute("SELECT * FROM sequence_enrollments WHERE id = ?", (enrollment_id,)).fetchone()
         next_step_order = enrollment["current_step"] + 1
@@ -2050,18 +2277,31 @@ def reply_support_ticket(ticket_id: int, admin_reply: str) -> dict:
 # Campaigns / A-B test (scoped per account)
 # ---------------------------------------------------------------------------
 
-def create_campaign(account_id: int, name: str, variants: list, include_excluded: bool = False) -> dict:
+def create_campaign(account_id: int, name: str, variants: list, include_excluded: bool = False,
+                     only_persona_id: int = None) -> dict:
     """
-    variants: list of dicts with keys group_label, offer_name, subject_template, body_template.
-    Assigns every current, non-excluded contact of this account round-robin
-    across the given variants and creates one campaign_recipients row (with
-    its own tracking token) per contact. Nothing is sent yet - see
-    launch_campaign(). Contacts marked "niet meer benaderen" (do_not_contact)
-    or matched by the uitsluitlijst (excluded_reason - existing customer/open
-    quote) are skipped by default, so a prospecting campaign never re-
-    approaches them and never frustrates a live offerte-traject - pass
-    include_excluded=True to deliberately override this (e.g. a non-sales
-    announcement that should reach everyone).
+    variants: list of dicts with keys group_label, offer_name, subject_template,
+    body_template, and an optional persona_id (Fase 3 - ties a variant to one
+    buyer persona instead of the generic A/B split).
+    Assigns every current, non-excluded contact of this account across the
+    given variants and creates one campaign_recipients row (with its own
+    tracking token) per contact. A contact whose buyer persona matches a
+    variant's persona_id always gets that variant (round-robin among just
+    that persona's variants, if it has more than one - so A/B testing still
+    works within a persona); everyone else round-robins across the
+    persona-less ("generic") variants as before. If a campaign has ONLY
+    persona-tagged variants, a contact with no matching persona still falls
+    back to a plain round-robin across all variants, so nobody is silently
+    skipped. Nothing is sent yet - see launch_campaign(). Contacts marked
+    "niet meer benaderen" (do_not_contact) or matched by the uitsluitlijst
+    (excluded_reason - existing customer/open quote) are skipped by default,
+    so a prospecting campaign never re-approaches them and never frustrates a
+    live offerte-traject - pass include_excluded=True to deliberately
+    override this (e.g. a non-sales announcement that should reach
+    everyone). only_persona_id (Fase 3): restricts the whole campaign to
+    contacts with that one buyer persona - the simple, UI-driven way to send
+    a persona-targeted round of the existing (e.g. default) variants,
+    independent of any per-variant persona_id above.
     """
     with get_conn() as conn:
         cur = conn.execute(
@@ -2071,24 +2311,49 @@ def create_campaign(account_id: int, name: str, variants: list, include_excluded
         campaign_id = cur.fetchone()["id"]
 
         variant_ids = []
+        persona_variant_ids = defaultdict(list)
+        generic_variant_ids = []
         for v in variants:
+            persona_id = v.get("persona_id")
             vcur = conn.execute(
                 """
-                INSERT INTO campaign_variants (campaign_id, group_label, offer_name, subject_template, body_template)
-                VALUES (?, ?, ?, ?, ?) RETURNING id
+                INSERT INTO campaign_variants (campaign_id, group_label, offer_name, subject_template, body_template, persona_id)
+                VALUES (?, ?, ?, ?, ?, ?) RETURNING id
                 """,
-                (campaign_id, v["group_label"], v["offer_name"], v["subject_template"], v["body_template"]),
+                (campaign_id, v["group_label"], v["offer_name"], v["subject_template"], v["body_template"], persona_id),
             )
-            variant_ids.append(vcur.fetchone()["id"])
+            variant_id = vcur.fetchone()["id"]
+            variant_ids.append(variant_id)
+            if persona_id:
+                persona_variant_ids[persona_id].append(variant_id)
+            else:
+                generic_variant_ids.append(variant_id)
 
-        contacts_sql = "SELECT id FROM contacts WHERE account_id = ? AND do_not_contact = 0"
+        contacts_sql = "SELECT id, persona_id FROM contacts WHERE account_id = ? AND do_not_contact = 0"
+        contacts_params = [account_id]
         if not include_excluded:
             contacts_sql += " AND (excluded_reason IS NULL OR excluded_reason = '')"
+        if only_persona_id is not None:
+            contacts_sql += " AND persona_id = ?"
+            contacts_params.append(only_persona_id)
         contacts_sql += " ORDER BY id"
-        contacts = conn.execute(contacts_sql, (account_id,)).fetchall()
-        for i, contact in enumerate(contacts):
-            variant_id = variant_ids[i % len(variant_ids)] if variant_ids else None
-            if variant_id is None:
+        contacts = conn.execute(contacts_sql, contacts_params).fetchall()
+
+        persona_counters = defaultdict(int)
+        generic_counter = 0
+        for contact in contacts:
+            persona_id = contact["persona_id"]
+            if persona_id and persona_variant_ids.get(persona_id):
+                pool = persona_variant_ids[persona_id]
+                variant_id = pool[persona_counters[persona_id] % len(pool)]
+                persona_counters[persona_id] += 1
+            elif generic_variant_ids:
+                variant_id = generic_variant_ids[generic_counter % len(generic_variant_ids)]
+                generic_counter += 1
+            elif variant_ids:
+                variant_id = variant_ids[generic_counter % len(variant_ids)]
+                generic_counter += 1
+            else:
                 continue
             conn.execute(
                 """
@@ -2110,7 +2375,12 @@ def get_campaign(campaign_id: int, account_id: int, _conn=None) -> dict:
         if not campaign:
             return None
         variants = conn.execute(
-            "SELECT * FROM campaign_variants WHERE campaign_id = ?", (campaign_id,)
+            """
+            SELECT cv.*, bp.name AS persona_name
+            FROM campaign_variants cv LEFT JOIN buyer_personas bp ON bp.id = cv.persona_id
+            WHERE cv.campaign_id = ?
+            """,
+            (campaign_id,),
         ).fetchall()
         return {"campaign": dict(campaign), "variants": [dict(v) for v in variants]}
 
@@ -2155,17 +2425,31 @@ def mark_campaign_launched(campaign_id: int):
         )
 
 
-def record_send_result(recipient_id: int, sent: bool, error: str = None):
+def record_send_result(recipient_id: int, sent: bool, error: str = None,
+                        rendered_subject: str = None, rendered_body: str = None):
+    """rendered_subject/rendered_body (Fase 3): the exact, personalized email
+    text that was (attempted to be) sent to this recipient, stored regardless
+    of success/failure so the contact's audit trail can show precisely what
+    they received - not just a reference to the (possibly since-edited)
+    template."""
     with get_conn() as conn:
         if sent:
             conn.execute(
-                "UPDATE campaign_recipients SET sent_at = ?, send_error = NULL WHERE id = ?",
-                (now_iso(), recipient_id),
+                """
+                UPDATE campaign_recipients
+                SET sent_at = ?, send_error = NULL, rendered_subject = ?, rendered_body = ?
+                WHERE id = ?
+                """,
+                (now_iso(), rendered_subject, rendered_body, recipient_id),
             )
         else:
             conn.execute(
-                "UPDATE campaign_recipients SET send_error = ? WHERE id = ?",
-                (error, recipient_id),
+                """
+                UPDATE campaign_recipients
+                SET send_error = ?, rendered_subject = ?, rendered_body = ?
+                WHERE id = ?
+                """,
+                (error, rendered_subject, rendered_body, recipient_id),
             )
 
 

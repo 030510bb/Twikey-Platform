@@ -73,9 +73,9 @@ services:
       # up custom domains yet) differ from the values below - see "Eigen
       # domein koppelen (justmeet.tech)" in DEPLOY.md.
       - key: BACKEND_PUBLIC_URL
-        value: https://api.justmeet.tech
+        value: https://twikey-platform-backend.onrender.com
       - key: FRONTEND_PUBLIC_URL
-        value: https://app.justmeet.tech
+        value: https://twikey-platform-frontend.onrender.com
       # NOTE on persistence: contacts/campaigns/accounts/LinkedIn-log data
       # lives in Supabase Postgres (DATABASE_URL above, see
       # backend/database.py) - not on this service's own disk, so it

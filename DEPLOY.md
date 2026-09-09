@@ -68,15 +68,28 @@ meegepusht — die horen nooit in git te staan.
    in (bijv. gegenereerd met `openssl rand -hex 32`). Bewaar deze waarde
    ergens veilig (wachtwoordmanager) — je hebt hem nodig om je eerste
    klantaccount aan te maken (stap 4 hieronder).
-8. Optioneel — bespaart je de curl uit stap 4 bij de allereerste keer: zet
+8. Render zet automatisch ook een **ENCRYPTION_KEY** neer (met een
+   willekeurig gegenereerde waarde) — je hoeft daar zelf niets voor in te
+   vullen. Die versleutelt de SMTP-wachtwoorden die klanten later eventueel
+   invullen op het tabblad "Mail-instellingen" (zie README.md). Verander deze
+   waarde later niet meer als er al klanten hun eigen mailaccount hebben
+   ingesteld — dan kan hun opgeslagen wachtwoord niet meer ontsleuteld
+   worden en moeten ze het opnieuw invullen.
+9. Optioneel — bespaart je de curl uit stap 4 bij de allereerste keer: zet
    ook **SEED_ACCOUNT_EMAIL** en **SEED_ACCOUNT_PASSWORD** (bijv.
    `sales@twikeycampaigns.nl` en hetzelfde wachtwoord dat je in stap 4
    gebruikt). Dat account wordt dan bij de eerste opstart tegen een lege
    database automatisch aangemaakt. Prima om permanent ingesteld te laten
    staan — een wachtwoord dat je later zelf wijzigt, blijft gewoon staan.
-9. Klik op **Apply** / **Create**. Render bouwt en start nu beide services —
+10. Optioneel — nodig voor AI-conceptantwoorden op inkomende replies (tabblad
+    Replies, zie README.md): zet **ANTHROPIC_API_KEY** op een geldige
+    Anthropic API-key. Dit is één gedeelde, platform-brede key (jij betaalt,
+    niet de klant) — zonder deze key werkt alles verder gewoon, maar vallen
+    conceptantwoorden terug op de standaard bezwaar-suggestie in plaats van
+    een AI-gegenereerde tekst.
+11. Klik op **Apply** / **Create**. Render bouwt en start nu beide services —
    dit duurt een paar minuten bij de eerste keer.
-10. Controleer (of stel achteraf in bij de backend-service → **Environment**)
+12. Controleer (of stel achteraf in bij de backend-service → **Environment**)
     dat `BACKEND_PUBLIC_URL` en `FRONTEND_PUBLIC_URL` overeenkomen met de
     werkelijke URLs die Render aan je services heeft gegeven (zichtbaar bovenin
     elke service-pagina). Render voegt soms een suffix toe als de standaardnaam
@@ -151,15 +164,136 @@ Maak dan een beheerderslogin aan met dezelfde `ADMIN_SECRET` en log in via
 `https://twikey-platform-frontend.onrender.com/admin-login.html` — zie
 "Support / beheerpagina (superadmin)" in `README.md`.
 
-## Stap 5 — CORS aanscherpen (aanbevolen, niet verplicht)
+Wil een klant (of jullie zelf) campagnes en losse mails vanaf hun eigen
+domein versturen in plaats van het gedeelde Twikey-adres? Dat regelt de
+klant zelf, na inloggen, via het tabblad **Mail-instellingen** in het
+dashboard — daar hoef jij in Render niets voor aan te passen. Zie "Eigen
+mailaccount / domein instellen (per account SMTP)" in `README.md`.
+
+## Cron: opvolgsequenties laten versturen
+
+Opvolgsequenties (tabblad Sequenties, zie README.md) plannen zelf wanneer de
+volgende mail van een ingeschreven contact verstuurd moet worden, maar er
+draait niets vanzelf op de achtergrond om dat moment ook echt af te vuren —
+dat moet periodiek (bijv. elk uur, of elke 15 minuten voor kortere
+wachttijden tussen stappen) van buitenaf getriggerd worden via:
+
+```bash
+curl -X POST https://api.justmeet.tech/api/cron/process-sequences \
+  -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
+```
+
+Dit endpoint verwerkt alle accounts in één keer (het is geen per-klant
+aanroep) en is bewust idempotent/onschadelijk als je het vaker aanroept dan
+nodig — contacten waarvan de volgende stap nog niet due is, worden gewoon
+overgeslagen.
+
+De makkelijkste manier om dit op Render in te richden is een aparte **Cron
+Job**-service:
+
+1. In het Render-dashboard: **New +** → **Cron Job**.
+2. Kies **Command** als runtime (geen eigen repo/Dockerfile nodig) en vul als
+   command in:
+   ```bash
+   curl -fsS -X POST https://api.justmeet.tech/api/cron/process-sequences -H "X-Admin-Secret: $ADMIN_SECRET"
+   ```
+3. Zet **Schedule** op bijvoorbeeld `*/15 * * * *` (elke 15 minuten) of
+   `0 * * * *` (elk uur) — kies een interval dat past bij de kortste
+   wachttijd die je tussen sequence-stappen gebruikt.
+4. Voeg bij **Environment** dezelfde `ADMIN_SECRET`-waarde toe als bij de
+   backend-service (kopieer 'm handmatig over — Render deelt secrets niet
+   automatisch tussen services).
+5. Sla op. Render logt elke run; een `{"processed": N}`-achtig antwoord
+   betekent dat de aanroep gelukt is.
+
+Elke externe scheduler die op een cron-achtig interval een HTTPS-POST met een
+header kan doen werkt hiervoor (Render Cron Jobs, GitHub Actions met een
+`schedule`-trigger, cron-job.org, etc.) — Render Cron Jobs hierboven is puur
+de laagdrempeligste optie omdat je dan alles op één plek beheert.
+
+Dit is dezelfde `ADMIN_SECRET` als voor `/api/admin/accounts` — geen aparte
+credential nodig.
+
+## Stap 5 — Eigen domein koppelen (justmeet.tech)
+
+Dit platform draait op zichzelf prima op de Render-URLs
+(`*.onrender.com`), maar je kunt het ook koppelen aan je eigen domein, bijv.
+`justmeet.tech` — met per klant een eigen, herkenbare subdomein-URL zoals
+`twikeycampaigns.justmeet.tech`, naast een vast `app.justmeet.tech` voor het
+dashboard en `api.justmeet.tech` voor de backend.
+
+**Bewust géén wildcard-domein (`*.justmeet.tech`).** Render ondersteunt dat
+technisch wel, maar vereist dan dat het kale hoofddomein (`justmeet.tech`
+zonder subdomein) ook naar Render wijst. Omdat daar nu je bestaande
+commerciële website draait, zou dat die website kunnen verstoren. In plaats
+daarvan voeg je per subdomein een los, veilig CNAME-record toe — dat raakt
+het hoofddomein totaal niet aan, dus je bestaande website blijft precies
+zoals hij nu is. Het kost een paar minuten extra per nieuwe klant, en zodra
+je meer dan 2 custom domains gebruikt ook $0,25/maand per extra domein (zie
+Render's pricing), maar is zonder risico voor je bestaande site.
+
+**De front-end code in deze levering gaat er al van uit dat je dit doet**:
+elke pagina praat met de backend via `https://api.justmeet.tech`, en
+`render.yaml` zet `BACKEND_PUBLIC_URL`/`FRONTEND_PUBLIC_URL` op
+`api.justmeet.tech`/`app.justmeet.tech`. Gebruik je (nog) geen eigen domein, pas
+dan eerst deze waarden weer aan naar je `*.onrender.com`-URLs, anders wijst
+alles naar een domein dat nog niet bestaat.
+
+**Stappen:**
+
+1. **In Render, backend-service → Settings → Custom Domains**: voeg
+   `api.justmeet.tech` toe. Render laat je daarna de exacte CNAME-waarde zien
+   die je moet instellen (meestal de eigen `onrender.com`-naam van de
+   service, bijv. `twikey-platform-backend.onrender.com`) — gebruik precies
+   die waarde, niet een aanname.
+2. **In Render, frontend-service → Settings → Custom Domains**: voeg
+   `app.justmeet.tech` toe, én — voor elke klant die een eigen subdomein
+   krijgt — bijvoorbeeld `twikeycampaigns.justmeet.tech`. Dit is dezelfde
+   statische site voor iedereen; het subdomein is puur cosmetisch, dus je
+   hoeft dit niet per klant opnieuw te bouwen of te deployen. Render laat
+   ook hier de exacte CNAME-waarde zien.
+3. **Bij je DNS-provider voor `justmeet.tech`** (waarschijnlijk je
+   domeinregistrar, of Cloudflare als je dat ervoor hebt gezet): voeg voor
+   elk van de bovenstaande domeinen een CNAME-record toe met exact de
+   waarde die Render toonde, bijvoorbeeld:
+
+   | Naam | Type | Waarde |
+   |---|---|---|
+   | `api` | CNAME | (waarde die Render toont voor de backend-service) |
+   | `app` | CNAME | (waarde die Render toont voor de frontend-service) |
+   | `twikeycampaigns` | CNAME | (dezelfde waarde als `app`) |
+
+4. Wacht tot Render het domein als geverifieerd markeert (meestal enkele
+   minuten tot een uur, afhankelijk van DNS-propagatie) — Render regelt het
+   SSL-certificaat vanaf dat moment zelf, automatisch.
+5. **Nieuwe klant erbij?** Herhaal alleen stap 2 (nieuw custom domain op de
+   frontend-service) en stap 3 (één nieuw CNAME-record) met hun gekozen
+   subdomeinnaam. Geen codewijziging, geen nieuwe deploy nodig.
+
+Zodra `api.justmeet.tech` en `app.justmeet.tech` bevestigd werken, kun je de
+oude `*.onrender.com`-URLs gewoon laten voortbestaan als fallback (Render
+verwijdert ze niet) of negeren — beide blijven naar dezelfde services wijzen.
+
+## Stap 6 — CORS aanscherpen (aanbevolen, niet verplicht)
 
 Standaard staat `CORS_ORIGINS=*` in `render.yaml`, zodat alles meteen werkt.
-Voor iets meer veiligheid kun je dit later aanscherpen naar alleen je eigen
-frontend-URL:
+Voor iets meer veiligheid kun je dit later aanscherpen:
+
+- **Eén vaste frontend-URL** (geen eigen domein, of geen per-klant
+  subdomeinen): zet `CORS_ORIGINS` op die exacte URL, bijvoorbeeld
+  `https://twikey-platform-frontend.onrender.com` of `https://app.justmeet.tech`.
+- **Eigen domein mét per-klant subdomeinen** (zoals hierboven): gebruik in
+  plaats daarvan `CORS_ORIGIN_REGEX`, die al klaarstaat in `render.yaml` op
+  `https://([a-zA-Z0-9-]+\.)?justmeet\.tech` — dat dekt `justmeet.tech` zelf,
+  `app.justmeet.tech`, `api.justmeet.tech` én elk toekomstig klantsubdomein in
+  één keer, zonder dat je 'm per nieuwe klant hoeft bij te werken. Zet in dat
+  geval `CORS_ORIGINS` op leeg (of verwijder de env var) zodat alleen de
+  regex nog geldt.
+
+Stappen om aan te scherpen:
 
 1. Ga in het Render-dashboard naar de backend-service → **Environment**.
-2. Zet `CORS_ORIGINS` op je exacte frontend-URL, bijvoorbeeld:
-   `https://twikey-platform-frontend.onrender.com`
+2. Pas `CORS_ORIGINS` en/of `CORS_ORIGIN_REGEX` aan zoals hierboven.
 3. Sla op — Render herstart de service automatisch met de nieuwe instelling.
 
 ## Updates uitrollen
@@ -177,6 +311,17 @@ Render bouwt en deployt automatisch opnieuw bij elke push naar de
 
 ## Problemen oplossen
 
+- **Dashboard laadt wel op `app.justmeet.tech`, maar alle data/inloggen geeft
+  een netwerkfout**: check de browserconsole op CORS-foutmeldingen. Meestal
+  betekent dit dat `CORS_ORIGINS`/`CORS_ORIGIN_REGEX` op de backend-service
+  het nieuwe domein nog niet toestaat (zie Stap 6), of dat
+  `PRODUCTION_API_BASE` in de frontend-bestanden nog naar de oude
+  `onrender.com`-URL wijst in plaats van `api.justmeet.tech`.
+- **Custom domain blijft "Pending"/"Not verified" in Render**: het
+  CNAME-record bij je DNS-provider ontbreekt, staat verkeerd, of moet nog
+  propageren (kan tot een uur duren). Controleer met
+  `dig CNAME app.justmeet.tech` (of een online DNS-checker) of het record
+  daadwerkelijk naar de waarde wijst die Render toonde.
 - **"No Gmail credentials configured"**: `GOOGLE_SERVICE_ACCOUNT_JSON` staat
   niet of onjuist ingesteld. Check bij de backend-service → Environment of
   de volledige JSON-inhoud (inclusief accolades) daar correct is geplakt.
@@ -208,6 +353,14 @@ Render bouwt en deployt automatisch opnieuw bij elke push naar de
   aangemaakt (nieuwe Supabase-database, of `DATABASE_URL` per ongeluk naar
   een ander/leeg project gewezen), draai dan het curl-commando uit Stap 4
   opnieuw.
+- **Testmail versturen op het tabblad "Mail-instellingen" mislukt**: de
+  foutmelding daar is direct de echte SMTP-foutmelding van de mailprovider
+  van de klant zelf — meestal een verkeerd wachtwoord (bij Gmail/Google
+  Workspace en Microsoft 365 moet dit vrijwel altijd een *app-wachtwoord*
+  zijn, niet het normale inlogwachtwoord), een verkeerde host/poort, of een
+  mailprovider die inloggen vanaf een onbekende server blokkeert. Dit heeft
+  niets met `ADMIN_SECRET`, `DATABASE_URL` of `GOOGLE_SERVICE_ACCOUNT_JSON`
+  te maken — dat blijven aparte, gedeelde instellingen.
 - **Wachtwoord vergeten**: gebruik de "Wachtwoord vergeten?"-link op het
   inlogscherm (`login.html` → `forgot-password.html`) — die mailt een
   eenmalige resetlink naar het opgegeven adres via de gedeelde Gmail-mailbox.

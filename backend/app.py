@@ -6,9 +6,11 @@ functionality behind every tab, for multiple customer accounts:
 
   - Auth: email+password login, opaque session tokens (see auth.py/database.py).
     Every account only ever sees its own data - see the multi-tenancy note
-    in database.py, including the one thing that is NOT tenant-isolated yet
-    (email sending still goes through one shared Gmail mailbox).
-  - Email Sync: send/read mail via Gmail API (SEND_AS_EMAIL, shared for now).
+    in database.py.
+  - Email Sync: send/read mail via Gmail API (SEND_AS_EMAIL, shared by
+    default). An account can override sending only (not the inbox read) with
+    its own SMTP credentials - see the "Email settings" section further down
+    and smtp_client.py/crypto.py.
   - Contacts: a small persisted list per account, used by the tabs below.
   - Validation: rule-based outreach message quality checks (see validation.py).
   - A/B Test + Analytics: real campaigns with per-group tracked sends
@@ -23,7 +25,9 @@ Run locally with:
 See README.md for full setup and DEPLOY.md for cloud hosting.
 """
 
+import csv
 import html
+import io
 import logging
 import os
 import secrets
@@ -40,12 +44,18 @@ from dotenv import load_dotenv
 # before Python even starts, so this ordering doesn't affect production).
 load_dotenv()
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 
+import ai_client
+import crypto
 import database
+import hubspot_client
+import imap_client
+import prospecting_client
+import smtp_client
 from auth import get_current_account, get_current_admin, require_admin_secret
 from gmail_client import list_recent_messages, send_email, send_html_email
 from validation import validate_message
@@ -55,6 +65,14 @@ logging.basicConfig(level=logging.INFO)
 
 SEND_AS_EMAIL = os.environ.get("SEND_AS_EMAIL", "sales@twikeycampaigns.nl")
 CORS_ORIGINS = [origin.strip() for origin in os.environ.get("CORS_ORIGINS", "*").split(",")]
+# Optional alternative to CORS_ORIGINS for "this exact domain and every
+# subdomain of it" (e.g. each customer getting their own cosmetic subdomain
+# like klant.justmeet.tech - see "Eigen domein koppelen" in DEPLOY.md): a
+# regex, matched against the full Origin header. Leave unset to keep using
+# CORS_ORIGINS as an exact-match list (or "*"). Example that covers
+# app.justmeet.tech, api.justmeet.tech, and any-klant.justmeet.tech:
+#   CORS_ORIGIN_REGEX=https://([a-zA-Z0-9-]+\.)?justmeet\.tech
+CORS_ORIGIN_REGEX = os.environ.get("CORS_ORIGIN_REGEX") or None
 BACKEND_PUBLIC_URL = os.environ.get("BACKEND_PUBLIC_URL", "https://twikey-platform-backend.onrender.com")
 FRONTEND_PUBLIC_URL = os.environ.get("FRONTEND_PUBLIC_URL", "https://twikey-platform-frontend.onrender.com")
 
@@ -113,6 +131,7 @@ app = FastAPI(title="Twikey Sales Platform - Backend", version="3.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -473,11 +492,48 @@ class SendEmailRequest(BaseModel):
     message: str
 
 
+def _decrypted_smtp_settings(account_id: int) -> dict | None:
+    """The account's own SMTP config with a decrypted, ready-to-use
+    password, or None if the account hasn't configured one."""
+    row = database.get_smtp_settings(account_id)
+    if not row:
+        return None
+    return {
+        "host": row["host"],
+        "port": row["port"],
+        "username": row["username"],
+        "password": crypto.decrypt(row["password_encrypted"]),
+        "from_email": row["from_email"],
+        "from_name": row["from_name"],
+        "use_tls": bool(row["use_tls"]),
+    }
+
+
+def _send_plain_for_account(account_id: int, to: str, subject: str, body: str):
+    """Send a plain-text email as this account's own mailbox if it has SMTP
+    settings configured, otherwise fall back to the shared SEND_AS_EMAIL
+    Gmail sender - same as it worked before this feature existed."""
+    custom = _decrypted_smtp_settings(account_id)
+    if custom:
+        smtp_client.send_email(custom, to, subject, body, subtype="plain")
+        return {"id": None}
+    return send_email(SEND_AS_EMAIL, to, subject, body)
+
+
+def _send_html_for_account(account_id: int, to: str, subject: str, html_body: str):
+    custom = _decrypted_smtp_settings(account_id)
+    if custom:
+        smtp_client.send_html_email(custom, to, subject, html_body)
+        return
+    send_html_email(SEND_AS_EMAIL, to, subject, html_body)
+
+
 @app.post("/api/send")
 def api_send_email(payload: SendEmailRequest, account: dict = Depends(get_current_account)):
-    """Send an email via Gmail on behalf of SEND_AS_EMAIL."""
+    """Send an email as this account's own mailbox (if configured via
+    POST /api/email-settings) or on behalf of SEND_AS_EMAIL otherwise."""
     try:
-        result = send_email(SEND_AS_EMAIL, payload.to, payload.subject, payload.message)
+        result = _send_plain_for_account(account["id"], payload.to, payload.subject, payload.message)
     except Exception as exc:  # noqa: BLE001 - surface the real reason to the caller
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"success": True, "message_id": result.get("id")}
@@ -485,7 +541,13 @@ def api_send_email(payload: SendEmailRequest, account: dict = Depends(get_curren
 
 @app.get("/api/inbox")
 def api_inbox(max_results: int = 10, account: dict = Depends(get_current_account)):
-    """Return the most recent inbox messages, unread count and today's count."""
+    """Return the most recent inbox messages, unread count and today's count.
+
+    Note: this still only reads the shared Gmail mailbox (SEND_AS_EMAIL),
+    even for accounts with their own SMTP sender configured - reading a
+    customer's own inbox would need IMAP credentials and consent on top of
+    what SMTP sending needs, which is out of scope for now. Their sent mail
+    still goes out correctly through their own domain either way."""
     try:
         return list_recent_messages(SEND_AS_EMAIL, max_results=max_results)
     except Exception as exc:  # noqa: BLE001
@@ -493,7 +555,200 @@ def api_inbox(max_results: int = 10, account: dict = Depends(get_current_account
 
 
 # ---------------------------------------------------------------------------
-# Contacts
+# Email settings (per-account SMTP - send campaigns/manual mail through the
+# customer's own domain instead of the shared SEND_AS_EMAIL mailbox)
+# ---------------------------------------------------------------------------
+
+class EmailSettingsIn(BaseModel):
+    host: str
+    port: int
+    username: str
+    password: str = ""  # blank keeps the currently-saved password unchanged
+    from_email: EmailStr
+    from_name: str = ""
+    use_tls: bool = True
+    # Optional: only needed for reply-tracking (reading the inbox), not for
+    # sending. Blank host disables IMAP for this account.
+    imap_host: str = ""
+    imap_port: int | None = None
+    imap_username: str = ""
+    imap_password: str = ""  # blank keeps the currently-saved IMAP password unchanged
+    imap_use_ssl: bool = True
+
+
+class EmailSettingsTestIn(EmailSettingsIn):
+    test_to: EmailStr | None = None  # defaults to the logged-in user's own email
+
+
+@app.get("/api/email-settings")
+def api_get_email_settings(account: dict = Depends(get_current_account)):
+    """Never returns any password - just enough to show the form pre-filled
+    and to tell the dashboard whether this account sends via its own domain
+    or the shared Twikey mailbox, and whether IMAP (reply-reading) is set up."""
+    row = database.get_smtp_settings(account["id"])
+    if not row:
+        return {"configured": False, "imap_configured": False}
+    return {
+        "configured": True,
+        "host": row["host"],
+        "port": row["port"],
+        "username": row["username"],
+        "from_email": row["from_email"],
+        "from_name": row["from_name"],
+        "use_tls": bool(row["use_tls"]),
+        "imap_configured": bool(row.get("imap_host")),
+        "imap_host": row.get("imap_host") or "",
+        "imap_port": row.get("imap_port"),
+        "imap_username": row.get("imap_username") or "",
+        "imap_use_ssl": bool(row.get("imap_use_ssl", True)),
+    }
+
+
+@app.post("/api/email-settings")
+def api_save_email_settings(payload: EmailSettingsIn, account: dict = Depends(get_current_account)):
+    existing = database.get_smtp_settings(account["id"])
+    if payload.password:
+        password_encrypted = crypto.encrypt(payload.password)
+    elif existing:
+        password_encrypted = existing["password_encrypted"]  # keep it unchanged
+    else:
+        raise HTTPException(status_code=400, detail="Wachtwoord is verplicht bij het voor het eerst instellen.")
+
+    imap_host = payload.imap_host or None
+    imap_password_encrypted = None
+    if imap_host:
+        if payload.imap_password:
+            imap_password_encrypted = crypto.encrypt(payload.imap_password)
+        elif existing and existing.get("imap_password_encrypted"):
+            imap_password_encrypted = existing["imap_password_encrypted"]
+        else:
+            raise HTTPException(status_code=400, detail="IMAP-wachtwoord is verplicht als je een IMAP-host invult.")
+
+    database.save_smtp_settings(
+        account["id"], payload.host, payload.port, payload.username,
+        password_encrypted, payload.from_email, payload.from_name, payload.use_tls,
+        imap_host=imap_host, imap_port=payload.imap_port, imap_username=payload.imap_username or None,
+        imap_password_encrypted=imap_password_encrypted, imap_use_ssl=payload.imap_use_ssl,
+    )
+    return {"success": True}
+
+
+@app.delete("/api/email-settings")
+def api_delete_email_settings(account: dict = Depends(get_current_account)):
+    """Revert to the shared SEND_AS_EMAIL sender (also removes IMAP)."""
+    database.delete_smtp_settings(account["id"])
+    return {"success": True}
+
+
+@app.post("/api/email-settings/test")
+def api_test_email_settings(payload: EmailSettingsTestIn, account: dict = Depends(get_current_account)):
+    """Sends a real test email with the submitted settings (not necessarily
+    saved yet), so a customer can verify their SMTP credentials work before
+    committing to them. A blank password reuses the already-saved one, so
+    they can re-test without retyping it."""
+    settings = {
+        "host": payload.host, "port": payload.port, "username": payload.username,
+        "password": payload.password, "from_email": payload.from_email,
+        "from_name": payload.from_name, "use_tls": payload.use_tls,
+    }
+    if not settings["password"]:
+        existing = database.get_smtp_settings(account["id"])
+        if not existing:
+            raise HTTPException(status_code=400, detail="Vul een wachtwoord in om te testen.")
+        settings["password"] = crypto.decrypt(existing["password_encrypted"])
+
+    to = payload.test_to or account["email"]
+    try:
+        smtp_client.send_email(
+            settings, to,
+            "Testmail - Twikey Sales Platform",
+            "Dit is een testmail om te controleren of je e-mailinstellingen correct zijn ingesteld. "
+            "Als je deze mail ontvangt, werkt het en kun je de instellingen opslaan.",
+        )
+    except Exception as exc:  # noqa: BLE001 - surface the real SMTP error to the customer
+        raise HTTPException(status_code=400, detail=f"Versturen van de testmail is mislukt: {exc}") from exc
+    return {"success": True, "sent_to": to}
+
+
+@app.post("/api/email-settings/test-imap")
+def api_test_imap_settings(payload: EmailSettingsTestIn, account: dict = Depends(get_current_account)):
+    """Logs in to the submitted IMAP server (not necessarily saved yet) to
+    verify the credentials work, without touching any messages."""
+    if not payload.imap_host:
+        raise HTTPException(status_code=400, detail="Vul een IMAP-host in om te testen.")
+    password = payload.imap_password
+    if not password:
+        existing = database.get_smtp_settings(account["id"])
+        if not existing or not existing.get("imap_password_encrypted"):
+            raise HTTPException(status_code=400, detail="Vul een IMAP-wachtwoord in om te testen.")
+        password = crypto.decrypt(existing["imap_password_encrypted"])
+
+    import imaplib
+    port = payload.imap_port or (993 if payload.imap_use_ssl else 143)
+    try:
+        conn = imaplib.IMAP4_SSL(payload.imap_host, port) if payload.imap_use_ssl else imaplib.IMAP4(payload.imap_host, port)
+        try:
+            conn.login(payload.imap_username or payload.username, password)
+            status, mailboxes = conn.select("INBOX", readonly=True)
+            count = int(mailboxes[0]) if status == "OK" and mailboxes and mailboxes[0] else 0
+        finally:
+            conn.logout()
+    except Exception as exc:  # noqa: BLE001 - surface the real IMAP error to the customer
+        raise HTTPException(status_code=400, detail=f"Inloggen op IMAP is mislukt: {exc}") from exc
+    return {"success": True, "inbox_message_count": count}
+
+
+# Flexible CSV column-name matching: accepts common Dutch and English
+# headers for the same field, so a customer doesn't have to rename their
+# spreadsheet columns before uploading. Matched case-insensitively.
+_CSV_COLUMN_ALIASES = {
+    "first_name": {"first_name", "firstname", "voornaam"},
+    "last_name": {"last_name", "lastname", "achternaam"},
+    "email": {"email", "e-mail", "emailadres", "e-mailadres"},
+    "company": {"company", "bedrijf", "bedrijfsnaam", "organisatie"},
+    "job_title": {"job_title", "jobtitle", "title", "functie", "functietitel"},
+    "sector": {"sector", "branche", "industry"},
+    "linkedin_url": {"linkedin_url", "linkedin", "linkedinurl", "linkedin profiel"},
+    "tags": {"tags", "tag", "labels"},
+    "domain": {"domain", "domein", "website"},
+    "reason": {"reason", "reden"},
+}
+
+
+def _normalize_csv_row(raw_row: dict) -> dict:
+    """Maps a raw csv.DictReader row (arbitrary header casing/spelling) onto
+    our canonical field names using _CSV_COLUMN_ALIASES. Unrecognised columns
+    are dropped; recognised-but-blank columns are simply absent from the result."""
+    lowered = {(k or "").strip().lower(): (v or "").strip() for k, v in raw_row.items()}
+    result = {}
+    for field, aliases in _CSV_COLUMN_ALIASES.items():
+        for alias in aliases:
+            if alias in lowered and lowered[alias]:
+                result[field] = lowered[alias]
+                break
+    return result
+
+
+async def _read_csv_rows(file: UploadFile) -> list:
+    """Reads an uploaded CSV file (any of the encodings below) and returns a
+    list of normalized dicts - see _normalize_csv_row."""
+    raw = await file.read()
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            text = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        raise HTTPException(status_code=400, detail="Kon het CSV-bestand niet lezen (onbekende tekstcodering).")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="Leeg of ongeldig CSV-bestand.")
+    return [_normalize_csv_row(row) for row in reader]
+
+
+# ---------------------------------------------------------------------------
+# Contacts / mini-CRM
 # ---------------------------------------------------------------------------
 
 class ContactIn(BaseModel):
@@ -502,12 +757,76 @@ class ContactIn(BaseModel):
     last_name: str = ""
     company: str = ""
     linkedin_url: str = ""
+    job_title: str = ""
+    sector: str = ""
 
 
 @app.get("/api/contacts")
-def api_list_contacts(account: dict = Depends(get_current_account)):
+def api_list_contacts(
+    q: str = None, tag: str = None, assigned_to: str = None,
+    exclude_excluded: bool = False, exclude_dnc: bool = False,
+    account: dict = Depends(get_current_account),
+):
+    """q searches first/last name, e-mail and company. assigned_to accepts a
+    user id, or "none" for unassigned contacts."""
     aid = account["id"]
-    return {"contacts": database.list_contacts(aid), "count": database.count_contacts(aid)}
+    resolved_assigned_to = None
+    if assigned_to is not None:
+        resolved_assigned_to = "none" if assigned_to == "none" else int(assigned_to)
+    contacts = database.list_contacts(
+        aid, q=q, tag=tag, assigned_to=resolved_assigned_to,
+        exclude_excluded=exclude_excluded, exclude_dnc=exclude_dnc,
+    )
+    return {"contacts": contacts, "count": database.count_contacts(aid)}
+
+
+@app.get("/api/contacts/export-csv")
+def api_export_contacts_csv(account: dict = Depends(get_current_account)):
+    """Volledige export: alle CRM-velden, plus tags en toegewezen teamlid als
+    platte kolommen zodat het bestand in Excel/Sheets bruikbaar is. Moet vóór
+    GET /api/contacts/{contact_id} geregistreerd staan, anders vangt die
+    route "export-csv" op als een (ongeldige) contact_id."""
+    contacts = database.list_contacts(account["id"])
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "first_name", "last_name", "email", "company", "job_title", "sector", "linkedin_url",
+        "tags", "assigned_to", "source", "is_customer", "has_open_quote", "do_not_contact",
+        "excluded_reason", "created_at",
+    ])
+    for c in contacts:
+        writer.writerow([
+            c["first_name"], c["last_name"], c["email"], c["company"], c.get("job_title", ""),
+            c.get("sector", ""), c["linkedin_url"], ",".join(t["name"] for t in c.get("tags", [])),
+            c.get("assigned_to_email") or "", c.get("source", ""), bool(c.get("is_customer")),
+            bool(c.get("has_open_quote")), bool(c.get("do_not_contact")), c.get("excluded_reason") or "",
+            c["created_at"],
+        ])
+    buf.seek(0)
+    filename = f"contacten-{account['company_name'].replace(' ', '_')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/contacts/{contact_id}")
+def api_get_contact(contact_id: int, account: dict = Depends(get_current_account)):
+    contact = database.get_contact(contact_id, account["id"])
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact niet gevonden.")
+    return {"contact": contact}
+
+
+@app.get("/api/contacts/{contact_id}/timeline")
+def api_contact_timeline(contact_id: int, account: dict = Depends(get_current_account)):
+    """Alles wat er met deze lead is gebeurd, nieuwste eerst: CRM-events
+    (aangemaakt/tag/toewijzing/uitsluiting) + campagne-mails
+    (verzonden/geopend/geklikt/formulier) + LinkedIn-outreach."""
+    timeline = database.contact_timeline(contact_id, account["id"])
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="Contact niet gevonden.")
+    return {"timeline": timeline}
 
 
 @app.post("/api/contacts")
@@ -519,7 +838,30 @@ def api_add_contact(payload: ContactIn, account: dict = Depends(get_current_acco
         last_name=payload.last_name,
         company=payload.company,
         linkedin_url=payload.linkedin_url,
+        job_title=payload.job_title,
+        sector=payload.sector,
+        source="manual",
     )
+    _apply_hubspot_exclusion(account["id"], contact)
+    return {"success": True, "contact": contact}
+
+
+class ContactUpdateIn(BaseModel):
+    job_title: str | None = None
+    sector: str | None = None
+    company: str | None = None
+    linkedin_url: str | None = None
+    is_customer: bool | None = None
+    has_open_quote: bool | None = None
+    do_not_contact: bool | None = None
+
+
+@app.patch("/api/contacts/{contact_id}")
+def api_update_contact(contact_id: int, payload: ContactUpdateIn, account: dict = Depends(get_current_account)):
+    fields = payload.model_dump(exclude_unset=True)
+    contact = database.update_contact(contact_id, account["id"], **fields)
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact niet gevonden.")
     return {"success": True, "contact": contact}
 
 
@@ -529,18 +871,787 @@ class BulkContactsIn(BaseModel):
 
 @app.post("/api/contacts/bulk")
 def api_add_contacts_bulk(payload: BulkContactsIn, account: dict = Depends(get_current_account)):
-    added = [
-        database.add_contact(
+    added = []
+    for c in payload.contacts:
+        contact = database.add_contact(
             account_id=account["id"],
             first_name=c.first_name,
             email=c.email,
             last_name=c.last_name,
             company=c.company,
             linkedin_url=c.linkedin_url,
+            job_title=c.job_title,
+            sector=c.sector,
+            source="manual",
         )
-        for c in payload.contacts
-    ]
+        _apply_hubspot_exclusion(account["id"], contact)
+        added.append(contact)
     return {"success": True, "added": len(added), "contacts": added}
+
+
+@app.post("/api/contacts/import-csv")
+async def api_import_contacts_csv(
+    file: UploadFile = File(...), source: str = "csv", account: dict = Depends(get_current_account),
+):
+    """Flexibele CSV-import: herkent NL/EN kolomnamen (zie _CSV_COLUMN_ALIASES).
+    Rijen zonder geldig e-mailadres worden overgeslagen en meegeteld als
+    fout. Een 'tags'-kolom (komma-gescheiden) koppelt meteen de genoemde
+    tags aan het contact. source is ook hoe Vibe Prospecting-imports straks
+    (Fase 2) hetzelfde pad hergebruiken met source='vibe_prospecting'."""
+    rows = await _read_csv_rows(file)
+    added, errors = [], []
+    for i, row in enumerate(rows, start=1):
+        email = row.get("email", "")
+        if not email or "@" not in email:
+            errors.append({"row": i, "error": "Ontbrekend of ongeldig e-mailadres"})
+            continue
+        contact = database.add_contact(
+            account_id=account["id"],
+            first_name=row.get("first_name") or email.split("@")[0],
+            email=email,
+            last_name=row.get("last_name", ""),
+            company=row.get("company", ""),
+            linkedin_url=row.get("linkedin_url", ""),
+            job_title=row.get("job_title", ""),
+            sector=row.get("sector", ""),
+            source=source,
+        )
+        for tag_name in [t.strip() for t in row.get("tags", "").split(",") if t.strip()]:
+            database.add_tag_to_contact(contact["id"], account["id"], tag_name)
+        _apply_hubspot_exclusion(account["id"], contact)
+        added.append(contact)
+    return {"success": True, "added": len(added), "errors": errors, "contacts": added}
+
+
+# ---------------------------------------------------------------------------
+# Tags
+# ---------------------------------------------------------------------------
+
+@app.get("/api/tags")
+def api_list_tags(account: dict = Depends(get_current_account)):
+    return {"tags": database.list_tags(account["id"])}
+
+
+class TagIn(BaseModel):
+    name: str
+
+
+@app.post("/api/tags")
+def api_create_tag(payload: TagIn, account: dict = Depends(get_current_account)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Tagnaam mag niet leeg zijn.")
+    return {"success": True, "tag": database.get_or_create_tag(account["id"], payload.name)}
+
+
+@app.delete("/api/tags/{tag_id}")
+def api_delete_tag(tag_id: int, account: dict = Depends(get_current_account)):
+    if not database.delete_tag(tag_id, account["id"]):
+        raise HTTPException(status_code=404, detail="Tag niet gevonden.")
+    return {"success": True}
+
+
+@app.post("/api/contacts/{contact_id}/tags")
+def api_add_contact_tag(contact_id: int, payload: TagIn, account: dict = Depends(get_current_account)):
+    tag = database.add_tag_to_contact(contact_id, account["id"], payload.name)
+    if not tag:
+        raise HTTPException(status_code=404, detail="Contact niet gevonden.")
+    return {"success": True, "tag": tag}
+
+
+@app.delete("/api/contacts/{contact_id}/tags/{tag_id}")
+def api_remove_contact_tag(contact_id: int, tag_id: int, account: dict = Depends(get_current_account)):
+    if not database.remove_tag_from_contact(contact_id, account["id"], tag_id):
+        raise HTTPException(status_code=404, detail="Contact niet gevonden.")
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Toewijzen aan een teamlid
+# ---------------------------------------------------------------------------
+
+class AssignIn(BaseModel):
+    user_id: int | None = None  # None = niet-toewijzen
+
+
+@app.post("/api/contacts/{contact_id}/assign")
+def api_assign_contact(contact_id: int, payload: AssignIn, account: dict = Depends(get_current_account)):
+    contact = database.assign_contact(contact_id, account["id"], payload.user_id)
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact of teamlid niet gevonden binnen dit account.")
+    return {"success": True, "contact": contact}
+
+
+# ---------------------------------------------------------------------------
+# Reminders (agenderen)
+# ---------------------------------------------------------------------------
+
+class ReminderIn(BaseModel):
+    contact_id: int
+    remind_at: str  # ISO date/datetime
+    note: str = ""
+
+
+@app.post("/api/reminders")
+def api_create_reminder(payload: ReminderIn, account: dict = Depends(get_current_account)):
+    reminder = database.create_reminder(
+        account["id"], payload.contact_id, payload.remind_at, payload.note, created_by=account.get("user_id")
+    )
+    if not reminder:
+        raise HTTPException(status_code=404, detail="Contact niet gevonden.")
+    return {"success": True, "reminder": reminder}
+
+
+@app.get("/api/reminders")
+def api_list_reminders(due_only: bool = False, include_done: bool = False, account: dict = Depends(get_current_account)):
+    return {"reminders": database.list_reminders(account["id"], only_due=due_only, only_open=not include_done)}
+
+
+@app.post("/api/reminders/{reminder_id}/complete")
+def api_complete_reminder(reminder_id: int, account: dict = Depends(get_current_account)):
+    if not database.complete_reminder(reminder_id, account["id"]):
+        raise HTTPException(status_code=404, detail="Herinnering niet gevonden.")
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Uitsluitlijst (bestaande klanten / lopende offertes)
+# ---------------------------------------------------------------------------
+
+class ExclusionIn(BaseModel):
+    domain: str
+    company_name: str = ""
+    reason: str = ""
+
+
+@app.get("/api/exclusions")
+def api_list_exclusions(account: dict = Depends(get_current_account)):
+    return {"exclusions": database.list_exclusion_entries(account["id"])}
+
+
+@app.post("/api/exclusions")
+def api_add_exclusion(payload: ExclusionIn, account: dict = Depends(get_current_account)):
+    entry = database.add_exclusion_entry(account["id"], payload.domain, payload.company_name, payload.reason, source="manual")
+    return {"success": True, "exclusion": entry}
+
+
+@app.delete("/api/exclusions/{entry_id}")
+def api_delete_exclusion(entry_id: int, account: dict = Depends(get_current_account)):
+    if not database.delete_exclusion_entry(entry_id, account["id"]):
+        raise HTTPException(status_code=404, detail="Uitsluiting niet gevonden.")
+    return {"success": True}
+
+
+@app.post("/api/exclusions/import-csv")
+async def api_import_exclusions_csv(file: UploadFile = File(...), account: dict = Depends(get_current_account)):
+    """CSV met minimaal een 'domain' of 'email' kolom (en optioneel 'company'/
+    'reason') - te vermijden bedrijven, bv. een export van bestaande klanten
+    uit een ander systeem."""
+    rows = await _read_csv_rows(file)
+    added = database.import_exclusion_csv_rows(account["id"], rows)
+    return {"success": True, "added": added}
+
+
+# ---------------------------------------------------------------------------
+# Integraties: Vibe Prospecting / Explorium (credential storage only for nu -
+# zie crm-roadmap.md Fase 2 voor de echte zoek-/lookalike-endpoints)
+# ---------------------------------------------------------------------------
+
+class ProspectingSettingsIn(BaseModel):
+    api_key: str
+
+
+@app.get("/api/integrations/prospecting")
+def api_get_prospecting_settings(account: dict = Depends(get_current_account)):
+    row = database.get_prospecting_settings(account["id"])
+    return {"configured": bool(row)}
+
+
+@app.post("/api/integrations/prospecting")
+def api_save_prospecting_settings(payload: ProspectingSettingsIn, account: dict = Depends(get_current_account)):
+    if not payload.api_key.strip():
+        raise HTTPException(status_code=400, detail="API-key mag niet leeg zijn.")
+    database.save_prospecting_settings(account["id"], crypto.encrypt(payload.api_key.strip()))
+    return {"success": True}
+
+
+@app.delete("/api/integrations/prospecting")
+def api_delete_prospecting_settings(account: dict = Depends(get_current_account)):
+    database.delete_prospecting_settings(account["id"])
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Integraties: HubSpot (credential storage only voor nu - de live
+# klant/deal-uitsluitingscheck volgt in Fase 2, zie crm-roadmap.md)
+# ---------------------------------------------------------------------------
+
+class HubspotSettingsIn(BaseModel):
+    access_token: str
+    exclude_customers: bool = True
+    exclude_open_deals: bool = True
+
+
+@app.get("/api/integrations/hubspot")
+def api_get_hubspot_settings(account: dict = Depends(get_current_account)):
+    row = database.get_hubspot_settings(account["id"])
+    if not row:
+        return {"configured": False}
+    return {
+        "configured": True,
+        "exclude_customers": bool(row["exclude_customers"]),
+        "exclude_open_deals": bool(row["exclude_open_deals"]),
+    }
+
+
+@app.post("/api/integrations/hubspot")
+def api_save_hubspot_settings(payload: HubspotSettingsIn, account: dict = Depends(get_current_account)):
+    if not payload.access_token.strip():
+        raise HTTPException(status_code=400, detail="Access token mag niet leeg zijn.")
+    database.save_hubspot_settings(
+        account["id"], crypto.encrypt(payload.access_token.strip()),
+        payload.exclude_customers, payload.exclude_open_deals,
+    )
+    return {"success": True}
+
+
+@app.delete("/api/integrations/hubspot")
+def api_delete_hubspot_settings(account: dict = Depends(get_current_account)):
+    database.delete_hubspot_settings(account["id"])
+    return {"success": True}
+
+
+def _apply_hubspot_exclusion(account_id: int, contact: dict):
+    """Best-effort live HubSpot check - the third uitsluitlijst-mechanisme
+    from crm-roadmap.md, running automatically on top of the manual+CSV
+    exclusion checks add_contact() already does (see database.py's
+    check_exclusion). Never raises: a HubSpot outage or a bad/expired token
+    shouldn't block adding a contact, it just means this particular safety
+    net didn't fire for this one contact.
+
+    Mutates `contact["excluded_reason"]` in place (in addition to writing
+    it to the database) when it excludes - callers pass in the dict
+    returned by add_contact() and hand the same dict back to the API
+    caller, so without this the HTTP response would show the pre-check
+    state even though the database already reflects the exclusion."""
+    if contact.get("excluded_reason") or not contact.get("company_domain"):
+        return
+    settings_row = database.get_hubspot_settings(account_id)
+    if not settings_row:
+        return
+    try:
+        token = crypto.decrypt(settings_row["access_token_encrypted"])
+        result = hubspot_client.check_domain(
+            token, contact["company_domain"],
+            check_customer=bool(settings_row["exclude_customers"]),
+            check_open_deal=bool(settings_row["exclude_open_deals"]),
+        )
+        reason = None
+        if result.get("is_customer"):
+            reason = "hubspot:customer"
+        elif result.get("has_open_deal"):
+            reason = "hubspot:open_deal"
+        if reason and database.set_contact_excluded_reason(contact["id"], account_id, reason):
+            contact["excluded_reason"] = reason
+    except Exception as exc:  # noqa: BLE001 - see docstring, this is deliberately non-fatal
+        logger.warning("HubSpot-uitsluitingscheck mislukt voor account %s: %s", account_id, exc)
+
+
+class HubspotCheckIn(BaseModel):
+    domain: str
+
+
+@app.post("/api/hubspot/check")
+def api_hubspot_check_domain(payload: HubspotCheckIn, account: dict = Depends(get_current_account)):
+    """On-demand version of the same check (e.g. a 'nu controleren' button
+    in Integraties), independent of adding a contact - this one DOES
+    surface an error to the caller, since here the customer is explicitly
+    asking for a live result."""
+    settings_row = database.get_hubspot_settings(account["id"])
+    if not settings_row:
+        raise HTTPException(status_code=400, detail="HubSpot is nog niet gekoppeld (zie Integraties).")
+    token = crypto.decrypt(settings_row["access_token_encrypted"])
+    try:
+        result = hubspot_client.check_domain(
+            token, payload.domain.lower().strip(),
+            check_customer=bool(settings_row["exclude_customers"]),
+            check_open_deal=bool(settings_row["exclude_open_deals"]),
+        )
+    except hubspot_client.HubspotError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"result": result}
+
+
+# ---------------------------------------------------------------------------
+# Fase 2: Vibe Prospecting / Explorium - echte zoek-/lookalike-/enrich-
+# endpoints tegen het per-account API-key (zie prospecting_client.py).
+# ---------------------------------------------------------------------------
+
+def _decrypted_prospecting_key(account_id: int) -> str:
+    row = database.get_prospecting_settings(account_id)
+    if not row:
+        raise HTTPException(
+            status_code=400,
+            detail="Er is nog geen Vibe Prospecting/Explorium API-key gekoppeld (zie Integraties).",
+        )
+    return crypto.decrypt(row["api_key_encrypted"])
+
+
+class BusinessMatchIn(BaseModel):
+    name: str | None = None
+    domain: str | None = None
+
+
+class ProspectingBusinessMatchIn(BaseModel):
+    businesses: list[BusinessMatchIn]
+
+
+@app.post("/api/prospecting/businesses/match")
+def api_prospecting_match_businesses(payload: ProspectingBusinessMatchIn, account: dict = Depends(get_current_account)):
+    api_key = _decrypted_prospecting_key(account["id"])
+    try:
+        results = prospecting_client.match_businesses(
+            api_key, [b.model_dump(exclude_none=True) for b in payload.businesses]
+        )
+    except prospecting_client.ExploriumError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"businesses": results}
+
+
+class ProspectingLookalikeIn(BaseModel):
+    business_id: str
+    size: int = 20
+
+
+@app.post("/api/prospecting/businesses/lookalikes")
+def api_prospecting_lookalikes(payload: ProspectingLookalikeIn, account: dict = Depends(get_current_account)):
+    """Lookalikes (crm-roadmap.md punt 3): bedrijven die lijken op een al
+    gematchte business_id."""
+    api_key = _decrypted_prospecting_key(account["id"])
+    try:
+        results = prospecting_client.search_lookalike_businesses(api_key, payload.business_id, payload.size)
+    except prospecting_client.ExploriumError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"businesses": results}
+
+
+class ProspectMatchIn(BaseModel):
+    business_id: str | None = None
+    job_titles: list[str] | None = None
+    full_name: str | None = None
+    company_name: str | None = None
+
+
+class ProspectingProspectsIn(BaseModel):
+    prospects: list[ProspectMatchIn]
+
+
+@app.post("/api/prospecting/prospects/match")
+def api_prospecting_match_prospects(payload: ProspectingProspectsIn, account: dict = Depends(get_current_account)):
+    api_key = _decrypted_prospecting_key(account["id"])
+    try:
+        results = prospecting_client.match_prospects(
+            api_key, [p.model_dump(exclude_none=True) for p in payload.prospects]
+        )
+    except prospecting_client.ExploriumError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"prospects": results}
+
+
+class ProspectingEnrichIn(BaseModel):
+    prospect_ids: list[str]
+
+
+@app.post("/api/prospecting/prospects/enrich")
+def api_prospecting_enrich(payload: ProspectingEnrichIn, account: dict = Depends(get_current_account)):
+    api_key = _decrypted_prospecting_key(account["id"])
+    try:
+        results = prospecting_client.enrich_prospect_contacts(api_key, payload.prospect_ids)
+    except prospecting_client.ExploriumError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"prospects": results}
+
+
+class ProspectingImportContactIn(BaseModel):
+    first_name: str
+    last_name: str = ""
+    email: EmailStr
+    company: str = ""
+    job_title: str = ""
+    linkedin_url: str = ""
+
+
+class ProspectingImportIn(BaseModel):
+    contacts: list[ProspectingImportContactIn]
+
+
+@app.post("/api/prospecting/import")
+def api_prospecting_import(payload: ProspectingImportIn, account: dict = Depends(get_current_account)):
+    """Neemt Explorium-resultaten (na match+enrich hierboven, door de
+    gebruiker bekeken/bevestigd) over als CRM-contacten - zelfde
+    add_contact-pad als CSV-import, met source='vibe_prospecting', inclusief
+    de bestaande manual+CSV-uitsluitingscheck plus (indien gekoppeld) de
+    live HubSpot-check."""
+    added = []
+    for c in payload.contacts:
+        contact = database.add_contact(
+            account_id=account["id"], first_name=c.first_name, email=c.email, last_name=c.last_name,
+            company=c.company, linkedin_url=c.linkedin_url, job_title=c.job_title, source="vibe_prospecting",
+        )
+        _apply_hubspot_exclusion(account["id"], contact)
+        added.append(contact)
+    return {"success": True, "added": len(added), "contacts": added}
+
+
+# ---------------------------------------------------------------------------
+# Fase 2: bezwaren-bibliotheek (objection_templates)
+# ---------------------------------------------------------------------------
+
+class ObjectionTemplateIn(BaseModel):
+    category: str
+    keywords: str = ""
+    suggested_reply: str
+
+
+@app.get("/api/objections")
+def api_list_objections(account: dict = Depends(get_current_account)):
+    return {"objections": database.list_objection_templates(account["id"])}
+
+
+@app.post("/api/objections")
+def api_create_objection(payload: ObjectionTemplateIn, account: dict = Depends(get_current_account)):
+    return {
+        "success": True,
+        "objection": database.create_objection_template(
+            account["id"], payload.category, payload.keywords, payload.suggested_reply
+        ),
+    }
+
+
+@app.put("/api/objections/{template_id}")
+def api_update_objection(template_id: int, payload: ObjectionTemplateIn, account: dict = Depends(get_current_account)):
+    row = database.update_objection_template(
+        template_id, account["id"], payload.category, payload.keywords, payload.suggested_reply
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Bezwaar-categorie niet gevonden.")
+    return {"success": True, "objection": row}
+
+
+@app.delete("/api/objections/{template_id}")
+def api_delete_objection(template_id: int, account: dict = Depends(get_current_account)):
+    if not database.delete_objection_template(template_id, account["id"]):
+        raise HTTPException(status_code=404, detail="Bezwaar-categorie niet gevonden.")
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Fase 2: reply-tracking (IMAP) + AI-conceptantwoorden + goedkeuringsscherm.
+# Nooit automatisch verzonden tenzij accounts.auto_reply_enabled AAN staat
+# (standaard uit - crm-roadmap.md punt 6).
+# ---------------------------------------------------------------------------
+
+def _categorize_reply(objection_templates: list, text: str) -> tuple[str, str]:
+    """Simpele keyword-matching classifier: geeft (category, suggested_reply)
+    terug voor de eerste objection_templates-rij waarvan een van de
+    komma-gescheiden keywords in de reply-tekst voorkomt (case-insensitive),
+    of ("", "") als niets matcht. Bewust geen ML - voorspelbaar, uitlegbaar,
+    en werkt met nul externe afhankelijkheden zelfs zonder Anthropic-key."""
+    lowered = (text or "").lower()
+    for tpl in objection_templates:
+        keywords = [k.strip().lower() for k in (tpl.get("keywords") or "").split(",") if k.strip()]
+        if any(kw in lowered for kw in keywords):
+            return tpl["category"], tpl["suggested_reply"]
+    return "", ""
+
+
+def _send_reply_draft(account: dict, draft_body: str, reply: dict):
+    subject = reply.get("subject") or ""
+    reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+    _send_plain_for_account(account["id"], reply["from_email"], reply_subject, draft_body)
+
+
+@app.post("/api/replies/fetch")
+def api_fetch_replies(account: dict = Depends(get_current_account)):
+    """Haalt nieuwe berichten op via de gekoppelde IMAP-mailbox (sinds de
+    vorige poll - zie smtp_settings.imap_last_uid), slaat elk op als een
+    incoming_reply (gematcht aan contact/campagne waar mogelijk),
+    categoriseert automatisch tegen de bezwaren-bibliotheek, en maakt een
+    conceptantwoord klaar (AI via Claude als ANTHROPIC_API_KEY is ingesteld,
+    anders de standaard bezwaar-suggestie) - wordt nooit automatisch
+    verstuurd tenzij auto_reply_enabled aanstaat voor dit account."""
+    settings_row = database.get_smtp_settings(account["id"])
+    if not settings_row or not settings_row.get("imap_host"):
+        raise HTTPException(
+            status_code=400,
+            detail="Er is nog geen IMAP-mailbox gekoppeld (zie Integraties > Mail-instellingen).",
+        )
+
+    imap_settings = {
+        "imap_host": settings_row["imap_host"],
+        "imap_port": settings_row.get("imap_port"),
+        "imap_username": settings_row.get("imap_username") or settings_row["username"],
+        "imap_password": crypto.decrypt(settings_row["imap_password_encrypted"]),
+        "imap_use_ssl": bool(settings_row.get("imap_use_ssl", True)),
+    }
+    try:
+        messages = imap_client.fetch_new_messages(
+            imap_settings, since_uid=database.get_imap_last_uid(account["id"])
+        )
+    except Exception as exc:  # noqa: BLE001 - surface the real IMAP error to the customer
+        raise HTTPException(status_code=400, detail=f"Ophalen via IMAP is mislukt: {exc}") from exc
+
+    objection_templates = database.list_objection_templates(account["id"])
+    auto_enabled = database.get_auto_reply_enabled(account["id"])
+    highest_uid = database.get_imap_last_uid(account["id"])
+    new_replies, new_drafts = [], []
+
+    for msg in messages:
+        highest_uid = max(highest_uid, msg["uid"])
+        category, suggested = _categorize_reply(objection_templates, msg["body"])
+        stored = database.record_incoming_reply(
+            account["id"], msg["from_email"], msg["subject"], msg["body"],
+            str(msg["uid"]), msg["received_at"], objection_category=category,
+        )
+        if not stored:
+            continue  # already processed - keeps this endpoint safe to call repeatedly
+        reply = database.get_incoming_reply(stored["id"], account["id"])
+        new_replies.append(reply)
+
+        draft_body, source = suggested, "template"
+        if ai_client.is_configured():
+            try:
+                contact_name = f"{reply.get('first_name') or ''} {reply.get('last_name') or ''}".strip()
+                draft_body = ai_client.draft_reply(
+                    msg["body"], category, suggested, contact_name, reply.get("company") or ""
+                )
+                source = "ai"
+            except Exception as exc:  # noqa: BLE001 - fall back to the template suggestion
+                logger.warning("AI-conceptantwoord genereren mislukt voor reply %s: %s", reply["id"], exc)
+        if not draft_body:
+            draft_body = (
+                "Bedankt voor je reactie - ik kijk hier persoonlijk naar en kom snel bij je terug."
+            )
+
+        draft = database.create_reply_draft(account["id"], reply["id"], draft_body, source=source)
+        if auto_enabled and reply.get("contact_id"):
+            try:
+                _send_reply_draft(account, draft["draft_body"], reply)
+                database.update_reply_draft(draft["id"], account["id"], status="sent")
+            except Exception as exc:  # noqa: BLE001
+                database.update_reply_draft(draft["id"], account["id"], status="pending", sent_error=str(exc))
+        new_drafts.append(draft)
+
+    if highest_uid > database.get_imap_last_uid(account["id"]):
+        database.update_imap_last_uid(account["id"], highest_uid)
+
+    return {"success": True, "new_replies": len(new_replies), "new_drafts": len(new_drafts)}
+
+
+@app.get("/api/replies")
+def api_list_replies(account: dict = Depends(get_current_account)):
+    return {"replies": database.list_incoming_replies(account["id"])}
+
+
+@app.get("/api/replies/drafts")
+def api_list_reply_drafts(status: str = None, account: dict = Depends(get_current_account)):
+    return {"drafts": database.list_reply_drafts(account["id"], status=status)}
+
+
+class ReplyDraftEditIn(BaseModel):
+    draft_body: str | None = None
+
+
+@app.post("/api/replies/drafts/{draft_id}/approve")
+def api_approve_reply_draft(draft_id: int, payload: ReplyDraftEditIn, account: dict = Depends(get_current_account)):
+    """De menselijke goedkeuring uit crm-roadmap.md punt 6: de gebruiker mag
+    de tekst nog aanpassen voordat 'm daadwerkelijk verstuurd wordt, via
+    dezelfde verzendweg (eigen SMTP of de gedeelde Twikey-mailbox) als de
+    rest van het platform."""
+    draft = database.get_reply_draft(draft_id, account["id"])
+    if not draft:
+        raise HTTPException(status_code=404, detail="Concept niet gevonden.")
+    if draft["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Dit concept is al verwerkt.")
+    body = payload.draft_body if payload.draft_body is not None else draft["draft_body"]
+    try:
+        _send_reply_draft(account, body, draft)
+    except Exception as exc:  # noqa: BLE001 - surface the real send error to the customer
+        database.update_reply_draft(draft_id, account["id"], status="pending", draft_body=body, sent_error=str(exc))
+        raise HTTPException(status_code=400, detail=f"Versturen is mislukt: {exc}") from exc
+    database.update_reply_draft(
+        draft_id, account["id"], status="sent", draft_body=body, reviewed_by=account["user_id"]
+    )
+    return {"success": True}
+
+
+@app.post("/api/replies/drafts/{draft_id}/dismiss")
+def api_dismiss_reply_draft(draft_id: int, account: dict = Depends(get_current_account)):
+    draft = database.get_reply_draft(draft_id, account["id"])
+    if not draft:
+        raise HTTPException(status_code=404, detail="Concept niet gevonden.")
+    database.update_reply_draft(draft_id, account["id"], status="dismissed", reviewed_by=account["user_id"])
+    return {"success": True}
+
+
+class AutoReplyIn(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/settings/auto-reply")
+def api_get_auto_reply(account: dict = Depends(get_current_account)):
+    return {"enabled": database.get_auto_reply_enabled(account["id"])}
+
+
+@app.post("/api/settings/auto-reply")
+def api_set_auto_reply(payload: AutoReplyIn, account: dict = Depends(get_current_account)):
+    """Standaard UIT (crm-roadmap.md punt 6) - dit endpoint is de enige
+    manier om het aan te zetten, altijd een expliciete keuze van de klant."""
+    database.set_auto_reply_enabled(account["id"], payload.enabled)
+    return {"success": True, "enabled": payload.enabled}
+
+
+# ---------------------------------------------------------------------------
+# Fase 2: opvolgmail-sequenties (drip campaigns)
+# ---------------------------------------------------------------------------
+
+class SequenceStepIn(BaseModel):
+    wait_days: int = 3
+    subject_template: str
+    body_template: str
+
+
+class SequenceIn(BaseModel):
+    name: str
+    steps: list[SequenceStepIn]
+
+
+@app.get("/api/sequences")
+def api_list_sequences(account: dict = Depends(get_current_account)):
+    return {"sequences": database.list_sequences(account["id"])}
+
+
+@app.post("/api/sequences")
+def api_create_sequence(payload: SequenceIn, account: dict = Depends(get_current_account)):
+    if not payload.steps:
+        raise HTTPException(status_code=400, detail="Een sequence heeft minstens 1 stap nodig.")
+    steps = [s.model_dump() for s in payload.steps]
+    return {"success": True, "sequence": database.create_sequence(account["id"], payload.name, steps)}
+
+
+@app.get("/api/sequences/{sequence_id}")
+def api_get_sequence(sequence_id: int, account: dict = Depends(get_current_account)):
+    seq = database.get_sequence(sequence_id, account["id"])
+    if not seq:
+        raise HTTPException(status_code=404, detail="Sequence niet gevonden.")
+    return seq
+
+
+class SequenceStatusIn(BaseModel):
+    status: str  # "active" | "paused"
+
+
+@app.post("/api/sequences/{sequence_id}/status")
+def api_set_sequence_status(sequence_id: int, payload: SequenceStatusIn, account: dict = Depends(get_current_account)):
+    if payload.status not in ("active", "paused"):
+        raise HTTPException(status_code=400, detail="Status moet 'active' of 'paused' zijn.")
+    if not database.set_sequence_status(sequence_id, account["id"], payload.status):
+        raise HTTPException(status_code=404, detail="Sequence niet gevonden.")
+    return {"success": True}
+
+
+class EnrollIn(BaseModel):
+    contact_ids: list[int]
+
+
+@app.post("/api/sequences/{sequence_id}/enroll")
+def api_enroll_sequence(sequence_id: int, payload: EnrollIn, account: dict = Depends(get_current_account)):
+    enrolled = 0
+    for contact_id in payload.contact_ids:
+        if database.enroll_contact(sequence_id, account["id"], contact_id):
+            enrolled += 1
+    return {"success": True, "enrolled": enrolled}
+
+
+@app.get("/api/sequences/{sequence_id}/enrollments")
+def api_list_enrollments(sequence_id: int, account: dict = Depends(get_current_account)):
+    return {"enrollments": database.list_enrollments(sequence_id, account["id"])}
+
+
+@app.post("/api/cron/process-sequences", dependencies=[Depends(require_admin_secret)])
+def api_process_sequences():
+    """Verstuurt elke vervallen sequence-stap, over ALLE accounts heen - dus
+    beveiligd met dezelfde X-Admin-Secret als de andere cross-account
+    beheer-endpoints, niet met een account-sessie. Bedoeld om periodiek
+    aangeroepen te worden (bv. een uur-cron op Render of een externe
+    scheduler) - zie DEPLOY.md."""
+    processed, skipped, errors = 0, 0, 0
+    for enrollment in database.due_enrollments():
+        account_id = enrollment["seq_account_id"]
+        if enrollment["do_not_contact"] or enrollment["excluded_reason"]:
+            database.skip_enrollment(enrollment["id"], "Contact is niet meer te benaderen of uitgesloten.")
+            skipped += 1
+            continue
+        sequence = database.get_sequence(enrollment["sequence_id"], account_id)
+        step = next((s for s in sequence["steps"] if s["step_order"] == enrollment["current_step"]), None) if sequence else None
+        if not step:
+            database.skip_enrollment(enrollment["id"], "Sequence-stap niet gevonden.")
+            skipped += 1
+            continue
+        contact = {
+            "first_name": enrollment["first_name"], "last_name": enrollment["last_name"],
+            "company": enrollment["company"],
+        }
+        subject = _render_template(step["subject_template"], contact)
+        body = _render_template(step["body_template"], contact)
+        try:
+            _send_plain_for_account(account_id, enrollment["email"], subject, body)
+            database.record_sequence_send(enrollment["id"], step["id"], sent=True)
+            processed += 1
+        except Exception as exc:  # noqa: BLE001
+            database.record_sequence_send(enrollment["id"], step["id"], sent=False, error=str(exc))
+            errors += 1
+    return {"success": True, "processed": processed, "skipped": skipped, "errors": errors}
+
+
+# ---------------------------------------------------------------------------
+# Support: FAQ / kennisbank + supportvragen
+# ---------------------------------------------------------------------------
+
+@app.get("/api/support/kb")
+def api_list_kb_articles(q: str = None):
+    """Geen inlog vereist zodat de kennisbank ook vanaf de inlogpagina/
+    marketingsite doorzocht kan worden."""
+    return {"articles": database.list_kb_articles(q)}
+
+
+class SupportTicketIn(BaseModel):
+    subject: str
+    message: str
+
+
+@app.post("/api/support/tickets")
+def api_create_support_ticket(payload: SupportTicketIn, account: dict = Depends(get_current_account)):
+    ticket = database.create_support_ticket(account["id"], account.get("user_id"), payload.subject, payload.message)
+    return {"success": True, "ticket": ticket}
+
+
+@app.get("/api/support/tickets")
+def api_list_support_tickets(account: dict = Depends(get_current_account)):
+    return {"tickets": database.list_support_tickets(account["id"])}
+
+
+@app.get("/api/superadmin/support/tickets")
+def api_superadmin_list_support_tickets(admin: dict = Depends(get_current_admin)):
+    return {"tickets": database.list_all_support_tickets()}
+
+
+class SupportTicketReplyIn(BaseModel):
+    reply: str
+
+
+@app.post("/api/superadmin/support/tickets/{ticket_id}/reply")
+def api_superadmin_reply_support_ticket(ticket_id: int, payload: SupportTicketReplyIn, admin: dict = Depends(get_current_admin)):
+    return {"success": True, "ticket": database.reply_support_ticket(ticket_id, payload.reply)}
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +1682,7 @@ class VariantIn(BaseModel):
 class CampaignIn(BaseModel):
     name: str
     variants: list[VariantIn] | None = None  # omit to use the 4 default lead-magnet offers
+    include_excluded: bool = False  # override de uitsluitlijst (bestaande klant/lopende offerte)
 
 
 @app.get("/api/campaigns")
@@ -587,7 +1699,7 @@ def api_create_campaign(payload: CampaignIn, account: dict = Depends(get_current
             detail="Geen contacten aanwezig. Voeg eerst contacten toe via POST /api/contacts voordat je een campagne maakt.",
         )
     variants = [v.model_dump() for v in payload.variants] if payload.variants else DEFAULT_VARIANTS
-    result = database.create_campaign(aid, payload.name, variants)
+    result = database.create_campaign(aid, payload.name, variants, include_excluded=payload.include_excluded)
     return {"success": True, **result}
 
 
@@ -629,7 +1741,7 @@ def api_launch_campaign(campaign_id: int, account: dict = Depends(get_current_ac
         )
 
         try:
-            send_html_email(SEND_AS_EMAIL, r["email"], subject, full_html)
+            _send_html_for_account(aid, r["email"], subject, full_html)
             database.record_send_result(r["recipient_id"], sent=True)
             sent += 1
         except Exception as exc:  # noqa: BLE001

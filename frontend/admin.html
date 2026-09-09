@@ -285,6 +285,21 @@
             </table>
         </div>
 
+        <div class="card">
+            <h2>Supportvragen</h2>
+            <div id="tickets-alert"></div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Account</th><th>Datum</th><th>Onderwerp</th><th>Bericht</th><th>Status</th><th>Antwoord</th>
+                    </tr>
+                </thead>
+                <tbody id="tickets-body">
+                    <tr><td colspan="6" class="empty">Laden...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
         <div class="card" id="detail-panel">
             <h2>
                 <span id="detail-company-name">-</span>
@@ -319,7 +334,7 @@
     </main>
 
     <script>
-        const PRODUCTION_API_BASE = 'https://twikey-platform-backend.onrender.com';
+        const PRODUCTION_API_BASE = 'https://api.justmeet.tech';
         const isLocal = location.protocol === 'file:' ||
             location.hostname === 'localhost' ||
             location.hostname === '127.0.0.1';
@@ -488,8 +503,48 @@
             }
         }
 
+        async function loadTickets() {
+            const tbody = document.getElementById('tickets-body');
+            tbody.innerHTML = '<tr><td colspan="6" class="empty">Laden...</td></tr>';
+            try {
+                const data = await adminGet('/api/superadmin/support/tickets');
+                if (!data.tickets.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="empty">Geen supportvragen.</td></tr>';
+                    return;
+                }
+                const statusLabels = { open: 'Open', replied: 'Beantwoord' };
+                tbody.innerHTML = data.tickets.map(t => `
+                    <tr>
+                        <td>${t.company_name}</td>
+                        <td>${new Date(t.created_at).toLocaleDateString('nl-NL')}</td>
+                        <td>${t.subject}</td>
+                        <td style="max-width:260px; white-space:pre-wrap;">${t.message}</td>
+                        <td>${statusLabels[t.status] || t.status}</td>
+                        <td>
+                            ${t.admin_reply ? `<div style="margin-bottom:6px; white-space:pre-wrap;">${t.admin_reply}</div>` : ''}
+                            <button class="small" onclick="replyTicket(${t.id})">${t.admin_reply ? 'Opnieuw beantwoorden' : 'Beantwoorden'}</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                alertBox('tickets-alert', `Kon supportvragen niet laden: ${err.message}`, 'warning');
+            }
+        }
+
+        async function replyTicket(ticketId) {
+            const reply = prompt('Antwoord aan de klant:');
+            if (!reply || !reply.trim()) return;
+            try {
+                await adminPost(`/api/superadmin/support/tickets/${ticketId}/reply`, { reply: reply.trim() });
+                loadTickets();
+            } catch (err) {
+                alertBox('tickets-alert', `Antwoorden mislukt: ${err.message}`, 'warning');
+            }
+        }
+
         loadAdminInfo();
         loadAccounts();
+        loadTickets();
     </script>
 </body>
 </html>

@@ -5,7 +5,8 @@ plaats van hardcoded voorbeeldcijfers. De front-end praat met een
 FastAPI-backend die:
 
 - écht mail verstuurt/leest via de Gmail API namens `sales@twikeycampaigns.nl`
-  (Email Sync-tab);
+  (Email Sync-tab) — een account kan dit overschrijven met zijn eigen
+  mailaccount/domein via het tabblad Mail-instellingen, zie verderop;
 - contacten, campagnes en trackinggegevens opslaat in een echte database
   (A/B Test- en Analytics-tab);
 - berichten tegen een reeks regel-gebaseerde kwaliteitschecks aanhoudt
@@ -178,13 +179,165 @@ weten. `GET /api/team/users` toont alle teamleden van je eigen account;
 endpoint kan niet, en een account met precies één teamlid overhouden ook
 niet — dan zou het account ontoegankelijk worden).
 
-**Wat nog niet per account is afgeschermd**: alle accounts versturen mail op
-dit moment via dezelfde gedeelde mailbox (`SEND_AS_EMAIL`,
-sales@twikeycampaigns.nl). Contacten/campagnes/LinkedIn-data zijn wel volledig
-per account gescheiden, maar een eigen verzendadres per klant zou betekenen
-dat elke klant zijn eigen Google Workspace-domein + service-account instelt
-(de hele stappen 1–2 hierboven, per klant) — dat is een bewuste vervolgstap,
-nog niet gebouwd.
+**Verzenden**: standaard versturen alle accounts mail via dezelfde gedeelde
+mailbox (`SEND_AS_EMAIL`, sales@twikeycampaigns.nl). Een account kan dit per
+klant overschrijven door zijn eigen SMTP-gegevens in te vullen op het
+tabblad **Mail-instellingen** — zie "Eigen mailaccount / domein instellen"
+verderop. Contacten/campagnes/LinkedIn-data zijn hoe dan ook altijd volledig
+per account gescheiden.
+
+**Lezen** (de Email Sync-tab, ongelezen-teller): dat blijft altijd de
+gedeelde Gmail-mailbox tonen, ook voor accounts met een eigen verzendadres —
+hun eigen inbox uitlezen zou IMAP-credentials en aparte toestemming vergen
+naast wat er al voor SMTP-verzending nodig is. Hun verzonden mail gaat dus
+wél gewoon via hun eigen domein.
+
+## Eigen mailaccount / domein instellen (per account SMTP)
+
+Op het tabblad **Mail-instellingen** kan een account zijn eigen mailaccount
+koppelen, zodat campagne-mails en losse verstuurde mails (`POST /api/send`,
+`POST /api/campaigns/{id}/launch`) voortaan via hún domein gaan in plaats
+van via het gedeelde Twikey-adres. Ontvangers zien dan het eigen adres van
+de klant, en antwoorden komen in hún eigen mailbox terecht.
+
+Benodigde gegevens (van de eigen mailprovider van de klant):
+
+- **Host + poort**: bijv. `smtp.gmail.com` / `587` voor Google Workspace,
+  `smtp.office365.com` / `587` voor Microsoft 365, of de SMTP-gegevens van
+  elke andere provider (cPanel-hosting, Zoho, etc.).
+- **Gebruikersnaam + wachtwoord**: bij Gmail/Google Workspace en Microsoft
+  365 is dit meestal een *app-wachtwoord* (vereist 2-staps-verificatie op
+  dat account), niet het normale inlogwachtwoord.
+- **Afzender e-mailadres** (en optioneel een afzendernaam).
+
+Werkwijze in de UI: eerst op **"Testmail versturen"** klikken (stuurt een
+echte testmail naar het eigen inlogadres van de gebruiker) om de gegevens te
+verifiëren, en pas daarna op **Opslaan**. Instellingen kunnen op elk moment
+weer verwijderd worden ("Terugzetten naar gedeeld Twikey-adres"), waarna het
+account meteen weer via de gedeelde mailbox verstuurt.
+
+Technisch: het wachtwoord wordt versleuteld opgeslagen (`ENCRYPTION_KEY`,
+zie `backend/crypto.py`) en nooit teruggegeven door de API. Zie
+`backend/smtp_client.py` voor de daadwerkelijke SMTP-verzendlogica.
+
+Op hetzelfde tabblad (nu **Integraties**) kunnen ook IMAP-gegevens worden
+ingevuld voor het uitlezen van replies (versleuteld opgeslagen, zelfde
+patroon als SMTP). Het daadwerkelijk uitlezen gebeurt op het tabblad
+**Replies** — zie "Reply-tracking, AI-conceptantwoorden en opvolgsequenties"
+hieronder.
+
+## Mini-CRM: tags, toewijzing, uitsluiting, audit trail
+
+Het tabblad **Contacten** breidt de simpele contactenlijst uit tot een
+mini-CRM:
+
+- **Functie, sector, tags**: vrije velden per contact; tags zijn een gedeeld
+  vocabulaire per account (`tags`/`contact_tags`-tabellen) zodat je op tag
+  kunt filteren.
+- **Toewijzen aan een teamlid**: elk contact kan aan één bestaande teamgenoot
+  (accountmanager/SDR, zie "Teamleden toevoegen") worden gekoppeld.
+- **Zoeken**: op naam, e-mailadres of bedrijfsnaam.
+- **"Niet meer benaderen"**: een expliciete, blijvende stop per contact —
+  wordt overal gerespecteerd (nieuwe campagnes slaan dit contact altijd
+  over, ongeacht de uitsluitlijst hieronder).
+- **Uitsluitlijst (bestaande klanten / lopende offertes)**: drie manieren om
+  een bedrijf uit te sluiten van nieuwe campagnes — handmatig per contact
+  ("Klant"/"Offerte"-vinkjes), een CSV-upload van te vermijden
+  domeinen/bedrijven, of een live HubSpot-koppeling in Integraties (zie
+  hieronder). Een campagne slaat uitgesloten contacten automatisch over
+  (`POST /api/campaigns` met `include_excluded: true` negeert dit bewust).
+- **Herinneringen (agenderen)**: zet een datum + notitie op een contact (bv.
+  "klant vroeg over 3 maanden terug te bellen") — zichtbaar als open lijst
+  totdat je 'm afhandelt.
+- **Audit trail / tijdlijn**: `GET /api/contacts/{id}/timeline` combineert
+  CRM-events (aangemaakt, tag/toewijzing/uitsluiting gewijzigd) met alles wat
+  al bestond (campagne-mails verzonden/geopend/geklikt/formulier,
+  LinkedIn-outreach) tot één tijdlijn per contact, nieuwste eerst.
+- **CSV import/export**: `POST /api/contacts/import-csv` herkent NL/EN
+  kolomnamen automatisch (voornaam/first_name, functie/job_title, sector,
+  tags, etc.); `GET /api/contacts/export-csv` levert alle velden inclusief
+  tags/toewijzing/uitsluitingsstatus.
+- **Vibe Prospecting / Explorium en HubSpot**: op het tabblad Integraties kan
+  per account een Explorium API-key en een HubSpot access token worden
+  opgeslagen (versleuteld, zelfde patroon als SMTP). Beide koppelingen zijn
+  live: vanuit de Integraties-tab kun je bedrijven zoeken, lookalikes vinden
+  en gevonden prospects direct als contact importeren via Explorium
+  (`POST /api/prospecting/...`), en een domein handmatig laten controleren
+  tegen HubSpot (`POST /api/hubspot/check`). Elk nieuw contact (handmatig,
+  bulk, CSV-import of Vibe Prospecting-import) wordt bovendien automatisch
+  tegen HubSpot gecontroleerd als er een HubSpot-token is ingesteld en het
+  contact een bedrijfsdomein heeft — een bestaande klant of een lopende
+  offerte in HubSpot zet dan automatisch `excluded_reason`. Deze
+  HubSpot-check is best-effort: als HubSpot niet bereikbaar is of het token
+  ongeldig is, gaat het aanmaken van het contact gewoon door (alleen de
+  automatische uitsluiting wordt dan overgeslagen). Zie `crm-roadmap.md` voor
+  de volledige roadmap en de vereiste HubSpot-scopes.
+
+## Reply-tracking, AI-conceptantwoorden en opvolgsequenties
+
+Het tabblad **Replies** en het tabblad **Sequenties** zijn samen Fase 2 van
+`crm-roadmap.md`.
+
+**Replies ophalen**: op het tabblad Replies staat een knop "Nieuwe replies
+ophalen" (`POST /api/replies/fetch`), die de eigen IMAP-inbox van het account
+uitleest (instellingen op het tabblad Integraties — zie hierboven) vanaf het
+laatst geziene bericht. Elk nieuw bericht wordt gematcht aan een contact op
+e-mailadres en aan de meest recente campagne van dat contact, en opgeslagen
+als `incoming_reply`. Er is geen automatische achtergrond-polling ingebouwd —
+de gebruiker klikt zelf op de knop, of dit kan periodiek getriggerd worden
+met een externe scheduler (zelfde principe als de opvolgsequenties hieronder,
+zie ook `DEPLOY.md`).
+
+**Bezwaren-bibliotheek en AI-conceptantwoorden**: elke inkomende reply wordt
+op trefwoorden gecategoriseerd tegen de bezwaren-bibliotheek van het account
+(`GET/POST/PUT/DELETE /api/objections` — met standaardcategorieën als
+"Geen tijd / geen prioriteit", "Te duur", etc., die bij het aanmaken van een
+account automatisch worden meegegeven en per account aan te passen zijn).
+Vervolgens wordt via de Anthropic API (zie `ANTHROPIC_API_KEY` hieronder) een
+concept-antwoord gegenereerd, met de herkende bezwaarcategorie en
+standaardsuggestie als context. Lukt de AI-aanroep niet (geen API-key
+ingesteld, of een fout bij Anthropic), dan valt het systeem terug op de
+standaardsuggestie van de bezwaarcategorie, of een generieke concepttekst.
+
+**Goedkeuringsscherm**: elk concept-antwoord komt als `reply_draft` met status
+`pending` op het tabblad Replies te staan. Een teamlid kan de tekst aanpassen
+en goedkeuren (`POST /api/replies/drafts/{id}/approve`) — pas dan wordt de
+mail echt verstuurd, via dezelfde verzendweg als de rest (eigen SMTP-adres
+als dat is ingesteld, anders het gedeelde Twikey-adres) — of afwijzen
+(`POST /api/replies/drafts/{id}/dismiss`).
+
+**"Automatisch versturen"-instelling**: per account is er een schakelaar
+(`GET/POST /api/settings/auto-reply`) om conceptantwoorden meteen automatisch
+te laten versturen in plaats van eerst goed te keuren. **Deze staat standaard
+uit** voor elk account, precies zoals afgesproken in `crm-roadmap.md` — pas
+hem pas later aan zodra er vertrouwen is in de kwaliteit van de
+AI-conceptantwoorden.
+
+**Opvolgsequenties**: op het tabblad Sequenties kun je een meerstaps
+opvolgmail-flow aanmaken (`POST /api/sequences`), met per stap een
+onderwerp/body-sjabloon (zelfde `{{firstName}}`-stijl variabelen als de
+bestaande campagnes) en een wachttijd in dagen tot de volgende stap. Contacten
+worden ingeschreven via `POST /api/sequences/{id}/enroll`; de eerste stap gaat
+direct uit, elke volgende stap pas na de ingestelde wachttijd na de vorige
+stap. Zodra een ingeschreven contact een reply stuurt, stopt de sequence voor
+dat contact automatisch (status `stopped_reply`) — er gaat dan geen opvolgmail
+meer uit, en vanuit die reply kan in plaats daarvan direct een herinnering
+worden gezet (tabblad Contacten). Sequenties gebruiken dezelfde verzendweg
+(eigen SMTP of gedeeld Twikey-adres) als de rest van het platform.
+
+Het daadwerkelijk versturen van due opvolgmails gebeurt niet vanzelf op de
+achtergrond — dat vereist een periodieke aanroep van
+`POST /api/cron/process-sequences` (beveiligd met `X-Admin-Secret`, net als de
+andere admin-endpoints) door een externe scheduler. Zie "Cron: opvolgsequenties
+laten versturen" in `DEPLOY.md` voor hoe je dat op Render inricht.
+
+## Support: kennisbank en supportvragen
+
+Het tabblad **Support** heeft een doorzoekbare kennisbank (`kb_articles`,
+voorzien van standaardartikelen bij eerste opstart) en een formulier om een
+supportvraag in te dienen. Vragen komen terecht in het support-dashboard
+(`admin.html`), waar een Twikey-medewerker kan reageren — het antwoord is
+voor de klant zichtbaar op hetzelfde tabblad.
 
 ## Support / beheerpagina (superadmin)
 
@@ -254,15 +407,35 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `POST /api/superadmin/accounts` 🔒\* | Nieuw klantaccount aanmaken (zelfde als `/api/admin/accounts`, maar via beheerderslogin i.p.v. `X-Admin-Secret`). |
 | `GET /api/superadmin/accounts/{id}` 🔒\* | Detail van één account: teamleden, campagnes, contacten (max. 200), LinkedIn-cijfers. |
 | `POST /api/superadmin/accounts/{id}/users/{user_id}/reset-password` 🔒\* | Wachtwoord van één teamlid resetten. |
-| `POST /api/send` 🔒 | Verstuur een losse mail (`to`, `subject`, `message`). |
-| `GET /api/inbox` 🔒 | Laatste inbox-berichten + ongelezen/vandaag-tellingen. |
-| `GET /api/contacts` 🔒 | Lijst van alle contacten (van je eigen account). |
+| `POST /api/send` 🔒 | Verstuur een losse mail (`to`, `subject`, `message`) — via het eigen SMTP-adres van het account als dat is ingesteld, anders via het gedeelde Twikey-adres. |
+| `GET /api/inbox` 🔒 | Laatste inbox-berichten + ongelezen/vandaag-tellingen. Altijd de gedeelde Gmail-mailbox, ook met een eigen SMTP-afzender ingesteld. |
+| `GET /api/email-settings` 🔒 | Eigen SMTP-instellingen van dit account (zonder wachtwoord), of `{"configured": false}`. |
+| `POST /api/email-settings` 🔒 | Eigen SMTP-instellingen opslaan/bijwerken (`host`, `port`, `username`, `password`, `from_email`, `from_name`, `use_tls`). Leeg wachtwoord behoudt het huidige. |
+| `DELETE /api/email-settings` 🔒 | Eigen SMTP-instellingen verwijderen — het account gaat weer via het gedeelde Twikey-adres. |
+| `POST /api/email-settings/test` 🔒 | Stuurt een echte testmail met de opgegeven (nog niet per se opgeslagen) instellingen, naar `test_to` of anders het eigen inlogadres. |
+| `GET /api/contacts` 🔒 | Lijst van contacten. Query-params: `q` (zoeken), `tag`, `assigned_to` (user-id of `none`), `exclude_excluded`, `exclude_dnc`. |
+| `GET /api/contacts/{id}` 🔒 | Eén contact incl. tags/toewijzing. |
+| `GET /api/contacts/{id}/timeline` 🔒 | Audit trail: CRM-events + campagne-mails + LinkedIn-outreach, nieuwste eerst. |
 | `POST /api/contacts` 🔒 | Eén contact toevoegen/bijwerken. |
+| `PATCH /api/contacts/{id}` 🔒 | CRM-velden bijwerken (`job_title`, `sector`, `company`, `linkedin_url`, `is_customer`, `has_open_quote`, `do_not_contact`). |
 | `POST /api/contacts/bulk` 🔒 | Meerdere contacten in één keer toevoegen. |
+| `POST /api/contacts/import-csv` 🔒 | CSV-bestand importeren (multipart `file`), flexibele NL/EN-kolomherkenning. |
+| `GET /api/contacts/export-csv` 🔒 | Alle contacten als CSV downloaden. |
+| `GET /api/tags` 🔒 / `POST /api/tags` 🔒 / `DELETE /api/tags/{id}` 🔒 | Tags beheren voor je account. |
+| `POST /api/contacts/{id}/tags` 🔒 / `DELETE /api/contacts/{id}/tags/{tag_id}` 🔒 | Tag aan een contact koppelen/loskoppelen. |
+| `POST /api/contacts/{id}/assign` 🔒 | Contact toewijzen aan een teamlid (`user_id`, of `null` om los te koppelen). |
+| `GET /api/reminders` 🔒 / `POST /api/reminders` 🔒 / `POST /api/reminders/{id}/complete` 🔒 | Herinneringen (agenderen) per contact. |
+| `GET /api/exclusions` 🔒 / `POST /api/exclusions` 🔒 / `DELETE /api/exclusions/{id}` 🔒 | Uitsluitlijst (domein/bedrijf) beheren. |
+| `POST /api/exclusions/import-csv` 🔒 | CSV met te vermijden domeinen/bedrijven importeren. |
+| `GET/POST/DELETE /api/integrations/prospecting` 🔒 | Explorium/Vibe Prospecting API-key opslaan (credential-only, zie `crm-roadmap.md`). |
+| `GET/POST/DELETE /api/integrations/hubspot` 🔒 | HubSpot access token + uitsluitingsvoorkeuren opslaan (credential-only). |
+| `GET /api/support/kb` | Kennisbank doorzoeken (`q`). Publiek. |
+| `POST /api/support/tickets` 🔒 / `GET /api/support/tickets` 🔒 | Supportvraag indienen / eigen supportvragen bekijken. |
+| `GET /api/superadmin/support/tickets` 🔒\* / `POST /api/superadmin/support/tickets/{id}/reply` 🔒\* | Supportvragen van alle accounts bekijken/beantwoorden. |
 | `POST /api/validate-message` 🔒 | Valideer een bericht (`text`, `platform`). |
 | `GET /api/campaigns` 🔒 | Lijst van campagnes (van je eigen account). |
 | `POST /api/campaigns` 🔒 | Nieuwe A/B-campagne aanmaken (verdeelt contacten round-robin over de varianten). |
-| `POST /api/campaigns/{id}/launch` 🔒 | Verstuurt de campagne-mails echt via Gmail, met tracking. |
+| `POST /api/campaigns/{id}/launch` 🔒 | Verstuurt de campagne-mails echt (via het eigen SMTP-adres als dat is ingesteld, anders via Gmail), met tracking. |
 | `GET /api/campaigns/{id}/results` 🔒 | Verzonden/opens/clicks/form-fills per groep. |
 | `GET /track/open/{token}.png` | Open-tracking pixel (wordt automatisch in mails ingesloten). |
 | `GET /track/click/{token}` | Click-tracking redirect naar de lead-magnet-pagina. |
@@ -272,6 +445,26 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `PUT /api/linkedin/templates/{id}` 🔒 | Pas een sjabloon aan. |
 | `POST /api/linkedin/log` 🔒 | Log een handmatige LinkedIn-actie. |
 | `GET /api/linkedin/log` 🔒 | Recente gelogde LinkedIn-activiteit. |
+| `POST /api/prospecting/businesses/match` 🔒 | Explorium: zoek bedrijven op naam/domein (echte live-aanroep, per-account API-key). |
+| `POST /api/prospecting/businesses/lookalikes` 🔒 | Explorium: vind vergelijkbare bedrijven ("lookalikes") bij een bedrijf. |
+| `POST /api/prospecting/prospects/match` 🔒 | Explorium: zoek contactpersonen binnen gevonden bedrijven. |
+| `POST /api/prospecting/prospects/enrich` 🔒 | Explorium: verrijk gevonden prospects met contactgegevens (e-mailadres e.d.). |
+| `POST /api/prospecting/import` 🔒 | Importeer een verrijkte Explorium-prospect als contact (`source="vibe_prospecting"`), inclusief automatische HubSpot-uitsluitingscheck. |
+| `POST /api/hubspot/check` 🔒 | Controleer handmatig één domein tegen HubSpot (bestaande klant / open deal), zonder een contact aan te maken. |
+| `GET /api/objections` 🔒 / `POST /api/objections` 🔒 | Bezwaren-bibliotheek bekijken / een categorie toevoegen. |
+| `PUT /api/objections/{id}` 🔒 / `DELETE /api/objections/{id}` 🔒 | Een bezwaarcategorie aanpassen / verwijderen. |
+| `POST /api/replies/fetch` 🔒 | Nieuwe replies ophalen via IMAP, categoriseren en een AI-conceptantwoord genereren (of automatisch versturen, zie de auto-reply-instelling). |
+| `GET /api/replies` 🔒 | Alle binnengekomen replies van dit account. |
+| `GET /api/replies/drafts` 🔒 | Conceptantwoorden, optioneel gefilterd op `status` (`pending`/`sent`/`dismissed`). |
+| `POST /api/replies/drafts/{id}/approve` 🔒 | Een conceptantwoord (evt. aangepast via `draft_body`) goedkeuren en echt versturen. |
+| `POST /api/replies/drafts/{id}/dismiss` 🔒 | Een conceptantwoord afwijzen zonder te versturen. |
+| `GET /api/settings/auto-reply` 🔒 / `POST /api/settings/auto-reply` 🔒 | "Automatisch versturen"-instelling bekijken/wijzigen (standaard uit). |
+| `GET /api/sequences` 🔒 / `POST /api/sequences` 🔒 | Opvolgsequenties bekijken (incl. inschrijvingstellingen) / een nieuwe sequence met stappen aanmaken. |
+| `GET /api/sequences/{id}` 🔒 | Detail van één sequence incl. stappen. |
+| `POST /api/sequences/{id}/status` 🔒 | Sequence op `active`/`paused` zetten. |
+| `POST /api/sequences/{id}/enroll` 🔒 | Eén of meer contacten inschrijven op een sequence. |
+| `GET /api/sequences/{id}/enrollments` 🔒 | Ingeschreven contacten van een sequence met hun status/voortgang. |
+| `POST /api/cron/process-sequences` | Verstuurt alle due opvolgmails over alle accounts heen. Vereist `X-Admin-Secret`, bedoeld voor een externe scheduler — zie `DEPLOY.md`. |
 
 ## Vereisten
 
@@ -348,6 +541,11 @@ cp .env.example .env
 # - GOOGLE_SERVICE_ACCOUNT_FILE: het pad naar het gedownloade
 #   JSON-sleutelbestand uit stap 1.4, bijv.:
 #   GOOGLE_SERVICE_ACCOUNT_FILE=/pad/naar/service-account.json
+# - ANTHROPIC_API_KEY: optioneel, alleen nodig voor AI-conceptantwoorden op
+#   binnenkomende replies (tabblad Replies). Zonder deze key vallen
+#   conceptantwoorden automatisch terug op de standaard bezwaar-suggestie.
+#   Dit is één gedeelde, platform-brede key (niet per klantaccount) - zie
+#   "Reply-tracking, AI-conceptantwoorden en opvolgsequenties" hierboven.
 
 uvicorn app:app --reload --port 8000
 ```

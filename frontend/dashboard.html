@@ -488,12 +488,17 @@
         <!-- Tabs Navigation -->
         <div class="tabs">
             <button class="tab-button active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+            <button class="tab-button" onclick="switchTab('contacts')">👤 Contacten</button>
             <button class="tab-button" onclick="switchTab('email')">📧 Email Sync</button>
             <button class="tab-button" onclick="switchTab('linkedin')">🔗 LinkedIn</button>
             <button class="tab-button" onclick="switchTab('validation')">🔍 Validation</button>
             <button class="tab-button" onclick="switchTab('abtest')">🧪 A/B Test</button>
             <button class="tab-button" onclick="switchTab('analytics')">📈 Analytics</button>
             <button class="tab-button" onclick="switchTab('team')">👥 Team</button>
+            <button class="tab-button" onclick="switchTab('integrations')">🔌 Integraties</button>
+            <button class="tab-button" onclick="switchTab('replies')">💬 Replies</button>
+            <button class="tab-button" onclick="switchTab('sequences')">🔁 Sequenties</button>
+            <button class="tab-button" onclick="switchTab('support')">🆘 Support</button>
         </div>
 
         <!-- TAB 1: DASHBOARD -->
@@ -949,6 +954,411 @@
                 </table>
             </div>
         </div>
+
+        <div id="contacts" class="tab-content">
+            <div class="card">
+                <h2><span class="icon">➕</span>Contact toevoegen</h2>
+                <div id="contacts-add-alert"></div>
+                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+                    <div class="input-group"><label>Voornaam</label><input type="text" id="contact-first-name"></div>
+                    <div class="input-group"><label>Achternaam</label><input type="text" id="contact-last-name"></div>
+                    <div class="input-group"><label>E-mail</label><input type="email" id="contact-email"></div>
+                    <div class="input-group"><label>Bedrijf</label><input type="text" id="contact-company"></div>
+                    <div class="input-group"><label>Functie</label><input type="text" id="contact-job-title"></div>
+                    <div class="input-group"><label>Sector</label><input type="text" id="contact-sector"></div>
+                </div>
+                <button class="button button-primary" style="margin-top:10px;" onclick="addContact()">Toevoegen</button>
+                <p style="color:#999; font-size:13px; margin-top:10px;">
+                    Groter bestand? Gebruik CSV-import (of Vibe Prospecting) op het
+                    tabblad Integraties.
+                </p>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">🔍</span>Contacten</h2>
+                <div id="contacts-list-alert"></div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                    <input type="text" id="contacts-search" placeholder="Zoek op naam, e-mail of bedrijf..." style="flex:1; min-width:200px;" oninput="debouncedLoadContacts()">
+                    <select id="contacts-filter-tag" onchange="loadContacts()"><option value="">Alle tags</option></select>
+                    <select id="contacts-filter-assigned" onchange="loadContacts()">
+                        <option value="">Iedereen</option>
+                        <option value="none">Niet-toegewezen</option>
+                    </select>
+                    <label style="display:flex; align-items:center; gap:6px; font-weight:normal;">
+                        <input type="checkbox" id="contacts-filter-exclude-excluded" style="width:auto;" onchange="loadContacts()"> Verberg uitgesloten
+                    </label>
+                </div>
+                <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Naam</th><th>Bedrijf</th><th>Functie / sector</th><th>Tags</th>
+                            <th>Toegewezen</th><th>Status</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="contacts-body">
+                        <tr><td colspan="7" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">⏰</span>Herinneringen (agenderen)</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Zet een herinnering op een contact (bv. "bel over 3 maanden terug")
+                    - je ziet hier alles wat nog open staat.
+                </p>
+                <div id="reminders-alert"></div>
+                <table>
+                    <thead><tr><th>Datum</th><th>Contact</th><th>Notitie</th><th></th></tr></thead>
+                    <tbody id="reminders-body">
+                        <tr><td colspan="4" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">🚫</span>Uitsluitlijst (bestaande klanten / lopende offertes)</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Bedrijven op deze lijst worden automatisch overgeslagen bij het
+                    aanmaken van nieuwe campagnes, zodat prospecting geen bestaande
+                    klant of lopend offertetraject verstoort.
+                </p>
+                <div id="exclusions-alert"></div>
+                <div style="display:grid; grid-template-columns: 2fr 2fr 2fr auto; gap:10px; align-items:end; margin-bottom:15px;">
+                    <div class="input-group" style="margin:0;"><label>Domein</label><input type="text" id="exclusion-domain" placeholder="klant.nl"></div>
+                    <div class="input-group" style="margin:0;"><label>Bedrijfsnaam (optioneel)</label><input type="text" id="exclusion-company"></div>
+                    <div class="input-group" style="margin:0;"><label>Reden (optioneel)</label><input type="text" id="exclusion-reason" placeholder="Klant sinds 2023"></div>
+                    <button class="button button-primary" onclick="addExclusion()">Toevoegen</button>
+                </div>
+                <div style="display:flex; gap:10px; align-items:center; margin-bottom:15px;">
+                    <input type="file" id="exclusion-csv-file" accept=".csv">
+                    <button class="button button-secondary" onclick="importExclusionsCsv()">CSV met uitsluitingen importeren</button>
+                </div>
+                <table>
+                    <thead><tr><th>Domein</th><th>Bedrijf</th><th>Reden</th><th>Bron</th><th></th></tr></thead>
+                    <tbody id="exclusions-body">
+                        <tr><td colspan="5" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Simple timeline modal -->
+        <div id="timeline-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+            <div style="background:#fff; border-radius:10px; padding:25px; max-width:600px; width:90%; max-height:80vh; overflow-y:auto;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <h2 style="margin:0;">Tijdlijn: <span id="timeline-contact-name"></span></h2>
+                    <button class="button button-secondary" onclick="closeTimelineModal()">Sluiten</button>
+                </div>
+                <div id="timeline-body"></div>
+            </div>
+        </div>
+
+        <div id="integrations" class="tab-content">
+            <div class="card">
+                <h2><span class="icon">✉️</span>Mail: verzenden (SMTP) en replies lezen (IMAP)</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Standaard verstuurt Twikey Sales Platform campagne- en losse e-mails
+                    via één gedeeld Twikey-mailadres. Vul hieronder de SMTP-gegevens van
+                    je eigen mailaccount in (Google Workspace, Microsoft 365, of elke
+                    andere provider) om voortaan vanaf je eigen domein te versturen —
+                    ontvangers zien dan jullie eigen adres, en antwoorden komen in jullie
+                    eigen mailbox terecht in plaats van bij Twikey. Vul ook de IMAP-gegevens
+                    in als je wilt dat het platform replies op je campagnes kan herkennen.
+                </p>
+                <div id="emailsettings-status"></div>
+                <div id="emailsettings-alert"></div>
+
+                <h3 style="margin: 10px 0;">Verzenden (SMTP)</h3>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="input-group">
+                        <label>SMTP-server (host)</label>
+                        <input type="text" id="smtp-host" placeholder="smtp.gmail.com">
+                    </div>
+                    <div class="input-group">
+                        <label>Poort</label>
+                        <input type="number" id="smtp-port" placeholder="587" value="587">
+                    </div>
+                    <div class="input-group">
+                        <label>Gebruikersnaam</label>
+                        <input type="text" id="smtp-username" placeholder="jij@jouwbedrijf.nl">
+                    </div>
+                    <div class="input-group">
+                        <label>Wachtwoord (app-wachtwoord)</label>
+                        <input type="password" id="smtp-password" placeholder="Laat leeg om het huidige wachtwoord te behouden">
+                    </div>
+                    <div class="input-group">
+                        <label>Afzender e-mailadres</label>
+                        <input type="email" id="smtp-from-email" placeholder="sales@jouwbedrijf.nl">
+                    </div>
+                    <div class="input-group">
+                        <label>Afzendernaam (optioneel)</label>
+                        <input type="text" id="smtp-from-name" placeholder="Jouw Bedrijf">
+                    </div>
+                </div>
+                <div class="input-group" style="margin-top: 6px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="smtp-use-tls" checked style="width:auto;">
+                        STARTTLS gebruiken (aan laten voor de meeste providers, ook Gmail/Workspace op poort 587)
+                    </label>
+                </div>
+                <div style="margin-top: 15px;">
+                    <button class="button button-secondary" onclick="testEmailSettings()">📤 Testmail versturen</button>
+                </div>
+
+                <h3 style="margin: 25px 0 10px;">Replies lezen (IMAP) - optioneel</h3>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Nodig voor reply-tracking: laat leeg als je (nog) alleen wilt versturen
+                    vanaf je eigen domein zonder dat het platform je inbox uitleest.
+                </p>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="input-group">
+                        <label>IMAP-server (host)</label>
+                        <input type="text" id="imap-host" placeholder="imap.gmail.com">
+                    </div>
+                    <div class="input-group">
+                        <label>Poort</label>
+                        <input type="number" id="imap-port" placeholder="993" value="993">
+                    </div>
+                    <div class="input-group">
+                        <label>Gebruikersnaam</label>
+                        <input type="text" id="imap-username" placeholder="jij@jouwbedrijf.nl">
+                    </div>
+                    <div class="input-group">
+                        <label>Wachtwoord</label>
+                        <input type="password" id="imap-password" placeholder="Laat leeg om het huidige wachtwoord te behouden">
+                    </div>
+                </div>
+                <div class="input-group" style="margin-top: 6px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="imap-use-ssl" checked style="width:auto;">
+                        SSL gebruiken (aan laten voor de meeste providers, poort 993)
+                    </label>
+                </div>
+                <div style="margin-top: 15px;">
+                    <button class="button button-secondary" onclick="testImapSettings()">📥 IMAP-verbinding testen</button>
+                    <button class="button button-primary" onclick="saveEmailSettings()">Alles opslaan</button>
+                    <button class="button button-secondary" id="emailsettings-disconnect" style="color:#b91c1c; display:none;" onclick="disconnectEmailSettings()">Terugzetten naar gedeeld Twikey-adres</button>
+                </div>
+                <p style="color:#999; font-size: 13px; margin-top: 12px;">
+                    Tip: bij Gmail/Google Workspace en Microsoft 365 heb je meestal een
+                    <em>app-wachtwoord</em> nodig in plaats van je normale inlogwachtwoord
+                    (vereist 2-staps-verificatie). Test eerst voordat je opslaat.
+                </p>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">🧭</span>Vibe Prospecting / Explorium</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Koppel je eigen Explorium-account om hieronder nieuwe leads en
+                    lookalikes te zoeken en direct als contact te importeren. Nog geen
+                    account? Je kunt de koppeling nu al klaarzetten en de API-key later
+                    toevoegen zodra je een abonnement hebt.
+                </p>
+                <div id="prospecting-status"></div>
+                <div id="prospecting-alert"></div>
+                <div class="input-group">
+                    <label>Explorium API-key</label>
+                    <input type="password" id="prospecting-api-key" placeholder="Laat leeg om de huidige key te behouden">
+                </div>
+                <div style="margin-top: 10px;">
+                    <button class="button button-primary" onclick="saveProspectingSettings()">Opslaan</button>
+                    <button class="button button-secondary" id="prospecting-disconnect" style="color:#b91c1c; display:none;" onclick="disconnectProspecting()">Koppeling verwijderen</button>
+                </div>
+
+                <h3 style="margin:25px 0 10px;">Bedrijf zoeken</h3>
+                <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:10px; align-items:end;">
+                    <div class="input-group" style="margin:0;"><label>Bedrijfsnaam</label><input type="text" id="prospecting-search-name" placeholder="Acme BV"></div>
+                    <div class="input-group" style="margin:0;"><label>Domein (optioneel)</label><input type="text" id="prospecting-search-domain" placeholder="acme.nl"></div>
+                    <button class="button button-primary" onclick="prospectingSearchBusiness()">Zoeken</button>
+                </div>
+                <div id="prospecting-search-alert" style="margin-top:10px;"></div>
+                <div id="prospecting-search-results"></div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">🏢</span>HubSpot (uitsluiting bestaande klanten)</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Koppel een HubSpot private-app access token zodat bedrijven die al
+                    klant zijn of een lopende deal hebben automatisch worden uitgesloten
+                    zodra je een contact toevoegt of importeert (naast de handmatige en
+                    CSV-uitsluitlijst hierboven bij Contacten).
+                </p>
+                <div id="hubspot-status"></div>
+                <div id="hubspot-alert"></div>
+                <div class="input-group">
+                    <label>HubSpot private-app access token</label>
+                    <input type="password" id="hubspot-token" placeholder="Laat leeg om het huidige token te behouden">
+                </div>
+                <div class="input-group" style="margin-top: 6px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="hubspot-exclude-customers" checked style="width:auto;">
+                        Bestaande klanten uitsluiten
+                    </label>
+                </div>
+                <div class="input-group">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="hubspot-exclude-deals" checked style="width:auto;">
+                        Bedrijven met een lopende deal uitsluiten
+                    </label>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button class="button button-primary" onclick="saveHubspotSettings()">Opslaan</button>
+                    <button class="button button-secondary" id="hubspot-disconnect" style="color:#b91c1c; display:none;" onclick="disconnectHubspot()">Koppeling verwijderen</button>
+                </div>
+
+                <h3 style="margin:25px 0 10px;">Domein handmatig controleren</h3>
+                <div style="display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:end;">
+                    <div class="input-group" style="margin:0;"><label>Domein</label><input type="text" id="hubspot-check-domain" placeholder="klant.nl"></div>
+                    <button class="button button-secondary" onclick="checkHubspotDomain()">Nu controleren</button>
+                </div>
+                <div id="hubspot-check-result" style="margin-top:10px;"></div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">📂</span>Contacten importeren / exporteren</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Importeer een CSV met contacten (kolommen als voornaam, achternaam,
+                    e-mail, bedrijf, functie, sector, tags worden automatisch herkend,
+                    ook in het Nederlands), of exporteer alle contacten inclusief tags,
+                    toewijzing en uitsluitingsstatus.
+                </p>
+                <div id="integrations-import-alert"></div>
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                    <input type="file" id="contacts-csv-file" accept=".csv">
+                    <button class="button button-primary" onclick="importContactsCsv()">Contacten importeren</button>
+                    <button class="button button-secondary" onclick="exportContactsCsv()">📥 Alle contacten exporteren (CSV)</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="replies" class="tab-content">
+            <div class="card">
+                <h2><span class="icon">💬</span>Replies ophalen</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Haalt nieuwe berichten op uit de gekoppelde IMAP-mailbox (zie
+                    Integraties &gt; Mail-instellingen), herkent automatisch het
+                    bezwaar en maakt een conceptantwoord klaar. Concepten worden pas
+                    verstuurd nadat je ze hier goedkeurt - tenzij je hieronder
+                    automatisch versturen aanzet.
+                </p>
+                <div id="replies-fetch-alert"></div>
+                <div style="display:flex; gap:15px; align-items:center; flex-wrap:wrap;">
+                    <button class="button button-primary" onclick="fetchReplies()">📥 Nieuwe replies ophalen</button>
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="auto-reply-toggle" style="width:auto;" onchange="toggleAutoReply()">
+                        Automatisch versturen (zonder handmatige goedkeuring)
+                    </label>
+                </div>
+                <p style="color:#b45309; font-size:13px; margin-top:10px;">
+                    ⚠️ Advies: laat dit uit staan totdat je de kwaliteit van de
+                    conceptantwoorden een tijdje hebt gecontroleerd via goedkeuren
+                    hieronder.
+                </p>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">📝</span>Openstaande conceptantwoorden</h2>
+                <div id="drafts-alert"></div>
+                <div id="drafts-list">
+                    <p style="color:#666;">Laden...</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">📜</span>Alle replies</h2>
+                <div style="overflow-x:auto;">
+                <table>
+                    <thead><tr><th>Ontvangen</th><th>Van</th><th>Contact</th><th>Categorie</th><th>Concept-status</th></tr></thead>
+                    <tbody id="replies-body">
+                        <tr><td colspan="5" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">📚</span>Bezwaren-bibliotheek</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Standaard categorieën + antwoord-suggesties, gebruikt om replies te
+                    herkennen en concepten te maken. Pas gerust aan naar jullie eigen
+                    aanpak/toon.
+                </p>
+                <div id="objections-alert"></div>
+                <div style="overflow-x:auto; margin-bottom:15px;">
+                <table>
+                    <thead><tr><th>Categorie</th><th>Keywords</th><th>Suggestie</th><th></th></tr></thead>
+                    <tbody id="objections-body">
+                        <tr><td colspan="4" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+                </div>
+                <h3 style="margin-bottom:10px;">Nieuwe categorie</h3>
+                <div style="display:grid; grid-template-columns: 1fr 1fr 2fr auto; gap:10px; align-items:end;">
+                    <div class="input-group" style="margin:0;"><label>Categorie</label><input type="text" id="objection-category"></div>
+                    <div class="input-group" style="margin:0;"><label>Keywords (komma-gescheiden)</label><input type="text" id="objection-keywords"></div>
+                    <div class="input-group" style="margin:0;"><label>Suggestie</label><input type="text" id="objection-reply"></div>
+                    <button class="button button-primary" onclick="addObjectionTemplate()">Toevoegen</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="sequences" class="tab-content">
+            <div class="card">
+                <h2><span class="icon">➕</span>Nieuwe opvolgmail-sequence</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Een sequence stuurt de eerste stap direct bij inschrijving en elke
+                    volgende stap na het ingestelde aantal dagen - en stopt automatisch
+                    zodra het contact reageert.
+                </p>
+                <div id="sequence-create-alert"></div>
+                <div class="input-group"><label>Naam</label><input type="text" id="sequence-name" placeholder="Opvolging na eerste mail"></div>
+                <div id="sequence-steps-editor"></div>
+                <button class="button button-secondary" style="margin-top:8px;" onclick="addSequenceStepRow()">+ Stap toevoegen</button>
+                <div style="margin-top:15px;">
+                    <button class="button button-primary" onclick="createSequence()">Sequence aanmaken</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">🔁</span>Sequenties</h2>
+                <div id="sequences-alert"></div>
+                <div id="sequences-list">
+                    <p style="color:#666;">Laden...</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="support" class="tab-content">
+            <div class="card">
+                <h2><span class="icon">📚</span>Kennisbank / FAQ</h2>
+                <div class="input-group">
+                    <input type="text" id="kb-search" placeholder="Zoek in de kennisbank..." oninput="loadKbArticles()">
+                </div>
+                <div id="kb-articles"></div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">✉️</span>Stel een supportvraag</h2>
+                <p style="color:#666; margin-bottom:15px;">Staat je vraag er niet bij? Stuur 'm naar Twikey support.</p>
+                <div id="support-ticket-alert"></div>
+                <div class="input-group"><label>Onderwerp</label><input type="text" id="ticket-subject"></div>
+                <div class="input-group"><label>Bericht</label><textarea id="ticket-message" rows="4" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; font-family:inherit;"></textarea></div>
+                <button class="button button-primary" onclick="submitSupportTicket()">Versturen</button>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">🗂️</span>Mijn supportvragen</h2>
+                <table>
+                    <thead><tr><th>Datum</th><th>Onderwerp</th><th>Status</th><th>Antwoord</th></tr></thead>
+                    <tbody id="support-tickets-body">
+                        <tr><td colspan="4" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -956,10 +1366,10 @@
         // - When this page is opened locally (file:// or localhost), it talks
         //   to a backend running on your own machine (see backend/README.md).
         // - Otherwise (i.e. once this page is deployed, e.g. to Render), it
-        //   talks to the deployed backend. Update PRODUCTION_API_BASE below
-        //   if you rename the backend service away from the default name in
-        //   render.yaml (see DEPLOY.md).
-        const PRODUCTION_API_BASE = 'https://twikey-platform-backend.onrender.com';
+        //   talks to the deployed backend at its custom domain (api.justmeet.tech -
+        //   see "Eigen domein" in DEPLOY.md). Update PRODUCTION_API_BASE below if
+        //   that domain ever changes.
+        const PRODUCTION_API_BASE = 'https://api.justmeet.tech';
         const isLocal = location.protocol === 'file:' ||
             location.hostname === 'localhost' ||
             location.hostname === '127.0.0.1';
@@ -1060,6 +1470,34 @@
             }
             if (tabName === 'team') {
                 loadTeamUsers();
+            }
+            if (tabName === 'integrations') {
+                loadEmailSettings();
+                loadProspectingSettings();
+                loadHubspotSettings();
+            }
+            if (tabName === 'contacts') {
+                loadTeammatesForAssignDropdown();
+                loadTags();
+                loadContacts();
+                loadReminders();
+                loadExclusions();
+            }
+            if (tabName === 'support') {
+                loadKbArticles();
+                loadSupportTickets();
+            }
+            if (tabName === 'replies') {
+                loadAutoReplySetting();
+                loadReplyDrafts();
+                loadReplies();
+                loadObjectionTemplates();
+            }
+            if (tabName === 'sequences') {
+                // contacts must be loaded before rendering sequences, since each
+                // sequence's enroll-panel <select> is built from allContactsForEnroll
+                loadContactsForSequenceEnroll().then(loadSequences);
+                if (!sequenceStepCount) addSequenceStepRow();
             }
         }
 
@@ -1204,6 +1642,55 @@
             return data;
         }
 
+        async function apiPatch(path, body) {
+            const res = await fetch(`${API_BASE}${path}`, {
+                method: 'PATCH',
+                headers: authHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify(body || {}),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+            return data;
+        }
+
+        // For multipart file uploads (CSV import) - no Content-Type header,
+        // the browser sets the correct multipart boundary itself.
+        async function apiUpload(path, file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch(`${API_BASE}${path}`, {
+                method: 'POST',
+                headers: authHeaders(),
+                body: formData,
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+            return data;
+        }
+
+        // For file downloads that need the Authorization header (a plain
+        // <a href> link can't send one) - fetches the CSV and triggers a
+        // save via a temporary blob URL.
+        async function apiDownload(path, fallbackFilename) {
+            const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.detail || `HTTP ${res.status}`);
+            }
+            const blob = await res.blob();
+            const disposition = res.headers.get('Content-Disposition') || '';
+            const match = disposition.match(/filename="?([^"]+)"?/);
+            const filename = match ? match[1] : fallbackFilename;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }
+
         // --- Team (teammates sharing this account's data) ------------------
 
         function teamAlert(elId, message, kind) {
@@ -1263,6 +1750,1072 @@
                 loadTeamUsers();
             } catch (err) {
                 teamAlert('team-list-alert', `Verwijderen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Email settings (send campaigns/manual mail via own domain) --
+
+        function emailSettingsAlert(message, kind) {
+            const el = document.getElementById('emailsettings-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        function readEmailSettingsForm() {
+            return {
+                host: document.getElementById('smtp-host').value.trim(),
+                port: parseInt(document.getElementById('smtp-port').value, 10) || 587,
+                username: document.getElementById('smtp-username').value.trim(),
+                password: document.getElementById('smtp-password').value,
+                from_email: document.getElementById('smtp-from-email').value.trim(),
+                from_name: document.getElementById('smtp-from-name').value.trim(),
+                use_tls: document.getElementById('smtp-use-tls').checked,
+                imap_host: document.getElementById('imap-host').value.trim(),
+                imap_port: parseInt(document.getElementById('imap-port').value, 10) || null,
+                imap_username: document.getElementById('imap-username').value.trim(),
+                imap_password: document.getElementById('imap-password').value,
+                imap_use_ssl: document.getElementById('imap-use-ssl').checked,
+            };
+        }
+
+        async function loadEmailSettings() {
+            const statusEl = document.getElementById('emailsettings-status');
+            const disconnectBtn = document.getElementById('emailsettings-disconnect');
+            statusEl.innerHTML = '';
+            emailSettingsAlert('', '');
+            try {
+                const data = await apiGet('/api/email-settings');
+                if (data.configured) {
+                    const imapNote = data.imap_configured
+                        ? ` IMAP is ingesteld op ${data.imap_host} - reply-tracking kan hiervan gebruikmaken.`
+                        : ' IMAP is nog niet ingesteld - reply-tracking werkt hier nog niet.';
+                    statusEl.innerHTML = `<div class="alert alert-success">✓ Actief - campagnes en losse e-mails worden verstuurd vanaf <strong>${data.from_email}</strong> via ${data.host}.${imapNote}</div>`;
+                    document.getElementById('smtp-host').value = data.host;
+                    document.getElementById('smtp-port').value = data.port;
+                    document.getElementById('smtp-username').value = data.username;
+                    document.getElementById('smtp-from-email').value = data.from_email;
+                    document.getElementById('smtp-from-name').value = data.from_name || '';
+                    document.getElementById('smtp-use-tls').checked = !!data.use_tls;
+                    document.getElementById('smtp-password').placeholder = 'Laat leeg om het huidige wachtwoord te behouden';
+                    document.getElementById('imap-host').value = data.imap_host || '';
+                    document.getElementById('imap-port').value = data.imap_port || 993;
+                    document.getElementById('imap-username').value = data.imap_username || '';
+                    document.getElementById('imap-use-ssl').checked = data.imap_use_ssl !== false;
+                    disconnectBtn.style.display = 'inline-block';
+                } else {
+                    statusEl.innerHTML = '<div class="alert alert-warning">Nog niet ingesteld - er wordt nu verstuurd via het gedeelde Twikey-mailadres.</div>';
+                    disconnectBtn.style.display = 'none';
+                }
+            } catch (err) {
+                statusEl.innerHTML = `<div class="alert alert-warning">Kon instellingen niet laden: ${err.message}</div>`;
+            }
+        }
+
+        async function testEmailSettings() {
+            const settings = readEmailSettingsForm();
+            emailSettingsAlert('', '');
+            if (!settings.host || !settings.username || !settings.from_email) {
+                emailSettingsAlert('Vul in elk geval host, gebruikersnaam en afzender-e-mailadres in.', 'warning');
+                return;
+            }
+            try {
+                const account = JSON.parse(localStorage.getItem(AUTH_ACCOUNT_KEY) || '{}');
+                const result = await apiPost('/api/email-settings/test', { ...settings, test_to: account.email || null });
+                emailSettingsAlert(`✓ Testmail is verstuurd naar ${result.sent_to}. Check die inbox - als hij is aangekomen, kun je opslaan.`, 'success');
+            } catch (err) {
+                emailSettingsAlert(`Testmail versturen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function testImapSettings() {
+            const settings = readEmailSettingsForm();
+            emailSettingsAlert('', '');
+            if (!settings.imap_host) {
+                emailSettingsAlert('Vul een IMAP-host in om te testen.', 'warning');
+                return;
+            }
+            try {
+                const result = await apiPost('/api/email-settings/test-imap', settings);
+                emailSettingsAlert(`✓ IMAP-login gelukt (${result.inbox_message_count} berichten in de inbox gevonden).`, 'success');
+            } catch (err) {
+                emailSettingsAlert(`IMAP-test mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function saveEmailSettings() {
+            const settings = readEmailSettingsForm();
+            emailSettingsAlert('', '');
+            if (!settings.host || !settings.username || !settings.from_email) {
+                emailSettingsAlert('Vul in elk geval host, gebruikersnaam en afzender-e-mailadres in.', 'warning');
+                return;
+            }
+            try {
+                await apiPost('/api/email-settings', settings);
+                emailSettingsAlert('✓ Opgeslagen. Campagnes en losse e-mails gaan voortaan via dit adres.', 'success');
+                document.getElementById('smtp-password').value = '';
+                document.getElementById('imap-password').value = '';
+                loadEmailSettings();
+            } catch (err) {
+                emailSettingsAlert(`Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function disconnectEmailSettings() {
+            if (!confirm('Weet je zeker dat je terug wilt naar het gedeelde Twikey-mailadres? Je eigen SMTP/IMAP-instellingen worden verwijderd.')) return;
+            try {
+                await apiDelete('/api/email-settings');
+                emailSettingsAlert('Teruggezet naar het gedeelde Twikey-mailadres.', 'success');
+                ['smtp-host', 'smtp-username', 'smtp-password', 'smtp-from-email', 'smtp-from-name',
+                 'imap-host', 'imap-username', 'imap-password'].forEach(id => { document.getElementById(id).value = ''; });
+                document.getElementById('smtp-port').value = '587';
+                document.getElementById('imap-port').value = '993';
+                loadEmailSettings();
+            } catch (err) {
+                emailSettingsAlert(`Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Integraties: Vibe Prospecting / Explorium ----------------------
+
+        function prospectingAlert(message, kind) {
+            const el = document.getElementById('prospecting-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        async function loadProspectingSettings() {
+            const statusEl = document.getElementById('prospecting-status');
+            const disconnectBtn = document.getElementById('prospecting-disconnect');
+            try {
+                const data = await apiGet('/api/integrations/prospecting');
+                if (data.configured) {
+                    statusEl.innerHTML = '<div class="alert alert-success">✓ Gekoppeld.</div>';
+                    document.getElementById('prospecting-api-key').placeholder = 'Laat leeg om de huidige key te behouden';
+                    disconnectBtn.style.display = 'inline-block';
+                } else {
+                    statusEl.innerHTML = '<div class="alert alert-warning">Nog niet gekoppeld - zoeken/lookalikes via Vibe Prospecting werkt nog niet.</div>';
+                    disconnectBtn.style.display = 'none';
+                }
+            } catch (err) {
+                statusEl.innerHTML = `<div class="alert alert-warning">Kon status niet laden: ${err.message}</div>`;
+            }
+        }
+
+        async function saveProspectingSettings() {
+            const apiKey = document.getElementById('prospecting-api-key').value.trim();
+            if (!apiKey) { prospectingAlert('Vul een API-key in.', 'warning'); return; }
+            try {
+                await apiPost('/api/integrations/prospecting', { api_key: apiKey });
+                prospectingAlert('✓ Opgeslagen.', 'success');
+                document.getElementById('prospecting-api-key').value = '';
+                loadProspectingSettings();
+            } catch (err) {
+                prospectingAlert(`Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function disconnectProspecting() {
+            if (!confirm('Koppeling met Vibe Prospecting/Explorium verwijderen?')) return;
+            try {
+                await apiDelete('/api/integrations/prospecting');
+                prospectingAlert('Koppeling verwijderd.', 'success');
+                loadProspectingSettings();
+            } catch (err) {
+                prospectingAlert(`Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Integraties: HubSpot -------------------------------------------
+
+        function hubspotAlert(message, kind) {
+            const el = document.getElementById('hubspot-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        async function loadHubspotSettings() {
+            const statusEl = document.getElementById('hubspot-status');
+            const disconnectBtn = document.getElementById('hubspot-disconnect');
+            try {
+                const data = await apiGet('/api/integrations/hubspot');
+                if (data.configured) {
+                    statusEl.innerHTML = '<div class="alert alert-success">✓ Gekoppeld.</div>';
+                    document.getElementById('hubspot-token').placeholder = 'Laat leeg om het huidige token te behouden';
+                    document.getElementById('hubspot-exclude-customers').checked = !!data.exclude_customers;
+                    document.getElementById('hubspot-exclude-deals').checked = !!data.exclude_open_deals;
+                    disconnectBtn.style.display = 'inline-block';
+                } else {
+                    statusEl.innerHTML = '<div class="alert alert-warning">Nog niet gekoppeld.</div>';
+                    disconnectBtn.style.display = 'none';
+                }
+            } catch (err) {
+                statusEl.innerHTML = `<div class="alert alert-warning">Kon status niet laden: ${err.message}</div>`;
+            }
+        }
+
+        async function saveHubspotSettings() {
+            const token = document.getElementById('hubspot-token').value.trim();
+            if (!token) { hubspotAlert('Vul een access token in.', 'warning'); return; }
+            try {
+                await apiPost('/api/integrations/hubspot', {
+                    access_token: token,
+                    exclude_customers: document.getElementById('hubspot-exclude-customers').checked,
+                    exclude_open_deals: document.getElementById('hubspot-exclude-deals').checked,
+                });
+                hubspotAlert('✓ Opgeslagen.', 'success');
+                document.getElementById('hubspot-token').value = '';
+                loadHubspotSettings();
+            } catch (err) {
+                hubspotAlert(`Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function disconnectHubspot() {
+            if (!confirm('Koppeling met HubSpot verwijderen?')) return;
+            try {
+                await apiDelete('/api/integrations/hubspot');
+                hubspotAlert('Koppeling verwijderd.', 'success');
+                loadHubspotSettings();
+            } catch (err) {
+                hubspotAlert(`Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function checkHubspotDomain() {
+            const domain = document.getElementById('hubspot-check-domain').value.trim();
+            const resultEl = document.getElementById('hubspot-check-result');
+            if (!domain) { resultEl.innerHTML = '<div class="alert alert-warning">Vul een domein in.</div>'; return; }
+            resultEl.innerHTML = '<p style="color:#666;">Controleren...</p>';
+            try {
+                const data = await apiPost('/api/hubspot/check', { domain });
+                const r = data.result;
+                if (!r || Object.keys(r).length === 0) {
+                    resultEl.innerHTML = '<div class="alert alert-warning">Geen bedrijf met dit domein gevonden in HubSpot.</div>';
+                    return;
+                }
+                const bits = [];
+                if (r.is_customer) bits.push('is al klant');
+                if (r.has_open_deal) bits.push('heeft een lopende deal');
+                resultEl.innerHTML = bits.length
+                    ? `<div class="alert alert-warning">${escapeHtml(r.company_name)}: ${bits.join(' en ')} - wordt automatisch uitgesloten.</div>`
+                    : `<div class="alert alert-success">${escapeHtml(r.company_name)}: geen reden tot uitsluiting.</div>`;
+            } catch (err) {
+                resultEl.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+            }
+        }
+
+        // --- Integraties: Vibe Prospecting / Explorium - live zoeken --------
+
+        async function prospectingSearchBusiness() {
+            const name = document.getElementById('prospecting-search-name').value.trim();
+            const domain = document.getElementById('prospecting-search-domain').value.trim();
+            const alertEl = document.getElementById('prospecting-search-alert');
+            const resultsEl = document.getElementById('prospecting-search-results');
+            if (!name && !domain) { alertEl.innerHTML = '<div class="alert alert-warning">Vul een naam of domein in.</div>'; return; }
+            alertEl.innerHTML = '';
+            resultsEl.innerHTML = '<p style="color:#666;">Zoeken...</p>';
+            try {
+                const data = await apiPost('/api/prospecting/businesses/match', {
+                    businesses: [{ name: name || null, domain: domain || null }],
+                });
+                const businesses = data.businesses || [];
+                resultsEl.innerHTML = businesses.length ? businesses.map(b => `
+                    <div style="border:1px solid #eee; border-radius:8px; padding:12px; margin-top:10px;">
+                        <strong>${escapeHtml(b.name || '')}</strong> - ${escapeHtml(b.domain || '')}
+                        <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+                            <button class="button button-secondary" onclick="prospectingFindLookalikes('${b.business_id}')">Lookalikes zoeken</button>
+                            <button class="button button-secondary" onclick="prospectingFindProspects('${b.business_id}', '${escapeHtml((b.name || '').replace(/'/g, "\\'"))}')">Contactpersonen zoeken</button>
+                        </div>
+                    </div>
+                `).join('') : '<p style="color:#666;">Geen resultaten.</p>';
+            } catch (err) {
+                alertEl.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+            }
+        }
+
+        async function prospectingFindLookalikes(businessId) {
+            const resultsEl = document.getElementById('prospecting-search-results');
+            const box = document.createElement('div');
+            box.innerHTML = '<p style="color:#666;">Lookalikes zoeken...</p>';
+            resultsEl.appendChild(box);
+            try {
+                const data = await apiPost('/api/prospecting/businesses/lookalikes', { business_id: businessId });
+                const businesses = data.businesses || [];
+                box.innerHTML = businesses.length
+                    ? '<h4 style="margin-top:10px;">Lookalikes</h4>' + businesses.map(b => `
+                        <div style="border:1px solid #eee; border-radius:8px; padding:12px; margin-top:8px;">
+                            <strong>${escapeHtml(b.name || '')}</strong> - ${escapeHtml(b.domain || '')}
+                            <div style="margin-top:8px;">
+                                <button class="button button-secondary" onclick="prospectingFindProspects('${b.business_id}', '${escapeHtml((b.name || '').replace(/'/g, "\\'"))}')">Contactpersonen zoeken</button>
+                            </div>
+                        </div>
+                    `).join('')
+                    : '<p style="color:#666;">Geen lookalikes gevonden.</p>';
+            } catch (err) {
+                box.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+            }
+        }
+
+        async function prospectingFindProspects(businessId, companyName) {
+            const resultsEl = document.getElementById('prospecting-search-results');
+            const box = document.createElement('div');
+            box.innerHTML = '<p style="color:#666;">Contactpersonen zoeken...</p>';
+            resultsEl.appendChild(box);
+            try {
+                const data = await apiPost('/api/prospecting/prospects/match', { prospects: [{ business_id: businessId }] });
+                const prospects = data.prospects || [];
+                box.innerHTML = prospects.length ? '<h4 style="margin-top:10px;">Contactpersonen</h4>' + prospects.map(p => `
+                    <div style="border:1px solid #eee; border-radius:8px; padding:12px; margin-top:8px;" id="prospect-${p.prospect_id}">
+                        <strong>${escapeHtml(p.full_name || '')}</strong>
+                        <div style="margin-top:8px;">
+                            <button class="button button-secondary" onclick="prospectingEnrichAndImport('${p.prospect_id}', '${escapeHtml((p.full_name || 'Onbekend').replace(/'/g, "\\'"))}', '${escapeHtml((companyName || '').replace(/'/g, "\\'"))}')">Verrijken + importeren als contact</button>
+                        </div>
+                    </div>
+                `).join('') : '<p style="color:#666;">Geen contactpersonen gevonden.</p>';
+            } catch (err) {
+                box.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+            }
+        }
+
+        async function prospectingEnrichAndImport(prospectId, fullName, companyName) {
+            const box = document.getElementById(`prospect-${prospectId}`);
+            try {
+                const data = await apiPost('/api/prospecting/prospects/enrich', { prospect_ids: [prospectId] });
+                const enriched = (data.prospects || [])[0];
+                if (!enriched || !enriched.email) {
+                    box.insertAdjacentHTML('beforeend', '<div class="alert alert-warning" style="margin-top:8px;">Geen e-mailadres gevonden voor deze persoon.</div>');
+                    return;
+                }
+                const parts = (fullName || 'Onbekend').split(' ');
+                const firstName = parts.shift();
+                await apiPost('/api/prospecting/import', {
+                    contacts: [{ first_name: firstName, last_name: parts.join(' '), email: enriched.email, company: companyName }],
+                });
+                box.insertAdjacentHTML('beforeend', '<div class="alert alert-success" style="margin-top:8px;">✓ Geïmporteerd als contact.</div>');
+            } catch (err) {
+                box.insertAdjacentHTML('beforeend', `<div class="alert alert-warning" style="margin-top:8px;">${err.message}</div>`);
+            }
+        }
+
+        // --- Replies / bezwaren-bibliotheek / auto-reply setting -------------
+
+        let currentObjections = [];
+
+        function objectionsAlert(message, kind) {
+            const el = document.getElementById('objections-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        async function loadObjectionTemplates() {
+            const body = document.getElementById('objections-body');
+            try {
+                const data = await apiGet('/api/objections');
+                currentObjections = data.objections || [];
+                body.innerHTML = currentObjections.length ? currentObjections.map(o => `
+                    <tr>
+                        <td>${escapeHtml(o.category)}</td>
+                        <td style="max-width:200px; word-break:break-word;">${escapeHtml(o.keywords)}</td>
+                        <td style="max-width:300px; word-break:break-word;">${escapeHtml(o.suggested_reply)}</td>
+                        <td style="white-space:nowrap;">
+                            <button class="button button-secondary" onclick="editObjectionTemplate(${o.id})">Bewerken</button>
+                            <button class="button button-secondary" style="color:#b91c1c;" onclick="deleteObjectionTemplate(${o.id})">Verwijderen</button>
+                        </td>
+                    </tr>
+                `).join('') : '<tr><td colspan="4" style="color:#666;">Nog geen categorieën.</td></tr>';
+            } catch (err) {
+                body.innerHTML = `<tr><td colspan="4" style="color:#b91c1c;">Laden mislukt: ${err.message}</td></tr>`;
+            }
+        }
+
+        function editObjectionTemplate(id) {
+            const o = currentObjections.find(x => x.id === id);
+            if (!o) return;
+            const category = prompt('Categorie:', o.category);
+            if (category === null) return;
+            const keywords = prompt('Keywords (komma-gescheiden):', o.keywords);
+            if (keywords === null) return;
+            const reply = prompt('Suggestie:', o.suggested_reply);
+            if (reply === null) return;
+            apiPut(`/api/objections/${id}`, { category, keywords, suggested_reply: reply })
+                .then(() => { objectionsAlert('✓ Aangepast.', 'success'); loadObjectionTemplates(); })
+                .catch(err => objectionsAlert(`Mislukt: ${err.message}`, 'warning'));
+        }
+
+        async function deleteObjectionTemplate(id) {
+            if (!confirm('Deze categorie verwijderen?')) return;
+            try {
+                await apiDelete(`/api/objections/${id}`);
+                loadObjectionTemplates();
+            } catch (err) {
+                objectionsAlert(`Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function addObjectionTemplate() {
+            const category = document.getElementById('objection-category').value.trim();
+            const keywords = document.getElementById('objection-keywords').value.trim();
+            const reply = document.getElementById('objection-reply').value.trim();
+            if (!category || !reply) { objectionsAlert('Vul minstens categorie en suggestie in.', 'warning'); return; }
+            try {
+                await apiPost('/api/objections', { category, keywords, suggested_reply: reply });
+                document.getElementById('objection-category').value = '';
+                document.getElementById('objection-keywords').value = '';
+                document.getElementById('objection-reply').value = '';
+                objectionsAlert('✓ Toegevoegd.', 'success');
+                loadObjectionTemplates();
+            } catch (err) {
+                objectionsAlert(`Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function loadAutoReplySetting() {
+            try {
+                const data = await apiGet('/api/settings/auto-reply');
+                document.getElementById('auto-reply-toggle').checked = !!data.enabled;
+            } catch (err) {
+                // leave the checkbox as-is - not worth alarming the user over this
+            }
+        }
+
+        async function toggleAutoReply() {
+            const enabled = document.getElementById('auto-reply-toggle').checked;
+            const alertEl = document.getElementById('replies-fetch-alert');
+            try {
+                await apiPost('/api/settings/auto-reply', { enabled });
+                alertEl.innerHTML = enabled
+                    ? '<div class="alert alert-warning">⚠️ Automatisch versturen staat nu AAN - nieuwe concepten worden direct verstuurd.</div>'
+                    : '<div class="alert alert-success">Automatisch versturen staat weer uit - concepten wachten op jouw goedkeuring.</div>';
+            } catch (err) {
+                document.getElementById('auto-reply-toggle').checked = !enabled;
+                alertEl.innerHTML = `<div class="alert alert-warning">Mislukt: ${err.message}</div>`;
+            }
+        }
+
+        async function fetchReplies() {
+            const alertEl = document.getElementById('replies-fetch-alert');
+            alertEl.innerHTML = '<p style="color:#666;">Ophalen...</p>';
+            try {
+                const data = await apiPost('/api/replies/fetch', {});
+                alertEl.innerHTML = `<div class="alert alert-success">${data.new_replies} nieuwe reply(s), ${data.new_drafts} nieuw(e) concept(en).</div>`;
+                loadReplyDrafts();
+                loadReplies();
+            } catch (err) {
+                alertEl.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+            }
+        }
+
+        async function loadReplies() {
+            const body = document.getElementById('replies-body');
+            try {
+                const data = await apiGet('/api/replies');
+                const rows = data.replies || [];
+                body.innerHTML = rows.length ? rows.map(r => `
+                    <tr>
+                        <td>${new Date(r.received_at).toLocaleString('nl-NL')}</td>
+                        <td>${escapeHtml(r.from_email)}</td>
+                        <td>${r.first_name ? escapeHtml(r.first_name + ' ' + (r.last_name || '')) : '<span style="color:#999;">Onbekend</span>'}</td>
+                        <td>${escapeHtml(r.objection_category || '-')}</td>
+                        <td>${escapeHtml(r.draft_status || '-')}</td>
+                    </tr>
+                `).join('') : '<tr><td colspan="5" style="color:#666;">Nog geen replies.</td></tr>';
+            } catch (err) {
+                body.innerHTML = `<tr><td colspan="5" style="color:#b91c1c;">Laden mislukt: ${err.message}</td></tr>`;
+            }
+        }
+
+        async function loadReplyDrafts() {
+            const listEl = document.getElementById('drafts-list');
+            try {
+                const data = await apiGet('/api/replies/drafts?status=pending');
+                const drafts = data.drafts || [];
+                listEl.innerHTML = drafts.length ? drafts.map(d => `
+                    <div style="border:1px solid #eee; border-radius:8px; padding:15px; margin-bottom:12px;">
+                        <div style="margin-bottom:8px;">
+                            <strong>${escapeHtml(d.first_name ? d.first_name + ' ' + (d.last_name || '') : d.from_email)}</strong>
+                            ${d.company ? ' - ' + escapeHtml(d.company) : ''}
+                            <span style="color:#666;"> (${escapeHtml(d.objection_category || 'geen categorie herkend')}, bron: ${d.source === 'ai' ? 'AI' : 'standaard'})</span>
+                        </div>
+                        <div style="background:#f8f9fa; border-radius:6px; padding:10px; margin-bottom:8px; color:#444; font-size:14px;">
+                            <em>Ontvangen:</em> ${escapeHtml(d.reply_body || '')}
+                        </div>
+                        <textarea id="draft-body-${d.id}" style="width:100%; min-height:80px;">${escapeHtml(d.draft_body)}</textarea>
+                        <div style="margin-top:8px; display:flex; gap:8px;">
+                            <button class="button button-primary" onclick="approveDraft(${d.id})">✓ Goedkeuren + versturen</button>
+                            <button class="button button-secondary" style="color:#b91c1c;" onclick="dismissDraft(${d.id})">Afwijzen</button>
+                        </div>
+                    </div>
+                `).join('') : '<p style="color:#666;">Geen openstaande concepten.</p>';
+            } catch (err) {
+                listEl.innerHTML = `<div class="alert alert-warning">Laden mislukt: ${err.message}</div>`;
+            }
+        }
+
+        async function approveDraft(id) {
+            const body = document.getElementById(`draft-body-${id}`).value;
+            const alertEl = document.getElementById('drafts-alert');
+            try {
+                await apiPost(`/api/replies/drafts/${id}/approve`, { draft_body: body });
+                alertEl.innerHTML = '<div class="alert alert-success">✓ Verstuurd.</div>';
+                loadReplyDrafts();
+                loadReplies();
+            } catch (err) {
+                alertEl.innerHTML = `<div class="alert alert-warning">Versturen mislukt: ${err.message}</div>`;
+            }
+        }
+
+        async function dismissDraft(id) {
+            if (!confirm('Dit concept afwijzen?')) return;
+            try {
+                await apiPost(`/api/replies/drafts/${id}/dismiss`, {});
+                loadReplyDrafts();
+                loadReplies();
+            } catch (err) {
+                document.getElementById('drafts-alert').innerHTML = `<div class="alert alert-warning">Mislukt: ${err.message}</div>`;
+            }
+        }
+
+        // --- Opvolgmail-sequenties --------------------------------------------
+
+        let sequenceStepCount = 0;
+        let allContactsForEnroll = [];
+
+        function addSequenceStepRow(waitDays, subject, body) {
+            sequenceStepCount++;
+            const idx = sequenceStepCount;
+            const container = document.getElementById('sequence-steps-editor');
+            const row = document.createElement('div');
+            row.id = `sequence-step-${idx}`;
+            row.style.cssText = 'display:grid; grid-template-columns: 100px 1fr 2fr auto; gap:10px; align-items:end; margin-top:10px;';
+            row.innerHTML = `
+                <div class="input-group" style="margin:0;"><label>Wacht (dagen)</label><input type="number" class="seq-step-wait" value="${waitDays ?? 3}" min="0"></div>
+                <div class="input-group" style="margin:0;"><label>Onderwerp</label><input type="text" class="seq-step-subject" value="${escapeHtml(subject || '')}" placeholder="Nog interesse, {{firstName}}?"></div>
+                <div class="input-group" style="margin:0;"><label>Body</label><input type="text" class="seq-step-body" value="${escapeHtml(body || '')}" placeholder="Hoi {{firstName}}, ..."></div>
+                <button class="button button-secondary" style="color:#b91c1c;" onclick="document.getElementById('sequence-step-${idx}').remove()">✕</button>
+            `;
+            container.appendChild(row);
+        }
+
+        async function createSequence() {
+            const name = document.getElementById('sequence-name').value.trim();
+            const alertEl = document.getElementById('sequence-create-alert');
+            const stepRows = document.querySelectorAll('#sequence-steps-editor > div');
+            const steps = Array.from(stepRows).map(row => ({
+                wait_days: parseInt(row.querySelector('.seq-step-wait').value, 10) || 0,
+                subject_template: row.querySelector('.seq-step-subject').value,
+                body_template: row.querySelector('.seq-step-body').value,
+            }));
+            if (!name || !steps.length) { alertEl.innerHTML = '<div class="alert alert-warning">Vul een naam in en voeg minstens 1 stap toe.</div>'; return; }
+            try {
+                await apiPost('/api/sequences', { name, steps });
+                alertEl.innerHTML = '<div class="alert alert-success">✓ Sequence aangemaakt.</div>';
+                document.getElementById('sequence-name').value = '';
+                document.getElementById('sequence-steps-editor').innerHTML = '';
+                sequenceStepCount = 0;
+                addSequenceStepRow();
+                loadSequences();
+            } catch (err) {
+                alertEl.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+            }
+        }
+
+        async function loadContactsForSequenceEnroll() {
+            try {
+                const data = await apiGet('/api/contacts');
+                allContactsForEnroll = data.contacts || [];
+            } catch (err) {
+                // enroll panels will just show an empty list
+            }
+        }
+
+        async function loadSequences() {
+            const listEl = document.getElementById('sequences-list');
+            try {
+                const data = await apiGet('/api/sequences');
+                const sequences = data.sequences || [];
+                listEl.innerHTML = sequences.length ? sequences.map(s => `
+                    <div style="border:1px solid #eee; border-radius:8px; padding:15px; margin-bottom:15px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                            <div>
+                                <strong>${escapeHtml(s.name)}</strong>
+                                <span style="color:#666;"> - ${s.steps.length} stap(pen), status: ${s.status === 'active' ? 'actief' : 'gepauzeerd'}</span>
+                                <div style="color:#666; font-size:13px; margin-top:4px;">
+                                    ${s.enrollment_counts.total} ingeschreven (${s.enrollment_counts.active} actief, ${s.enrollment_counts.completed} afgerond, ${s.enrollment_counts.stopped_reply} gestopt na reply)
+                                </div>
+                            </div>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <button class="button button-secondary" onclick="toggleSequenceStatus(${s.id}, '${s.status === 'active' ? 'paused' : 'active'}')">${s.status === 'active' ? 'Pauzeren' : 'Activeren'}</button>
+                                <button class="button button-secondary" onclick="toggleEnrollPanel(${s.id})">+ Contacten inschrijven</button>
+                                <button class="button button-secondary" onclick="viewEnrollments(${s.id})">Inschrijvingen bekijken</button>
+                            </div>
+                        </div>
+                        <div id="enroll-panel-${s.id}" style="display:none; margin-top:12px; border-top:1px solid #eee; padding-top:12px;">
+                            <select id="enroll-select-${s.id}" multiple size="6" style="width:100%;">
+                                ${allContactsForEnroll.map(c => `<option value="${c.id}">${escapeHtml(c.first_name + ' ' + (c.last_name || ''))} - ${escapeHtml(c.email)}</option>`).join('')}
+                            </select>
+                            <button class="button button-primary" style="margin-top:8px;" onclick="enrollSelectedContacts(${s.id})">Inschrijven</button>
+                        </div>
+                        <div id="enrollments-${s.id}" style="margin-top:12px;"></div>
+                    </div>
+                `).join('') : '<p style="color:#666;">Nog geen sequenties.</p>';
+            } catch (err) {
+                listEl.innerHTML = `<div class="alert alert-warning">Laden mislukt: ${err.message}</div>`;
+            }
+        }
+
+        function toggleEnrollPanel(id) {
+            const panel = document.getElementById(`enroll-panel-${id}`);
+            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function toggleSequenceStatus(id, status) {
+            try {
+                await apiPost(`/api/sequences/${id}/status`, { status });
+                loadSequences();
+            } catch (err) {
+                document.getElementById('sequences-alert').innerHTML = `<div class="alert alert-warning">Mislukt: ${err.message}</div>`;
+            }
+        }
+
+        async function enrollSelectedContacts(id) {
+            const select = document.getElementById(`enroll-select-${id}`);
+            const contactIds = Array.from(select.selectedOptions).map(o => parseInt(o.value, 10));
+            if (!contactIds.length) return;
+            try {
+                const data = await apiPost(`/api/sequences/${id}/enroll`, { contact_ids: contactIds });
+                document.getElementById('sequences-alert').innerHTML = `<div class="alert alert-success">${data.enrolled} contact(en) ingeschreven.</div>`;
+                loadSequences();
+            } catch (err) {
+                document.getElementById('sequences-alert').innerHTML = `<div class="alert alert-warning">Mislukt: ${err.message}</div>`;
+            }
+        }
+
+        async function viewEnrollments(id) {
+            const el = document.getElementById(`enrollments-${id}`);
+            el.innerHTML = '<p style="color:#666;">Laden...</p>';
+            try {
+                const data = await apiGet(`/api/sequences/${id}/enrollments`);
+                const rows = data.enrollments || [];
+                el.innerHTML = rows.length ? `
+                    <div style="overflow-x:auto;">
+                    <table>
+                        <thead><tr><th>Contact</th><th>Stap</th><th>Status</th><th>Volgende verzending</th></tr></thead>
+                        <tbody>
+                            ${rows.map(e => `
+                                <tr>
+                                    <td>${escapeHtml(e.first_name + ' ' + (e.last_name || ''))}</td>
+                                    <td>${e.current_step + 1}</td>
+                                    <td>${escapeHtml(e.status)}</td>
+                                    <td>${e.next_send_at ? new Date(e.next_send_at).toLocaleString('nl-NL') : '-'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    </div>
+                ` : '<p style="color:#666;">Nog niemand ingeschreven.</p>';
+            } catch (err) {
+                el.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+            }
+        }
+
+        // --- Contacten / mini-CRM -------------------------------------------
+
+        let allTeammates = [];
+        let contactsSearchTimer = null;
+
+        function contactsAlert(elId, message, kind) {
+            const el = document.getElementById(elId);
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        function debouncedLoadContacts() {
+            clearTimeout(contactsSearchTimer);
+            contactsSearchTimer = setTimeout(loadContacts, 300);
+        }
+
+        async function loadTeammatesForAssignDropdown() {
+            try {
+                const data = await apiGet('/api/team/users');
+                allTeammates = data.users;
+                const select = document.getElementById('contacts-filter-assigned');
+                const current = select.value;
+                select.innerHTML = '<option value="">Iedereen</option><option value="none">Niet-toegewezen</option>' +
+                    allTeammates.map(u => `<option value="${u.id}">${u.email}</option>`).join('');
+                select.value = current;
+            } catch (err) {
+                // Non-fatal - the assign dropdowns on each row just won't have options yet.
+            }
+        }
+
+        async function loadTags() {
+            try {
+                const data = await apiGet('/api/tags');
+                const select = document.getElementById('contacts-filter-tag');
+                const current = select.value;
+                select.innerHTML = '<option value="">Alle tags</option>' +
+                    data.tags.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
+                select.value = current;
+            } catch (err) {
+                // Non-fatal
+            }
+        }
+
+        function assignSelectHtml(contact) {
+            const options = ['<option value="">Niet-toegewezen</option>']
+                .concat(allTeammates.map(u => `<option value="${u.id}" ${contact.assigned_to === u.id ? 'selected' : ''}>${u.email}</option>`));
+            return `<select onchange="onAssignChange(this, ${contact.id})" style="padding:4px; font-size:13px;">${options.join('')}</select>`;
+        }
+
+        function statusBadgeHtml(contact) {
+            if (contact.excluded_reason) {
+                return `<span style="color:#b91c1c; font-size:12px;" title="${contact.excluded_reason}">🚫 Uitgesloten</span>`;
+            }
+            if (contact.do_not_contact) {
+                return '<span style="color:#666; font-size:12px;">⛔ Niet meer benaderen</span>';
+            }
+            return '<span style="color:#15803d; font-size:12px;">✓ Actief</span>';
+        }
+
+        function tagsHtml(contact) {
+            const chips = (contact.tags || []).map(t =>
+                `<span style="display:inline-block; background:#eef2ff; color:#3730a3; border-radius:10px; padding:2px 8px; font-size:12px; margin:2px;">
+                    ${t.name} <a href="#" onclick="removeContactTag(${contact.id}, ${t.id}); return false;" style="color:#3730a3; text-decoration:none;">×</a>
+                </span>`
+            ).join('');
+            return chips + `<a href="#" onclick="promptAddTag(${contact.id}); return false;" style="font-size:12px;">+ tag</a>`;
+        }
+
+        async function loadContacts() {
+            const tbody = document.getElementById('contacts-body');
+            tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">Laden...</td></tr>';
+            const params = new URLSearchParams();
+            const q = document.getElementById('contacts-search').value.trim();
+            const tag = document.getElementById('contacts-filter-tag').value;
+            const assigned = document.getElementById('contacts-filter-assigned').value;
+            const excludeExcluded = document.getElementById('contacts-filter-exclude-excluded').checked;
+            if (q) params.set('q', q);
+            if (tag) params.set('tag', tag);
+            if (assigned) params.set('assigned_to', assigned);
+            if (excludeExcluded) params.set('exclude_excluded', 'true');
+            try {
+                const data = await apiGet(`/api/contacts?${params.toString()}`);
+                if (!data.contacts.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">Geen contacten gevonden.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.contacts.map(c => `
+                    <tr>
+                        <td><a href="#" onclick="openTimelineModal(${c.id}, '${(c.first_name + ' ' + c.last_name).replace(/'/g, "\\'")}'); return false;">${c.first_name} ${c.last_name}</a><br><span style="color:#666; font-size:12px;">${c.email}</span></td>
+                        <td>${c.company || ''}</td>
+                        <td>${c.job_title || ''}${c.sector ? ' · ' + c.sector : ''}</td>
+                        <td style="max-width:180px;">${tagsHtml(c)}</td>
+                        <td>${assignSelectHtml(c)}</td>
+                        <td>${statusBadgeHtml(c)}<br>
+                            <label style="font-weight:normal; font-size:11px;"><input type="checkbox" style="width:auto;" ${c.is_customer ? 'checked' : ''} onchange="toggleContactFlag(${c.id}, 'is_customer', this.checked)"> Klant</label>
+                            <label style="font-weight:normal; font-size:11px; margin-left:6px;"><input type="checkbox" style="width:auto;" ${c.has_open_quote ? 'checked' : ''} onchange="toggleContactFlag(${c.id}, 'has_open_quote', this.checked)"> Offerte</label>
+                            <label style="font-weight:normal; font-size:11px; margin-left:6px;"><input type="checkbox" style="width:auto;" ${c.do_not_contact ? 'checked' : ''} onchange="toggleContactFlag(${c.id}, 'do_not_contact', this.checked)"> Niet benaderen</label>
+                        </td>
+                        <td>
+                            <button class="button button-secondary" style="margin:2px 0; font-size:12px; padding:4px 8px;" onclick="promptReminder(${c.id}, '${(c.first_name + ' ' + c.last_name).replace(/'/g, "\\'")}')">⏰ Herinnering</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Kon contacten niet laden: ${err.message}`, 'warning');
+                tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">-</td></tr>';
+            }
+        }
+
+        async function addContact() {
+            const payload = {
+                first_name: document.getElementById('contact-first-name').value.trim(),
+                last_name: document.getElementById('contact-last-name').value.trim(),
+                email: document.getElementById('contact-email').value.trim(),
+                company: document.getElementById('contact-company').value.trim(),
+                job_title: document.getElementById('contact-job-title').value.trim(),
+                sector: document.getElementById('contact-sector').value.trim(),
+            };
+            if (!payload.first_name || !payload.email) {
+                contactsAlert('contacts-add-alert', 'Voornaam en e-mail zijn verplicht.', 'warning');
+                return;
+            }
+            try {
+                await apiPost('/api/contacts', payload);
+                contactsAlert('contacts-add-alert', '✓ Contact toegevoegd.', 'success');
+                ['contact-first-name', 'contact-last-name', 'contact-email', 'contact-company', 'contact-job-title', 'contact-sector']
+                    .forEach(id => { document.getElementById(id).value = ''; });
+                loadContacts();
+            } catch (err) {
+                contactsAlert('contacts-add-alert', `Toevoegen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function promptAddTag(contactId) {
+            const name = prompt('Tagnaam:');
+            if (!name || !name.trim()) return;
+            try {
+                await apiPost(`/api/contacts/${contactId}/tags`, { name: name.trim() });
+                loadTags();
+                loadContacts();
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Tag toevoegen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function removeContactTag(contactId, tagId) {
+            try {
+                await apiDelete(`/api/contacts/${contactId}/tags/${tagId}`);
+                loadContacts();
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Tag verwijderen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function onAssignChange(selectEl, contactId) {
+            const userId = selectEl.value ? parseInt(selectEl.value, 10) : null;
+            try {
+                await apiPost(`/api/contacts/${contactId}/assign`, { user_id: userId });
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Toewijzen mislukt: ${err.message}`, 'warning');
+                loadContacts();
+            }
+        }
+
+        async function toggleContactFlag(contactId, field, checked) {
+            try {
+                await apiPatch(`/api/contacts/${contactId}`, { [field]: checked });
+                loadContacts();
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Bijwerken mislukt: ${err.message}`, 'warning');
+                loadContacts();
+            }
+        }
+
+        async function openTimelineModal(contactId, name) {
+            document.getElementById('timeline-contact-name').textContent = name;
+            document.getElementById('timeline-body').innerHTML = '<p style="color:#666;">Laden...</p>';
+            document.getElementById('timeline-modal').style.display = 'flex';
+            try {
+                const data = await apiGet(`/api/contacts/${contactId}/timeline`);
+                if (!data.timeline.length) {
+                    document.getElementById('timeline-body').innerHTML = '<p style="color:#666;">Nog geen activiteit.</p>';
+                    return;
+                }
+                document.getElementById('timeline-body').innerHTML = '<ul style="list-style:none; padding:0; margin:0;">' +
+                    data.timeline.map(e => `
+                        <li style="padding:10px 0; border-bottom:1px solid #eee;">
+                            <div>${e.description}</div>
+                            <div style="color:#999; font-size:12px;">${new Date(e.at).toLocaleString('nl-NL')} · ${e.type}</div>
+                        </li>
+                    `).join('') + '</ul>';
+            } catch (err) {
+                document.getElementById('timeline-body').innerHTML = `<div class="alert alert-warning">Kon tijdlijn niet laden: ${err.message}</div>`;
+            }
+        }
+
+        function closeTimelineModal() {
+            document.getElementById('timeline-modal').style.display = 'none';
+        }
+
+        // --- Herinneringen (agenderen) ---------------------------------------
+
+        async function loadReminders() {
+            const tbody = document.getElementById('reminders-body');
+            tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">Laden...</td></tr>';
+            try {
+                const data = await apiGet('/api/reminders');
+                if (!data.reminders.length) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">Geen openstaande herinneringen.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.reminders.map(r => `
+                    <tr>
+                        <td>${new Date(r.remind_at).toLocaleDateString('nl-NL')}</td>
+                        <td>${r.first_name} ${r.last_name} <span style="color:#666; font-size:12px;">(${r.email})</span></td>
+                        <td>${r.note || ''}</td>
+                        <td><button class="button button-secondary" style="margin:0; font-size:12px; padding:4px 8px;" onclick="completeReminder(${r.id})">Afgehandeld</button></td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                contactsAlert('reminders-alert', `Kon herinneringen niet laden: ${err.message}`, 'warning');
+            }
+        }
+
+        async function promptReminder(contactId, name) {
+            const dateStr = prompt(`Op welke datum wil je herinnerd worden om weer contact op te nemen met ${name}? (formaat: JJJJ-MM-DD)`);
+            if (!dateStr) return;
+            const note = prompt('Notitie (optioneel):') || '';
+            try {
+                await apiPost('/api/reminders', { contact_id: contactId, remind_at: `${dateStr}T09:00:00Z`, note });
+                contactsAlert('contacts-list-alert', '✓ Herinnering ingesteld.', 'success');
+                loadReminders();
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Herinnering instellen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function completeReminder(reminderId) {
+            try {
+                await apiPost(`/api/reminders/${reminderId}/complete`, {});
+                loadReminders();
+            } catch (err) {
+                contactsAlert('reminders-alert', `Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Uitsluitlijst ----------------------------------------------------
+
+        async function loadExclusions() {
+            const tbody = document.getElementById('exclusions-body');
+            tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">Laden...</td></tr>';
+            try {
+                const data = await apiGet('/api/exclusions');
+                if (!data.exclusions.length) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">Nog geen uitsluitingen.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.exclusions.map(e => `
+                    <tr>
+                        <td>${e.domain}</td>
+                        <td>${e.company_name || ''}</td>
+                        <td>${e.reason || ''}</td>
+                        <td>${e.source}</td>
+                        <td><button class="button button-secondary" style="margin:0; font-size:12px; padding:4px 8px; color:#b91c1c;" onclick="deleteExclusion(${e.id})">Verwijderen</button></td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                contactsAlert('exclusions-alert', `Kon uitsluitlijst niet laden: ${err.message}`, 'warning');
+            }
+        }
+
+        async function addExclusion() {
+            const domain = document.getElementById('exclusion-domain').value.trim();
+            if (!domain) { contactsAlert('exclusions-alert', 'Vul een domein in.', 'warning'); return; }
+            try {
+                await apiPost('/api/exclusions', {
+                    domain,
+                    company_name: document.getElementById('exclusion-company').value.trim(),
+                    reason: document.getElementById('exclusion-reason').value.trim(),
+                });
+                ['exclusion-domain', 'exclusion-company', 'exclusion-reason'].forEach(id => { document.getElementById(id).value = ''; });
+                loadExclusions();
+                loadContacts();
+            } catch (err) {
+                contactsAlert('exclusions-alert', `Toevoegen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function deleteExclusion(id) {
+            if (!confirm('Deze uitsluiting verwijderen?')) return;
+            try {
+                await apiDelete(`/api/exclusions/${id}`);
+                loadExclusions();
+            } catch (err) {
+                contactsAlert('exclusions-alert', `Verwijderen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function importExclusionsCsv() {
+            const fileInput = document.getElementById('exclusion-csv-file');
+            if (!fileInput.files.length) { contactsAlert('exclusions-alert', 'Kies eerst een CSV-bestand.', 'warning'); return; }
+            try {
+                const result = await apiUpload('/api/exclusions/import-csv', fileInput.files[0]);
+                contactsAlert('exclusions-alert', `✓ ${result.added} uitsluiting(en) geïmporteerd.`, 'success');
+                fileInput.value = '';
+                loadExclusions();
+                loadContacts();
+            } catch (err) {
+                contactsAlert('exclusions-alert', `Importeren mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Integraties: CSV import/export voor contacten -------------------
+
+        async function importContactsCsv() {
+            const fileInput = document.getElementById('contacts-csv-file');
+            const alertEl = 'integrations-import-alert';
+            if (!fileInput.files.length) { contactsAlert(alertEl, 'Kies eerst een CSV-bestand.', 'warning'); return; }
+            try {
+                const result = await apiUpload('/api/contacts/import-csv', fileInput.files[0]);
+                const errorNote = result.errors.length ? ` (${result.errors.length} rij(en) overgeslagen wegens ontbrekend/ongeldig e-mailadres)` : '';
+                contactsAlert(alertEl, `✓ ${result.added} contact(en) geïmporteerd.${errorNote}`, 'success');
+                fileInput.value = '';
+            } catch (err) {
+                contactsAlert(alertEl, `Importeren mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function exportContactsCsv() {
+            try {
+                await apiDownload('/api/contacts/export-csv', 'contacten.csv');
+            } catch (err) {
+                contactsAlert('integrations-import-alert', `Exporteren mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Support: kennisbank + supportvragen -----------------------------
+
+        async function loadKbArticles() {
+            const el = document.getElementById('kb-articles');
+            const q = document.getElementById('kb-search').value.trim();
+            el.innerHTML = '<p style="color:#666;">Laden...</p>';
+            try {
+                const params = q ? `?q=${encodeURIComponent(q)}` : '';
+                const data = await apiGet(`/api/support/kb${params}`);
+                if (!data.articles.length) {
+                    el.innerHTML = '<p style="color:#666;">Geen artikelen gevonden.</p>';
+                    return;
+                }
+                el.innerHTML = data.articles.map(a => `
+                    <details style="margin-bottom:10px; border:1px solid #eee; border-radius:6px; padding:10px;">
+                        <summary style="cursor:pointer; font-weight:600;">${a.question} <span style="color:#999; font-weight:normal; font-size:12px;">(${a.category})</span></summary>
+                        <p style="margin:10px 0 0; color:#444;">${a.answer}</p>
+                    </details>
+                `).join('');
+            } catch (err) {
+                el.innerHTML = `<div class="alert alert-warning">Kon kennisbank niet laden: ${err.message}</div>`;
+            }
+        }
+
+        async function submitSupportTicket() {
+            const subject = document.getElementById('ticket-subject').value.trim();
+            const message = document.getElementById('ticket-message').value.trim();
+            if (!subject || !message) {
+                contactsAlert('support-ticket-alert', 'Vul zowel onderwerp als bericht in.', 'warning');
+                return;
+            }
+            try {
+                await apiPost('/api/support/tickets', { subject, message });
+                contactsAlert('support-ticket-alert', '✓ Verstuurd - Twikey support reageert zo snel mogelijk.', 'success');
+                document.getElementById('ticket-subject').value = '';
+                document.getElementById('ticket-message').value = '';
+                loadSupportTickets();
+            } catch (err) {
+                contactsAlert('support-ticket-alert', `Versturen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function loadSupportTickets() {
+            const tbody = document.getElementById('support-tickets-body');
+            tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">Laden...</td></tr>';
+            try {
+                const data = await apiGet('/api/support/tickets');
+                if (!data.tickets.length) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">Nog geen supportvragen gesteld.</td></tr>';
+                    return;
+                }
+                const statusLabels = { open: 'Open', replied: 'Beantwoord' };
+                tbody.innerHTML = data.tickets.map(t => `
+                    <tr>
+                        <td>${new Date(t.created_at).toLocaleDateString('nl-NL')}</td>
+                        <td>${t.subject}</td>
+                        <td>${statusLabels[t.status] || t.status}</td>
+                        <td>${t.admin_reply || '-'}</td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="4" style="color:#666;">Kon supportvragen niet laden: ${err.message}</td></tr>`;
             }
         }
 

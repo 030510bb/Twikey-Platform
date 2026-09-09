@@ -1,0 +1,563 @@
+<title>Twikey Sales Machine</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --paper: #eef1ef;
+    --surface: #ffffff;
+    --ink: #1f2b2b;
+    --ink-soft: #5b6b6a;
+    --ink-faint: #8a9695;
+    --line: #d2dad8;
+    --line-strong: #b7c2bf;
+    --accent: #b6501f;
+    --accent-ink: #ffffff;
+    --accent-soft: #f2ddc9;
+    --accent-soft-line: #e2b98e;
+    --done: #3c7a5c;
+    --done-soft: #dcece2;
+    --shadow: 0 1px 2px rgba(31, 43, 43, 0.06), 0 6px 20px rgba(31, 43, 43, 0.05);
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14181a;
+      --surface: #1b2121;
+      --ink: #e7ece9;
+      --ink-soft: #9dabA8;
+      --ink-faint: #6e7a78;
+      --line: #2c3634;
+      --line-strong: #3c4846;
+      --accent: #e0904f;
+      --accent-ink: #1a1000;
+      --accent-soft: #372613;
+      --accent-soft-line: #5a3f20;
+      --done: #6bb08c;
+      --done-soft: #17332480;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #14181a;
+    --surface: #1b2121;
+    --ink: #e7ece9;
+    --ink-soft: #9dabA8;
+    --ink-faint: #6e7a78;
+    --line: #2c3634;
+    --line-strong: #3c4846;
+    --accent: #e0904f;
+    --accent-ink: #1a1000;
+    --accent-soft: #372613;
+    --accent-soft-line: #5a3f20;
+    --done: #6bb08c;
+    --done-soft: #17332480;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono {
+    font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+  }
+
+  .wrap {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+
+  header.masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    margin-bottom: 40px;
+  }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  h1 {
+    font-size: clamp(28px, 4vw, 38px);
+    font-weight: 700;
+    margin: 4px 0 0;
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+
+  .subhead {
+    color: var(--ink-soft);
+    font-size: 15px;
+    max-width: 60ch;
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  .gauge-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+
+  .gauge-dial {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    flex: none;
+  }
+
+  .gauge-dial svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+
+  .gauge-dial .track { fill: none; stroke: var(--line); stroke-width: 8; }
+  .gauge-dial .fill { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; transition: stroke-dasharray 0.4s ease; }
+
+  .gauge-num {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 600;
+    font-size: 15px;
+  }
+
+  .gauge-label {
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.5;
+  }
+
+  .gauge-label strong { color: var(--ink); font-weight: 600; }
+
+  .recent {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  .chip {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: var(--done-soft);
+    color: var(--done);
+    border: 1px solid color-mix(in srgb, var(--done) 35%, transparent);
+    white-space: nowrap;
+  }
+
+  section.stage {
+    margin-bottom: 34px;
+  }
+
+  .stage-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .stage-head .stage-index {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+    letter-spacing: 0.08em;
+  }
+
+  .stage-head h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: -0.005em;
+  }
+
+  .stage-head .stage-count {
+    margin-left: auto;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+
+  ul.items {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  li.item {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+  }
+
+  li.item.done {
+    opacity: 0.62;
+  }
+
+  .check-btn {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    margin-top: 1px;
+    border-radius: 6px;
+    border: 1.5px solid var(--line-strong);
+    background: var(--surface);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .check-btn:hover { border-color: var(--accent); }
+
+  .check-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  li.item.done .check-btn {
+    background: var(--done);
+    border-color: var(--done);
+  }
+
+  .check-btn svg {
+    width: 13px;
+    height: 13px;
+    stroke: var(--accent-ink);
+    stroke-width: 2.6;
+    fill: none;
+    opacity: 0;
+  }
+
+  li.item.done .check-btn svg { opacity: 1; }
+
+  .item-body { flex: 1; min-width: 0; }
+
+  .item-top {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .item-title {
+    font-weight: 600;
+    font-size: 14.5px;
+    letter-spacing: -0.005em;
+  }
+
+  li.item.done .item-title {
+    text-decoration: line-through;
+    text-decoration-color: var(--ink-faint);
+  }
+
+  .tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.03em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--accent-soft-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+    white-space: nowrap;
+  }
+
+  .item-desc {
+    margin: 5px 0 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    max-width: 62ch;
+  }
+
+  .item-desc code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--ink);
+  }
+
+  footer.note {
+    margin-top: 44px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-faint);
+    line-height: 1.6;
+  }
+
+  @media (max-width: 560px) {
+    .gauge-row { flex-wrap: wrap; }
+    .recent { margin-left: 0; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <div class="eyebrow">Project · Twikey Sales Machine</div>
+      <h1>Actielijst</h1>
+      <p class="subhead">Openstaande bouwstappen na de livegang van login, multi-tenant accounts en zelfbedienings-wachtwoordreset. Vink af naarmate iets is opgelost — deze pagina onthoudt de status.</p>
+    </div>
+    <div class="gauge-row">
+      <div class="gauge-dial">
+        <svg viewBox="0 0 64 64">
+          <circle class="track" cx="32" cy="32" r="27"></circle>
+          <circle class="fill" id="gauge-fill" cx="32" cy="32" r="27" stroke-dasharray="0 999"></circle>
+        </svg>
+        <div class="gauge-num" id="gauge-num">0%</div>
+      </div>
+      <div class="gauge-label"><strong id="gauge-done">0</strong> van <strong id="gauge-total">0</strong> punten afgerond</div>
+      <div class="recent">
+        <span class="chip">✓ login + multi-tenant</span>
+        <span class="chip">✓ wachtwoordreset per mail</span>
+        <span class="chip">✓ account overleeft deploy</span>
+      </div>
+    </div>
+  </header>
+
+  <div id="stages"></div>
+
+  <footer class="note">
+    Laatst bijgewerkt vanuit de sessie waarin login, multi-tenancy en wachtwoordreset zijn gebouwd. Achtergrond bij elk punt staat in <code>README.md</code> / <code>DEPLOY.md</code> in de projectmap.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const STAGES = [
+    {
+      title: "Data & infrastructuur",
+      items: [
+        {
+          id: "real-db",
+          title: "Vervang SQLite door een echte database",
+          tag: "Basis",
+          desc: "Contacten, campagnes en de LinkedIn-log verdwijnen nog bij elke deploy — alleen het account zelf overleeft dat nu (via <code>SEED_ACCOUNT_*</code>). Render Postgres of de bestaande Supabase zijn een drop-in vervanging voor de tabellen in <code>backend/database.py</code>.",
+          done: false,
+        },
+        {
+          id: "render-starter",
+          title: "Upgrade backend naar Render's Starter-plan",
+          tag: "±€7/mnd",
+          desc: "Voorkomt dat de service na 15 minuten inactiviteit in slaap valt (trage eerste request). Ook een logische stap vóór een betaalde database, die toch al vraagt om een always-on backend.",
+          done: false,
+        },
+        {
+          id: "cors-tighten",
+          title: "CORS_ORIGINS aanscherpen",
+          tag: "Beveiliging",
+          desc: "Staat nu op <code>*</code> in <code>render.yaml</code>. Zet 'm op de exacte frontend-URL zodra alles stabiel draait — stappen staan in <code>DEPLOY.md</code>.",
+          done: false,
+        },
+      ],
+    },
+    {
+      title: "E-mail & deliverability",
+      items: [
+        {
+          id: "dmarc",
+          title: "DMARC-record controleren voor twikeycampaigns.nl",
+          tag: "Nazien",
+          desc: "Eerder besproken bij het instellen van de domeinbrede delegatie — nog niet expliciet bevestigd dat dit ook echt live staat in de DNS-instellingen van het domein.",
+          done: false,
+        },
+        {
+          id: "per-tenant-mail",
+          title: "Eigen verzendadres per klant",
+          tag: "Bij klant #2",
+          desc: "Alle accounts versturen nu via de gedeelde mailbox <code>sales@twikeycampaigns.nl</code>. Een volgende klant met een eigen mailbox vraagt om zijn eigen Google Workspace-domein + service-account (dezelfde stappen als in <code>README.md</code>, per klant herhaald).",
+          done: false,
+        },
+      ],
+    },
+    {
+      title: "Product",
+      items: [
+        {
+          id: "lead-magnet-report",
+          title: "Automatisch rapport op de lead-magnet-pagina",
+          tag: "Niet gebouwd",
+          desc: "<code>frontend/lead-magnet.html</code> toont nu alleen een formulier. Een gegenereerde DSO-score of cashflow-inschatting op basis van de ingevulde gegevens zou de pagina overtuigender maken.",
+          done: false,
+        },
+        {
+          id: "extension-rollout",
+          title: "LinkedIn-extensie delen met collega's",
+          tag: "Bij team-gebruik",
+          desc: "Sinds de login-koppeling moet iedereen die de extensie gebruikt zelf inloggen via het extensie-icoon. Alleen relevant zodra meer mensen dan jijzelf LinkedIn-outreach doen.",
+          done: false,
+        },
+      ],
+    },
+    {
+      title: "Groei",
+      items: [
+        {
+          id: "second-customer",
+          title: "Tweede klantaccount onboarden",
+          tag: "Klaar om te proberen",
+          desc: "Kan via <code>POST /api/admin/accounts</code> met <code>ADMIN_SECRET</code>. Let op: <code>SEED_ACCOUNT_EMAIL</code>/<code>_PASSWORD</code> houdt maar 1 vast account in leven — bij meerdere klanten is de echte database (bovenaan deze lijst) eigenlijk een voorwaarde om dit robuust te laten werken.",
+          done: false,
+        },
+      ],
+    },
+  ];
+
+  let artifact = null;
+
+  function countDone() {
+    let done = 0, total = 0;
+    STAGES.forEach(s => s.items.forEach(i => { total++; if (i.done) done++; }));
+    return { done, total };
+  }
+
+  function renderGauge() {
+    const { done, total } = countDone();
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    const circumference = 2 * Math.PI * 27;
+    const fillLen = (pct / 100) * circumference;
+    const fillEl = document.getElementById("gauge-fill");
+    fillEl.setAttribute("stroke-dasharray", `${fillLen} ${circumference}`);
+    document.getElementById("gauge-num").textContent = pct + "%";
+    document.getElementById("gauge-done").textContent = done;
+    document.getElementById("gauge-total").textContent = total;
+  }
+
+  function renderStages() {
+    const root = document.getElementById("stages");
+    root.innerHTML = "";
+    STAGES.forEach((stage, sIdx) => {
+      const section = document.createElement("section");
+      section.className = "stage";
+
+      const head = document.createElement("div");
+      head.className = "stage-head";
+      const doneCount = stage.items.filter(i => i.done).length;
+      head.innerHTML = `
+        <span class="stage-index mono">${String(sIdx + 1).padStart(2, "0")}</span>
+        <h2>${stage.title}</h2>
+        <span class="stage-count mono">${doneCount}/${stage.items.length}</span>
+      `;
+      section.appendChild(head);
+
+      const ul = document.createElement("ul");
+      ul.className = "items";
+
+      stage.items.forEach(item => {
+        const li = document.createElement("li");
+        li.className = "item" + (item.done ? " done" : "");
+
+        const btn = document.createElement("button");
+        btn.className = "check-btn";
+        btn.type = "button";
+        btn.setAttribute("aria-pressed", item.done ? "true" : "false");
+        btn.setAttribute("aria-label", (item.done ? "Markeer als open: " : "Markeer als afgerond: ") + item.title);
+        btn.innerHTML = `<svg viewBox="0 0 16 16"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5"></polyline></svg>`;
+        btn.addEventListener("click", () => toggleItem(item.id));
+
+        const body = document.createElement("div");
+        body.className = "item-body";
+        body.innerHTML = `
+          <div class="item-top">
+            <span class="item-title">${item.title}</span>
+            <span class="tag mono">${item.tag}</span>
+          </div>
+          <p class="item-desc">${item.desc}</p>
+        `;
+
+        li.appendChild(btn);
+        li.appendChild(body);
+        ul.appendChild(li);
+      });
+
+      section.appendChild(ul);
+      root.appendChild(section);
+    });
+  }
+
+  function render() {
+    renderGauge();
+    renderStages();
+  }
+
+  function findItem(id) {
+    for (const stage of STAGES) {
+      const item = stage.items.find(i => i.id === id);
+      if (item) return item;
+    }
+    return null;
+  }
+
+  function buildDocument() {
+    // Serialize the current STAGES (with updated `done` flags) back into a
+    // complete, self-contained HTML document so publish() has a full page -
+    // same head/style, same script, just STAGES swapped for the live state.
+    const template = document.documentElement.outerHTML;
+    return "<!doctype html>\n" + template.replace(
+      /const STAGES = \[[\s\S]*?\];\n/,
+      "const STAGES = " + JSON.stringify(STAGES, null, 2) + ";\n"
+    );
+  }
+
+  async function toggleItem(id) {
+    const item = findItem(id);
+    if (!item) return;
+    item.done = !item.done;
+    render();
+    if (artifact) {
+      try {
+        await artifact.publish(buildDocument());
+      } catch (err) {
+        // conflict / not_writer / etc - another view already won, or this
+        // viewer can't save. Local toggle still reflects on screen either way.
+      }
+    }
+  }
+
+  render();
+
+  if (window.claude && typeof window.claude.use === "function") {
+    window.claude.use("artifact").then(a => { artifact = a; });
+  }
+})();
+</script>

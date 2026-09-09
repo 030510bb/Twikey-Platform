@@ -24,7 +24,16 @@ services:
       - key: SEND_AS_EMAIL
         value: sales@twikeycampaigns.nl
       - key: CORS_ORIGINS
-        value: "*"          # Tighten this to your frontend URL after first deploy
+        value: "*"          # Tighten this (or use CORS_ORIGIN_REGEX below) once
+                            # your custom domain(s) are confirmed working
+      # Optional, safer alternative to CORS_ORIGINS once your custom domain
+      # is live: matches justmeet.tech itself and every subdomain of it (e.g.
+      # app.justmeet.tech, a customer's own klant.justmeet.tech). Has no effect
+      # while CORS_ORIGINS is still "*" above - only start relying on this
+      # once you remove/narrow CORS_ORIGINS. See "Eigen domein koppelen" in
+      # DEPLOY.md.
+      - key: CORS_ORIGIN_REGEX
+        value: "https://([a-zA-Z0-9-]+\\.)?justmeet\\.tech"
       # Paste the full content of your service-account JSON key file as the
       # value for this one, in the Render dashboard. Never commit it to git.
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
@@ -34,6 +43,19 @@ services:
       # random value in the Render dashboard - never commit the real value
       # to git. See README.md for the exact curl command that uses it.
       - key: ADMIN_SECRET
+        sync: false
+      # Encrypts customer SMTP passwords at rest (see POST /api/email-settings
+      # and backend/crypto.py). Render generates a random value for this
+      # automatically on first deploy - you don't need to set it yourself.
+      # Never change it afterwards: existing saved SMTP passwords can only be
+      # decrypted with the key they were encrypted under.
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      # Optional. Shared, platform-level key (not per customer account) used
+      # to generate AI concept-replies to incoming customer replies (Replies
+      # tab). Without it, concept-replies fall back to the matched objection
+      # category's standard suggested text. See README.md and DEPLOY.md.
+      - key: ANTHROPIC_API_KEY
         sync: false
       # Optional: automatically create this one account on first startup if
       # it doesn't exist yet, so you don't have to run the admin bootstrap
@@ -45,12 +67,15 @@ services:
       - key: SEED_ACCOUNT_PASSWORD
         sync: false
       # Used to build the open-tracking pixel and click-tracking links that
-      # get embedded in campaign emails (A/B Test tab). Update these two if
-      # your actual Render service URLs differ from the defaults below.
+      # get embedded in campaign emails (A/B Test tab), and the frontend's
+      # own PRODUCTION_API_BASE points here too. Update these two if your
+      # actual custom domains (or Render service URLs, if you haven't set
+      # up custom domains yet) differ from the values below - see "Eigen
+      # domein koppelen (justmeet.tech)" in DEPLOY.md.
       - key: BACKEND_PUBLIC_URL
-        value: https://twikey-platform-backend.onrender.com
+        value: https://api.justmeet.tech
       - key: FRONTEND_PUBLIC_URL
-        value: https://twikey-platform-frontend.onrender.com
+        value: https://app.justmeet.tech
       # NOTE on persistence: contacts/campaigns/accounts/LinkedIn-log data
       # lives in Supabase Postgres (DATABASE_URL above, see
       # backend/database.py) - not on this service's own disk, so it

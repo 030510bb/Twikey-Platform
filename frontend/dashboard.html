@@ -33,11 +33,13 @@
             align-items: flex-start;
         }
 
+        /* Kleurenpalet (echte doorvoering van de sidebar-mockup die Benjamin
+           koos, Fase 3c-vervolg): navy sidebar + oranje accenten, in plaats
+           van het vorige paars-blauwe verloop. Zie crm-roadmap.md. */
         .sidebar {
             width: 250px;
             flex-shrink: 0;
-            background: white;
-            border-right: 1px solid #e2e8f0;
+            background: #18407D;
             display: flex;
             flex-direction: column;
             position: sticky;
@@ -50,27 +52,31 @@
             align-items: center;
             gap: 10px;
             padding: 20px;
-            border-bottom: 1px solid #e2e8f0;
+            border-bottom: 1px solid rgba(255,255,255,0.12);
         }
 
         .sidebar-brand .logo-mark {
             width: 34px;
             height: 34px;
             border-radius: 9px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #F18700;
             flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 17px;
         }
 
         .sidebar-brand .brand-text strong {
             display: block;
             font-size: 15px;
-            color: #1a202c;
+            color: #fff;
             line-height: 1.2;
         }
 
         .sidebar-brand .brand-text span {
             font-size: 11px;
-            color: #94a3b8;
+            color: rgba(255,255,255,0.55);
         }
 
         .sidebar-nav {
@@ -87,12 +93,12 @@
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.04em;
-            color: #a0aec0;
+            color: rgba(255,255,255,0.4);
             padding: 14px 10px 4px;
         }
 
         .sidebar-footer {
-            border-top: 1px solid #e2e8f0;
+            border-top: 1px solid rgba(255,255,255,0.12);
             padding: 12px;
             display: flex;
             flex-direction: column;
@@ -108,26 +114,29 @@
             text-align: left;
             padding: 10px 10px;
             border: none;
+            border-left: 3px solid transparent;
             border-radius: 8px;
             background: transparent;
             cursor: pointer;
             font-size: 14px;
             font-weight: 600;
-            color: #4a5568;
+            color: rgba(255,255,255,0.72);
             margin-bottom: 0;
             transition: background 0.15s ease, color 0.15s ease;
         }
 
         .sidebar-nav .tab-button:hover,
         .sidebar-footer .tab-button:hover {
-            background: #f1f5f9;
-            color: #667eea;
+            background: rgba(255,255,255,0.09);
+            color: #fff;
         }
 
         .sidebar-nav .tab-button.active,
         .sidebar-footer .tab-button.active {
-            background: #eef2ff;
-            color: #667eea;
+            background: rgba(255,255,255,0.09);
+            color: #fff;
+            border-left: 3px solid #F18700;
+            font-weight: 700;
         }
 
         #account-bar {
@@ -137,15 +146,15 @@
             gap: 8px;
             padding: 12px 10px 0;
             margin-top: 4px;
-            border-top: 1px solid #e2e8f0;
+            border-top: 1px solid rgba(255,255,255,0.12);
             font-size: 12px;
-            color: #64748b;
+            color: rgba(255,255,255,0.65);
         }
 
         #account-bar button {
-            background: #f1f5f9;
-            border: 1px solid #e2e8f0;
-            color: #4a5568;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.18);
+            color: #fff;
             padding: 6px 12px;
             border-radius: 6px;
             cursor: pointer;
@@ -154,12 +163,54 @@
         }
 
         #account-bar button:hover {
-            background: #e2e8f0;
+            background: rgba(255,255,255,0.18);
         }
 
         .main-content {
             flex: 1;
             min-width: 0;
+        }
+
+        /* Witte topbalk: breadcrumb (huidig tabblad) + snelzoeken naar
+           Contacten - echte doorvoering van de mockup ("puur als
+           voorbeeld"-schets die Benjamin koos). */
+        .topbar {
+            background: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 28px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .topbar .breadcrumb {
+            font-size: 14px;
+            color: #7686A8;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .topbar .breadcrumb b {
+            color: #18407D;
+        }
+
+        .topbar-search {
+            background: #F5F6F9;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 12.5px;
+            color: #7686A8;
+            width: 240px;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .topbar-search:hover {
+            background: #eef1f7;
+            color: #18407D;
         }
 
         .tab-content {
@@ -216,7 +267,7 @@
         .metric-value {
             font-size: 20px;
             font-weight: bold;
-            color: #667eea;
+            color: #18407D;
         }
 
         .progress-bar {
@@ -230,7 +281,7 @@
 
         .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(90deg, #18407D 0%, #4983DC 100%);
             border-radius: 4px;
         }
 
@@ -252,13 +303,14 @@
         }
 
         .button-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #F18700;
             color: white;
         }
 
         .button-primary:hover {
+            background: #B46500;
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 10px 20px rgba(180, 101, 0, 0.3);
         }
 
         .button-secondary {
@@ -330,7 +382,7 @@
             margin-bottom: 15px;
             padding: 15px;
             background: #f9fafb;
-            border-left: 4px solid #667eea;
+            border-left: 4px solid #18407D;
             border-radius: 4px;
         }
 
@@ -342,7 +394,7 @@
 
         .funnel-step .bar {
             height: 30px;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(90deg, #18407D 0%, #4983DC 100%);
             border-radius: 4px;
             display: flex;
             align-items: center;
@@ -459,7 +511,7 @@
         .check-warn { color: #f59e0b; }
 
         .stats-box {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #18407D 0%, #4983DC 100%);
             color: white;
             padding: 20px;
             border-radius: 12px;
@@ -494,7 +546,7 @@
             content: '';
             width: 12px;
             height: 12px;
-            background: #667eea;
+            background: #18407D;
             border-radius: 50%;
             position: absolute;
             left: -7px;
@@ -578,7 +630,7 @@
              uitloggen onderaan vastgepind. -->
         <aside class="sidebar">
             <div class="sidebar-brand">
-                <div class="logo-mark"></div>
+                <div class="logo-mark">🦋</div>
                 <div class="brand-text">
                     <strong>Twikey</strong>
                     <span>Sales Platform</span>
@@ -616,6 +668,10 @@
         </aside>
 
         <div class="main-content">
+        <div class="topbar">
+            <div class="breadcrumb"><span id="breadcrumb-icon">📊</span> <b id="breadcrumb-label">Dashboard</b></div>
+            <button type="button" class="topbar-search" onclick="switchTab('contacts'); setTimeout(() => document.getElementById('contacts-search').focus(), 50);">🔍 Zoeken in contacten...</button>
+        </div>
         <div class="container">
 
         <!-- TAB 1: DASHBOARD -->
@@ -1800,6 +1856,25 @@
         let currentCampaignId = null;
         let currentCampaignResults = null;
 
+        // Breadcrumb in de witte topbalk (Fase 3c-vervolg: sidebar-mockup
+        // echt doorgevoerd) - icoon/label per tab, zelfde tekst als de
+        // sidebar-knoppen hierboven.
+        const TAB_BREADCRUMBS = {
+            dashboard: { icon: '📊', label: 'Dashboard' },
+            contacts: { icon: '👤', label: 'Contacten' },
+            email: { icon: '📧', label: 'Email Sync' },
+            linkedin: { icon: '🔗', label: 'LinkedIn' },
+            abtest: { icon: '🧪', label: 'A/B Test' },
+            sequences: { icon: '🔁', label: 'Sequenties' },
+            replies: { icon: '💬', label: 'Replies' },
+            validation: { icon: '🔍', label: 'Validation' },
+            analytics: { icon: '📈', label: 'Analytics' },
+            profile: { icon: '🧭', label: 'Profiel' },
+            team: { icon: '👥', label: 'Team' },
+            integrations: { icon: '🔌', label: 'Integraties' },
+            support: { icon: '🆘', label: 'Support' },
+        };
+
         function switchTab(tabName) {
             // Hide all tabs
             const tabs = document.querySelectorAll('.tab-content');
@@ -1811,6 +1886,12 @@
 
             // Show selected tab
             document.getElementById(tabName).classList.add('active');
+
+            const crumb = TAB_BREADCRUMBS[tabName];
+            if (crumb) {
+                document.getElementById('breadcrumb-icon').textContent = crumb.icon;
+                document.getElementById('breadcrumb-label').textContent = crumb.label;
+            }
 
             // Highlight the matching nav button. Looked up by tab name instead of
             // relying on the global `event` object, so this also works when

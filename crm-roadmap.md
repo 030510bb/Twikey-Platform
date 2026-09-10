@@ -405,6 +405,41 @@ plus de volledige bestaande suites (`test_crm.py`, `test_fase2.py`,
 `test_fase3.py`, `test_fase3b.py`, `test_icp.py`) opnieuw gedraaid — alles
 groen, geen regressies.
 
+## Fase 3c-vervolg (gebouwd, geleverd — 10 sept. 2026): sidebar-mockup echt doorgevoerd
+
+Bij de sidebar-mockup uit Fase 3a (zie daar) had Benjamin gevraagd om "puur
+als voorbeeld" een aantrekkelijkere lay-out te schetsen, geïnspireerd op het
+Twikey-product zelf (navy sidebar, witte bovenbalk met breadcrumb/zoeken,
+kaart-gebaseerde secties). Na een positieve reactie op die mockup is 'm nu
+echt doorgevoerd in `frontend/dashboard.html` (niet meer alleen een
+losstaand Design-canvas voorbeeld):
+- **Sidebar**: navy achtergrond (`#18407D`, Twikey-huisstijl) i.p.v. wit,
+  met een oranje (`#F18700`) linker-accentstreep en vetgedrukte tekst op
+  het actieve tabblad, en een oranje logo-badge (🦋) — structuur/groepering
+  (Dashboard + Contacten los, Outreach/Gesprekken/Inzicht gegroepeerd,
+  instellingen onderaan) is ongewijzigd t.o.v. Fase 3b, alleen de kleuren
+  en het logo zijn aangepast.
+- **Nieuwe witte topbalk** boven elke tab-inhoud: een breadcrumb die het
+  huidige tabblad toont (icoon + naam, automatisch bijgewerkt door
+  `switchTab()`), en een zoekveld dat direct naar het Contacten-tabblad
+  springt en het bestaande zoekveld daar focust — geen nieuwe zoekfunctie,
+  hergebruikt de al bestaande contactenzoekfunctie uit Fase 1.
+- **Kleurenpalet in de rest van de app**: het paars-blauwe verloop
+  (`#667eea`/`#764ba2`) uit de eerste versie van het dashboard is vervangen
+  door de Twikey-huisstijlkleuren — primaire actieknoppen (`button-primary`)
+  zijn nu oranje (huisstijlregel: oranje is uitsluitend voor actie/nadruk),
+  overige accenten (metric-waarden, voortgangsbalken, de statistiekblokken
+  op het Dashboard-tabblad, de conversie-funnel op Analytics, de
+  tijdlijn-stip) zijn navy of een navy-naar-middenblauw verloop.
+- Geen enkele tab-inhoud, endpoint, of stuk JavaScript-logica is
+  aangepast — dit is uitsluitend een kleur-/lay-out-wijziging bovenop de
+  bestaande, functioneel ongewijzigde app.
+
+Geverifieerd met Playwright-screenshots van meerdere tabbladen (Dashboard,
+Contacten, A/B Test, Analytics, Integraties) tegen een echt draaiende
+backend + echte login-flow, plus een syntax-check van het uitgepakte
+`<script>`-blok — geen consolefouten, geen regressies.
+
 ## Toekomstig idee (nog niet gescoped): leads uit Instagram/LinkedIn-advertenties
 
 Door Benjamin geopperd tijdens de Fase 3c-sessie: naast koud e-mailen ook

@@ -419,7 +419,9 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `POST /api/contacts` 🔒 | Eén contact toevoegen/bijwerken. |
 | `PATCH /api/contacts/{id}` 🔒 | CRM-velden bijwerken (`job_title`, `sector`, `revenue_range`, `company`, `linkedin_url`, `is_customer`, `has_open_quote`, `do_not_contact`). |
 | `POST /api/contacts/bulk` 🔒 | Meerdere contacten in één keer toevoegen. |
-| `POST /api/contacts/import-csv` 🔒 | CSV-bestand importeren (multipart `file`), flexibele NL/EN-kolomherkenning. |
+| `POST /api/contacts/import-csv` 🔒 | CSV-bestand importeren (multipart `file`), flexibele NL/EN-kolomherkenning. Blijft bestaan voor bestaande integraties — nieuwe imports gebruiken bij voorkeur de preview/confirm-flow hieronder (Fase 3c). |
+| `POST /api/contacts/import-csv/preview` 🔒 | Fase 3c: leest een CSV (multipart `file`) en geeft een voorgestelde kolom-koppeling terug (alias/fuzzy-matching, aangevuld met AI voor onherkende kolommen) zónder iets te importeren — de klant kan de koppeling eerst controleren/aanpassen. |
+| `POST /api/contacts/import-csv/confirm` 🔒 | Fase 3c: importeert de contacten met de (evt. aangepaste) kolom-koppeling die `preview` teruggaf. |
 | `GET /api/contacts/export-csv` 🔒 | Alle contacten als CSV downloaden. |
 | `GET /api/tags` 🔒 / `POST /api/tags` 🔒 / `DELETE /api/tags/{id}` 🔒 | Tags beheren voor je account. |
 | `POST /api/contacts/{id}/tags` 🔒 / `DELETE /api/contacts/{id}/tags/{tag_id}` 🔒 | Tag aan een contact koppelen/loskoppelen. |
@@ -438,6 +440,11 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `POST /api/exclusions/import-csv` 🔒 | CSV met te vermijden domeinen/bedrijven importeren. |
 | `GET/POST/DELETE /api/integrations/prospecting` 🔒 | Explorium/Vibe Prospecting API-key opslaan (credential-only, zie `crm-roadmap.md`). |
 | `GET/POST/DELETE /api/integrations/hubspot` 🔒 | HubSpot access token + uitsluitingsvoorkeuren opslaan (credential-only). |
+| `GET /api/account/sending-settings` 🔒 / `PUT /api/account/sending-settings` 🔒 | Fase 3c: digest aan/uit, dagelijkse verzendlimiet aan/uit + waarde, afmeldlink aan/uit (de twee huisregels + digest-instelling, allemaal in Instellingen). |
+| `GET /api/dashboard/attention` 🔒 | Fase 3c: "aandacht nodig"-lijst voor het Dashboard-tabblad (mislukte verzendingen, openstaande conceptantwoorden, vervallen reminders, wachtrij door de verzendlimiet), geprioriteerd hoog/gemiddeld/laag. |
+| `GET /track/unsubscribe/{token}` | Fase 3c: afmeldlink in uitgaande mails. Publiek (het ondertekende token zelf is de autorisatie); zet `do_not_contact` voor dat contact. Alleen aanwezig in mails als `unsubscribe_link_enabled` aan staat voor dat account. |
+| `POST /api/feedback` 🔒 / `GET /api/feedback` 🔒 | Fase 3c ("ideeënbus"): feedback/idee indienen / eigen ingediende feedback bekijken. |
+| `GET /api/superadmin/feedback` 🔒\* / `PUT /api/superadmin/feedback/{id}/status` 🔒\* | Fase 3c: feedback van alle accounts bekijken / status bijwerken (nieuw/in overweging/op de roadmap/gebouwd/afgewezen). |
 | `GET /api/support/kb` | Kennisbank doorzoeken (`q`). Publiek. |
 | `POST /api/support/tickets` 🔒 / `GET /api/support/tickets` 🔒 | Supportvraag indienen / eigen supportvragen bekijken. |
 | `GET /api/superadmin/support/tickets` 🔒\* / `POST /api/superadmin/support/tickets/{id}/reply` 🔒\* | Supportvragen van alle accounts bekijken/beantwoorden. |
@@ -446,6 +453,7 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `POST /api/campaigns` 🔒 | Nieuwe A/B-campagne aanmaken (verdeelt contacten round-robin over de varianten). Elke variant mag een `persona_id` hebben (Fase 3) — een contact met een matchende persona krijgt altijd die variant; optioneel `persona_id` op de campagne zelf beperkt de hele ronde tot contacten met die persona. |
 | `POST /api/campaigns/{id}/launch` 🔒 | Verstuurt de campagne-mails echt (via het eigen SMTP-adres als dat is ingesteld, anders via Gmail), met tracking. |
 | `GET /api/campaigns/{id}/results` 🔒 | Verzonden/opens/clicks/form-fills per groep. |
+| `GET /api/campaigns/overview` 🔒 | Fase 3c: per-campagne totaaloverzicht (verstuurd/mislukt/geopend/geklikt/replies/nog in de wachtrij/conversiepercentage), naast de per-variant resultaten hierboven. |
 | `GET /track/open/{token}.png` | Open-tracking pixel (wordt automatisch in mails ingesloten). |
 | `GET /track/click/{token}` | Click-tracking redirect naar de lead-magnet-pagina. |
 | `POST /track/formfill/{token}` | Registreert een formulier-invulling op de lead-magnet-pagina. |
@@ -475,6 +483,8 @@ omgekeerd werkt een beheerderstoken niet op de gewone 🔒-endpoints.
 | `POST /api/sequences/auto-enroll-by-persona` 🔒 | Fase 3: schrijft elk contact met een buyer persona (dat nergens actief loopt) automatisch in op de actieve sequence die aan diezelfde persona gekoppeld is. Idempotent. |
 | `GET /api/sequences/{id}/enrollments` 🔒 | Ingeschreven contacten van een sequence met hun status/voortgang. |
 | `POST /api/cron/process-sequences` | Verstuurt alle due opvolgmails over alle accounts heen. Vereist `X-Admin-Secret`, bedoeld voor een externe scheduler — zie `DEPLOY.md`. |
+| `POST /api/cron/process-campaign-queue` | Fase 3c: werkt per account de campagne-verzendwachtrij verder af die door de dagelijkse verzendlimiet was blijven staan, tot aan de resterende ruimte in die limiet. Vereist `X-Admin-Secret` — zie `DEPLOY.md`. |
+| `POST /api/cron/process-digests` | Fase 3c: verstuurt de dagelijkse samenvatting-mail naar elk teamlid van elk account waarvoor die vandaag nog niet is verstuurd (idempotent per dag). Vereist `X-Admin-Secret` — zie `DEPLOY.md`. |
 
 ## Vereisten
 

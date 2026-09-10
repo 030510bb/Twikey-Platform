@@ -26,12 +26,17 @@ See README.md for full setup and DEPLOY.md for cloud hosting.
 """
 
 import csv
+import difflib
+import hashlib
+import hmac
 import html
 import io
+import json
 import logging
 import os
 import secrets
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
@@ -528,6 +533,54 @@ def _send_html_for_account(account_id: int, to: str, subject: str, html_body: st
     send_html_email(SEND_AS_EMAIL, to, subject, html_body)
 
 
+# ---------------------------------------------------------------------------
+# Afmeldlink (huisregel, standaard aan - zie accounts.unsubscribe_link_enabled
+# in database.py). Geen aparte tabel/kolom voor het token nodig: het is een
+# HMAC-SHA256 over het contact-id, geverifieerd bij het afmelden zelf - zelfde
+# "publiek, ongeauthenticeerd, maar niet te raden" patroon als de bestaande
+# open/click tracking_token. ADMIN_SECRET wordt hier alleen als sleutelmateriaal
+# hergebruikt (geen admin-actie), zodat er geen extra environment variable
+# nodig is naast wat dit project al vereist.
+# ---------------------------------------------------------------------------
+
+_UNSUB_SECRET = (os.environ.get("ADMIN_SECRET") or "twikey-unsubscribe-dev-secret").encode("utf-8")
+
+
+def _unsubscribe_token(contact_id: int) -> str:
+    sig = hmac.new(_UNSUB_SECRET, str(contact_id).encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+    return f"{contact_id}.{sig}"
+
+
+def _verify_unsubscribe_token(token: str) -> int | None:
+    try:
+        contact_id_str, sig = token.split(".", 1)
+        contact_id = int(contact_id_str)
+    except (ValueError, AttributeError):
+        return None
+    expected = hmac.new(_UNSUB_SECRET, contact_id_str.encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+    if not hmac.compare_digest(expected, sig):
+        return None
+    return contact_id
+
+
+def _with_unsubscribe_footer_html(account_id: int, contact_id: int, body_html: str) -> str:
+    """Voegt (als de instelling aan staat) een kleine afmeldlink toe onder
+    een campagne-mail. Bewust optioneel per account (zie
+    accounts.unsubscribe_link_enabled) - niet elk account/land vereist dit,
+    en Benjamin wilde expliciet ook zonder kunnen blijven mailen."""
+    if not database.get_sending_settings(account_id)["unsubscribe_link_enabled"]:
+        return body_html
+    url = f"{BACKEND_PUBLIC_URL}/track/unsubscribe/{_unsubscribe_token(contact_id)}"
+    return f'{body_html}<br><br><small style="color:#888">Geen mails meer ontvangen? <a href="{url}">Afmelden</a>.</small>'
+
+
+def _with_unsubscribe_footer_plain(account_id: int, contact_id: int, body: str) -> str:
+    if not database.get_sending_settings(account_id)["unsubscribe_link_enabled"]:
+        return body
+    url = f"{BACKEND_PUBLIC_URL}/track/unsubscribe/{_unsubscribe_token(contact_id)}"
+    return f"{body}\n\nGeen mails meer ontvangen? Afmelden: {url}"
+
+
 @app.post("/api/send")
 def api_send_email(payload: SendEmailRequest, account: dict = Depends(get_current_account)):
     """Send an email as this account's own mailbox (if configured via
@@ -698,6 +751,47 @@ def api_test_imap_settings(payload: EmailSettingsTestIn, account: dict = Depends
     return {"success": True, "inbox_message_count": count}
 
 
+# ---------------------------------------------------------------------------
+# Verzendinstellingen (Fase 3c, crm-roadmap.md): dagelijkse samenvatting-mail,
+# domain warm-up-verzendlimiet, afmeldlink - alle drie account-brede
+# aan/uit-schakelaars, hier gebundeld omdat ze in het dashboard ook op één
+# kaart staan (Integraties > Verzendinstellingen).
+# ---------------------------------------------------------------------------
+
+@app.get("/api/account/sending-settings")
+def api_get_sending_settings(account: dict = Depends(get_current_account)):
+    return database.get_sending_settings(account["id"])
+
+
+class SendingSettingsIn(BaseModel):
+    daily_digest_enabled: bool | None = None
+    daily_send_limit_enabled: bool | None = None
+    daily_send_limit: int | None = None
+    unsubscribe_link_enabled: bool | None = None
+
+
+@app.put("/api/account/sending-settings")
+def api_update_sending_settings(payload: SendingSettingsIn, account: dict = Depends(get_current_account)):
+    if payload.daily_send_limit is not None and payload.daily_send_limit < 1:
+        raise HTTPException(status_code=400, detail="De dagelijkse verzendlimiet moet minstens 1 zijn.")
+    settings = database.update_sending_settings(
+        account["id"],
+        daily_digest_enabled=payload.daily_digest_enabled,
+        daily_send_limit_enabled=payload.daily_send_limit_enabled,
+        daily_send_limit=payload.daily_send_limit,
+        unsubscribe_link_enabled=payload.unsubscribe_link_enabled,
+    )
+    return {"success": True, **settings}
+
+
+@app.get("/api/dashboard/attention")
+def api_dashboard_attention(account: dict = Depends(get_current_account)):
+    """"Aandacht nodig"-kaart op het Dashboard-tabblad: mislukte
+    verzendingen, openstaande conceptantwoorden, vervallen herinneringen en
+    een eventuele verzendwachtrij - zie database.attention_items()."""
+    return {"items": database.attention_items(account["id"])}
+
+
 # Flexible CSV column-name matching: accepts common Dutch and English
 # headers for the same field, so a customer doesn't have to rename their
 # spreadsheet columns before uploading. Matched case-insensitively.
@@ -746,6 +840,164 @@ async def _read_csv_rows(file: UploadFile) -> list:
     if not reader.fieldnames:
         raise HTTPException(status_code=400, detail="Leeg of ongeldig CSV-bestand.")
     return [_normalize_csv_row(row) for row in reader]
+
+
+async def _read_csv_raw(file: UploadFile) -> tuple:
+    """Zoals _read_csv_rows, maar geeft de RUWE headers en rijen terug
+    (ongewijzigde kolomkoppen, geen alias-normalisatie) - gebruikt door de
+    nieuwe preview/confirm-flow (_suggest_header_mapping hieronder), zodat
+    de klant de daadwerkelijke koppen uit zijn bestand ziet en kan corrigeren
+    voordat er iets geimporteerd wordt."""
+    raw = await file.read()
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            text = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        raise HTTPException(status_code=400, detail="Kon het CSV-bestand niet lezen (onbekende tekstcodering).")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="Leeg of ongeldig CSV-bestand.")
+    headers = [h for h in reader.fieldnames if h]
+    rows = [{(k or ""): (v or "").strip() for k, v in row.items()} for row in reader]
+    return headers, rows
+
+
+# Fase 3c: intelligente CSV-import (crm-roadmap.md) - "niet meer handmatig
+# kolomkoppen hoeven te hernoemen voordat een CSV geimporteerd kan worden".
+# Korte, mensvriendelijke omschrijving per canoniek veld - gebruikt in de
+# preview-respons (zodat de klant weet wat elk veld betekent) en als context
+# voor de AI-verfijning (ai_client.suggest_csv_mapping).
+_CSV_FIELD_LABELS = {
+    "first_name": "Voornaam",
+    "last_name": "Achternaam",
+    "email": "E-mailadres (verplicht)",
+    "company": "Bedrijfsnaam",
+    "job_title": "Functietitel",
+    "sector": "Sector / branche",
+    "revenue_range": "Omzetcategorie (bv. 1-10M)",
+    "linkedin_url": "LinkedIn-profiel-URL",
+    "tags": "Tags (komma-gescheiden)",
+    "domain": "Bedrijfsdomein / website",
+}
+
+
+def _suggest_header_mapping(headers: list) -> tuple:
+    """Deterministische eerste gok voor elke ruwe header: exacte match tegen
+    _CSV_COLUMN_ALIASES, anders de dichtstbijzijnde alias (difflib) als die
+    voldoende lijkt, anders None. Geeft (mapping, mapping_source) terug -
+    mapping_source is 'rules' hier; app.py's preview-endpoint probeert
+    daarna optioneel een AI-verfijning en zet dat om naar 'ai' als die iets
+    extra's oplevert."""
+    alias_to_field = {}
+    all_aliases = []
+    for field, aliases in _CSV_COLUMN_ALIASES.items():
+        for alias in aliases:
+            alias_to_field[alias] = field
+            all_aliases.append(alias)
+
+    mapping = {}
+    for header in headers:
+        key = (header or "").strip().lower()
+        if key in alias_to_field:
+            mapping[header] = alias_to_field[key]
+            continue
+        close = difflib.get_close_matches(key, all_aliases, n=1, cutoff=0.78)
+        mapping[header] = alias_to_field[close[0]] if close else None
+    return mapping, "rules"
+
+
+@app.post("/api/contacts/import-csv/preview")
+async def api_import_contacts_csv_preview(
+    file: UploadFile = File(...), account: dict = Depends(get_current_account),
+):
+    """Fase 3c: stap 1 van de intelligente CSV-import. Leest het bestand,
+    stelt een kolom-koppeling voor (regels + optioneel een AI-verfijning
+    voor kolommen die de regels niet herkenden) en bewaart de ruwe inhoud
+    onder een token, zodat POST .../confirm daarna de door de klant
+    gecontroleerde/aangepaste koppeling kan toepassen zonder het bestand
+    opnieuw te hoeven uploaden."""
+    headers, rows = await _read_csv_raw(file)
+    mapping, source = _suggest_header_mapping(headers)
+
+    unmapped = [h for h in headers if mapping.get(h) is None]
+    if unmapped and ai_client.is_configured():
+        try:
+            ai_mapping = ai_client.suggest_csv_mapping(headers, rows[:5], _CSV_FIELD_LABELS)
+            for h in unmapped:
+                if ai_mapping.get(h):
+                    mapping[h] = ai_mapping[h]
+                    source = "ai"
+        except Exception:  # noqa: BLE001 - alleen de alias-matching blijft over, geen harde fout
+            logger.exception("csv-import preview: AI-koppeling mislukt, val terug op alleen regels")
+
+    session = database.create_csv_import_session(
+        account["id"], file.filename or "import.csv", headers, rows, mapping, source,
+    )
+    return {
+        "success": True,
+        "token": session["token"],
+        "filename": session["filename"],
+        "headers": headers,
+        "sample_rows": rows[:5],
+        "row_count": len(rows),
+        "suggested_mapping": mapping,
+        "mapping_source": source,
+        "available_fields": _CSV_FIELD_LABELS,
+    }
+
+
+class CsvImportConfirmIn(BaseModel):
+    token: str
+    mapping: dict[str, str | None]
+
+
+@app.post("/api/contacts/import-csv/confirm")
+def api_import_contacts_csv_confirm(payload: CsvImportConfirmIn, account: dict = Depends(get_current_account)):
+    """Fase 3c: stap 2 - past de (door de klant gecontroleerde/aangepaste)
+    kolom-koppeling toe op de bij POST .../preview opgeslagen ruwe rijen en
+    importeert dan pas echt, met dezelfde add_contact-logica als de directe
+    /api/contacts/import-csv. De sessie wordt na gebruik verwijderd (eenmalig
+    bruikbaar, net als andere token-gebaseerde flows in dit project)."""
+    session = database.get_csv_import_session(payload.token, account["id"])
+    if not session:
+        raise HTTPException(status_code=404, detail="Import-sessie niet gevonden of al gebruikt. Upload het bestand opnieuw.")
+
+    mapping = payload.mapping
+    added, errors = [], []
+    for i, raw_row in enumerate(session["rows"], start=1):
+        row = {}
+        for header, field in mapping.items():
+            if not field:
+                continue
+            value = (raw_row.get(header) or "").strip()
+            if value:
+                row[field] = value
+        email = row.get("email", "")
+        if not email or "@" not in email:
+            errors.append({"row": i, "error": "Ontbrekend of ongeldig e-mailadres"})
+            continue
+        contact = database.add_contact(
+            account_id=account["id"],
+            first_name=row.get("first_name") or email.split("@")[0],
+            email=email,
+            last_name=row.get("last_name", ""),
+            company=row.get("company", ""),
+            linkedin_url=row.get("linkedin_url", ""),
+            job_title=row.get("job_title", ""),
+            sector=row.get("sector", ""),
+            revenue_range=row.get("revenue_range", ""),
+            source="csv",
+        )
+        for tag_name in [t.strip() for t in row.get("tags", "").split(",") if t.strip()]:
+            database.add_tag_to_contact(contact["id"], account["id"], tag_name)
+        _apply_hubspot_exclusion(account["id"], contact)
+        added.append(contact)
+
+    database.delete_csv_import_session(payload.token)
+    return {"success": True, "added": len(added), "errors": errors, "contacts": added}
 
 
 # ---------------------------------------------------------------------------
@@ -1786,12 +2038,21 @@ def api_process_sequences():
     beheer-endpoints, niet met een account-sessie. Bedoeld om periodiek
     aangeroepen te worden (bv. een uur-cron op Render of een externe
     scheduler) - zie DEPLOY.md."""
-    processed, skipped, errors = 0, 0, 0
+    processed, skipped, errors, throttled = 0, 0, 0, 0
     for enrollment in database.due_enrollments():
         account_id = enrollment["seq_account_id"]
         if enrollment["do_not_contact"] or enrollment["excluded_reason"]:
             database.skip_enrollment(enrollment["id"], "Contact is niet meer te benaderen of uitgesloten.")
             skipped += 1
+            continue
+        remaining_budget = database.remaining_daily_budget(account_id)
+        if remaining_budget is not None and remaining_budget <= 0:
+            # Fase 3c: domain warm-up-verzendlimiet bereikt voor dit account
+            # vandaag - deze enrollment blijft gewoon "due" (geen
+            # skip_enrollment, dat zou 'm permanent stoppen) en wordt bij de
+            # eerstvolgende cron-run vanzelf weer opgepakt, zodra het
+            # dagbudget (morgen, of na verhoging) weer ruimte heeft.
+            throttled += 1
             continue
         sequence = database.get_sequence(enrollment["sequence_id"], account_id)
         step = next((s for s in sequence["steps"] if s["step_order"] == enrollment["current_step"]), None) if sequence else None
@@ -1805,6 +2066,7 @@ def api_process_sequences():
         }
         subject = _render_template(step["subject_template"], contact)
         body = _render_template(step["body_template"], contact)
+        body = _with_unsubscribe_footer_plain(account_id, enrollment["contact_id"], body)
         try:
             _send_plain_for_account(account_id, enrollment["email"], subject, body)
             database.record_sequence_send(
@@ -1817,7 +2079,77 @@ def api_process_sequences():
                 rendered_subject=subject, rendered_body=body,
             )
             errors += 1
-    return {"success": True, "processed": processed, "skipped": skipped, "errors": errors}
+    return {"success": True, "processed": processed, "skipped": skipped, "errors": errors, "throttled": throttled}
+
+
+@app.post("/api/cron/process-campaign-queue", dependencies=[Depends(require_admin_secret)])
+def api_process_campaign_queue():
+    """Fase 3c: werkt de wachtrij weg die ontstaat wanneer een campagne-
+    launch werd afgekapt door de dagelijkse verzendlimiet (domain warm-up,
+    zie remaining_daily_budget() in database.py en api_launch_campaign
+    hierboven) - per account tot maximaal het resterende dagbudget, oudste
+    campagne/ontvanger eerst. Zelfde beveiliging/aanroeppatroon als
+    POST /api/cron/process-sequences: bedoeld om periodiek (bv. elk uur)
+    van buitenaf getriggerd te worden, zie DEPLOY.md."""
+    sent, failed, throttled_accounts = 0, 0, 0
+    for account_id in database.account_ids_with_pending_campaign_sends():
+        remaining_budget = database.remaining_daily_budget(account_id)
+        if remaining_budget is not None and remaining_budget <= 0:
+            throttled_accounts += 1
+            continue
+        take = remaining_budget if remaining_budget is not None else 1000
+        for r in database.pending_campaign_recipients_for_account(account_id, take):
+            if _attempt_send_campaign_recipient(account_id, r):
+                sent += 1
+            else:
+                failed += 1
+    return {"success": True, "sent": sent, "failed": failed, "throttled_accounts": throttled_accounts}
+
+
+@app.post("/api/cron/process-digests", dependencies=[Depends(require_admin_secret)])
+def api_process_digests():
+    """Fase 3c: dagelijkse samenvatting-mail (crm-roadmap.md) - stuurt
+    hooguit één keer per dag (UTC) per account een overzicht van de
+    afgelopen 24 uur (verstuurd/opens/clicks/replies/actieve campagnes en
+    sequenties) naar ALLE teamleden op dat account (Benjamins expliciete
+    keuze). Verstuurd via het eigen verzendpad van het account (eigen SMTP
+    indien ingesteld, anders de gedeelde Twikey-afzender) - net als
+    campagnes/opvolgmails: het is een rapportage OVER het eigen account, dus
+    een mail vanaf het eigen domein naar het eigen team voelt logischer dan
+    vanaf het gedeelde platform-adres. Idempotent: accounts_needing_digest()
+    slaat een account over zodra
+    last_digest_sent_date vandaag al is, dus vaker draaien dan nodig is
+    onschadelijk (zie DEPLOY.md voor hetzelfde cron-patroon als
+    process-sequences)."""
+    sent, errors = 0, 0
+    for account in database.accounts_needing_digest():
+        stats = database.digest_stats(account["id"])
+        users = database.list_users(account["id"])
+        subject = f"Dagelijkse samenvatting - {account['company_name']}"
+        body = (
+            f"Hoi,\n\nHier is de samenvatting van de afgelopen 24 uur voor {account['company_name']}:\n\n"
+            f"- Mails verstuurd: {stats['emails_sent']}\n"
+            f"- Geopend: {stats['opens']}\n"
+            f"- Geklikt: {stats['clicks']}\n"
+            f"- Nieuwe replies: {stats['new_replies']}\n"
+            f"- Actieve campagnes: {stats['active_campaigns']}\n"
+            f"- Actieve opvolgsequenties: {stats['active_sequences']}\n\n"
+            f"Log in op het dashboard voor de volledige details.\n\n"
+            f"Deze mail uitzetten kan bij Integraties > Verzendinstellingen.\n\n"
+            f"- Twikey Sales Platform"
+        )
+        account_ok = True
+        for user in users:
+            try:
+                _send_plain_for_account(account["id"], user["email"], subject, body)
+            except Exception:  # noqa: BLE001 - een mislukte digest-mail mag de andere teamleden/accounts niet blokkeren
+                logger.exception("digest-mail: versturen naar %s mislukt", user["email"])
+                account_ok = False
+                errors += 1
+        database.mark_digest_sent(account["id"])
+        if account_ok:
+            sent += 1
+    return {"success": True, "accounts_sent": sent, "errors": errors}
 
 
 # ---------------------------------------------------------------------------
@@ -1859,6 +2191,50 @@ class SupportTicketReplyIn(BaseModel):
 @app.post("/api/superadmin/support/tickets/{ticket_id}/reply")
 def api_superadmin_reply_support_ticket(ticket_id: int, payload: SupportTicketReplyIn, admin: dict = Depends(get_current_admin)):
     return {"success": True, "ticket": database.reply_support_ticket(ticket_id, payload.reply)}
+
+
+# ---------------------------------------------------------------------------
+# Ideeenbus (crm-roadmap.md): feedback/ideeen van klanten voor de roadmap -
+# apart van support_tickets hierboven (dat verwacht een individueel
+# antwoord/oplossing; dit is input voor toekomstige ontwikkeling, met een
+# status die het team kan bijwerken zodat klanten zien wat ermee gebeurt).
+# ---------------------------------------------------------------------------
+
+class FeedbackIn(BaseModel):
+    message: str
+    category: str = "idee"  # "idee" | "bug" | "vraag"
+
+
+@app.post("/api/feedback")
+def api_create_feedback(payload: FeedbackIn, account: dict = Depends(get_current_account)):
+    if not payload.message.strip():
+        raise HTTPException(status_code=400, detail="Vul een omschrijving in.")
+    item = database.create_feedback_item(account["id"], account.get("user_id"), payload.category, payload.message.strip())
+    return {"success": True, "item": item}
+
+
+@app.get("/api/feedback")
+def api_list_feedback(account: dict = Depends(get_current_account)):
+    """Een account ziet alleen zijn eigen ingediende ideeen/feedback, met
+    status - net als de supportvragen hierboven."""
+    return {"items": database.list_feedback_items(account["id"])}
+
+
+@app.get("/api/superadmin/feedback")
+def api_superadmin_list_feedback(admin: dict = Depends(get_current_admin)):
+    return {"items": database.list_all_feedback_items()}
+
+
+class FeedbackStatusIn(BaseModel):
+    status: str  # "nieuw" | "in overweging" | "op de roadmap" | "gebouwd" | "afgewezen"
+
+
+@app.put("/api/superadmin/feedback/{feedback_id}/status")
+def api_superadmin_set_feedback_status(feedback_id: int, payload: FeedbackStatusIn, admin: dict = Depends(get_current_admin)):
+    item = database.set_feedback_status(feedback_id, payload.status)
+    if not item:
+        raise HTTPException(status_code=404, detail="Feedback-item niet gevonden.")
+    return {"success": True, "item": item}
 
 
 # ---------------------------------------------------------------------------
@@ -1933,6 +2309,44 @@ def _render_template(template: str, contact: dict) -> str:
     )
 
 
+def _attempt_send_campaign_recipient(aid: int, r: dict) -> bool:
+    """Rendert en verstuurt één campagne-ontvanger, en logt het resultaat
+    (record_send_result) - gedeeld tussen api_launch_campaign (directe
+    launch) en api_process_campaign_queue (het wegwerken van een wachtrij
+    die is ontstaan doordat de dagelijkse verzendlimiet een launch afkapte,
+    zie remaining_daily_budget()). Geeft True terug bij een geslaagde
+    verzending."""
+    subject = _render_template(r["subject_template"], r)
+    body_html = _render_template(r["body_template"], r)
+
+    landing_url = (
+        f"{FRONTEND_PUBLIC_URL}/lead-magnet.html"
+        f"?token={r['tracking_token']}&offer={urllib.parse.quote(r['offer_name'])}"
+    )
+    click_url = f"{BACKEND_PUBLIC_URL}/track/click/{r['tracking_token']}?url={urllib.parse.quote(landing_url, safe='')}"
+    pixel_url = f"{BACKEND_PUBLIC_URL}/track/open/{r['tracking_token']}.png"
+
+    full_html = (
+        f"{body_html}<br><br>"
+        f'<a href="{click_url}">Bekijk je gratis {html.escape(r["offer_name"])}</a>'
+        f'<img src="{pixel_url}" width="1" height="1" style="display:none" alt="">'
+    )
+    full_html = _with_unsubscribe_footer_html(aid, r["contact_id"], full_html)
+
+    try:
+        _send_html_for_account(aid, r["email"], subject, full_html)
+        database.record_send_result(
+            r["recipient_id"], sent=True, rendered_subject=subject, rendered_body=full_html,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        database.record_send_result(
+            r["recipient_id"], sent=False, error=str(exc),
+            rendered_subject=subject, rendered_body=full_html,
+        )
+        return False
+
+
 @app.post("/api/campaigns/{campaign_id}/launch")
 def api_launch_campaign(campaign_id: int, account: dict = Depends(get_current_account)):
     aid = account["id"]
@@ -1944,39 +2358,26 @@ def api_launch_campaign(campaign_id: int, account: dict = Depends(get_current_ac
     if not recipients:
         raise HTTPException(status_code=400, detail="Geen ontvangers voor deze campagne (geen contacten aanwezig toen de campagne werd aangemaakt)")
 
+    # Fase 3c: domain warm-up. Bij een actieve dagelijkse verzendlimiet wordt
+    # een launch afgekapt tot wat er vandaag nog mag - de resterende
+    # ontvangers blijven onaangeroerd (sent_at/send_error allebei leeg) en
+    # vormen zo automatisch een wachtrij die POST /api/cron/process-campaign-
+    # queue de komende dagen wegwerkt zodra er weer ruimte is.
+    queued = 0
+    remaining_budget = database.remaining_daily_budget(aid)
+    if remaining_budget is not None and len(recipients) > remaining_budget:
+        queued = len(recipients) - remaining_budget
+        recipients = recipients[:remaining_budget]
+
     sent, failed = 0, 0
     for r in recipients:
-        subject = _render_template(r["subject_template"], r)
-        body_html = _render_template(r["body_template"], r)
-
-        landing_url = (
-            f"{FRONTEND_PUBLIC_URL}/lead-magnet.html"
-            f"?token={r['tracking_token']}&offer={urllib.parse.quote(r['offer_name'])}"
-        )
-        click_url = f"{BACKEND_PUBLIC_URL}/track/click/{r['tracking_token']}?url={urllib.parse.quote(landing_url, safe='')}"
-        pixel_url = f"{BACKEND_PUBLIC_URL}/track/open/{r['tracking_token']}.png"
-
-        full_html = (
-            f"{body_html}<br><br>"
-            f'<a href="{click_url}">Bekijk je gratis {html.escape(r["offer_name"])}</a>'
-            f'<img src="{pixel_url}" width="1" height="1" style="display:none" alt="">'
-        )
-
-        try:
-            _send_html_for_account(aid, r["email"], subject, full_html)
-            database.record_send_result(
-                r["recipient_id"], sent=True, rendered_subject=subject, rendered_body=full_html,
-            )
+        if _attempt_send_campaign_recipient(aid, r):
             sent += 1
-        except Exception as exc:  # noqa: BLE001
-            database.record_send_result(
-                r["recipient_id"], sent=False, error=str(exc),
-                rendered_subject=subject, rendered_body=full_html,
-            )
+        else:
             failed += 1
 
     database.mark_campaign_launched(campaign_id)
-    return {"success": True, "sent": sent, "failed": failed, "total": len(recipients)}
+    return {"success": True, "sent": sent, "failed": failed, "queued": queued, "total": sent + failed + queued}
 
 
 @app.get("/api/campaigns/{campaign_id}/results")
@@ -1986,6 +2387,15 @@ def api_campaign_results(campaign_id: int, account: dict = Depends(get_current_a
     if not campaign:
         raise HTTPException(status_code=404, detail="Campagne niet gevonden")
     return {"campaign": campaign["campaign"], "results": database.campaign_results(campaign_id, aid)}
+
+
+@app.get("/api/campaigns/overview")
+def api_campaigns_overview(account: dict = Depends(get_current_account)):
+    """Fase 3c: één rij per campagne (verstuurd/opens/clicks/replies/
+    conversie) - anders dan /api/campaigns/{id}/results (per variant BINNEN
+    één campagne), dit is het overzicht over ALLE campagnes van dit account
+    heen, zie database.campaigns_overview()."""
+    return {"campaigns": database.campaigns_overview(account["id"])}
 
 
 @app.get("/api/analytics/icp-scores")
@@ -2013,6 +2423,28 @@ def track_open(token: str):
 def track_click(token: str, url: str):
     database.record_click(token)
     return RedirectResponse(url=url, status_code=302)
+
+
+@app.get("/track/unsubscribe/{token}")
+def track_unsubscribe(token: str):
+    """Publieke afmeldlink (zie _unsubscribe_token/_with_unsubscribe_footer_*
+    hierboven) - zet do_not_contact op het contact dat bij dit
+    HMAC-ondertekende token hoort, ongeacht welk account. Toont een simpele
+    bevestigingspagina i.p.v. JSON, aangezien dit door een mens vanuit een
+    mailclient wordt geopend."""
+    contact_id = _verify_unsubscribe_token(token)
+    contact = database.set_do_not_contact_by_id(contact_id) if contact_id else None
+    if not contact:
+        message = "Deze afmeldlink is niet (meer) geldig."
+    else:
+        message = "Je bent afgemeld. Je ontvangt geen mails meer van ons."
+    return Response(
+        content=(
+            "<html><body style='font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center;color:#18407D'>"
+            f"<h2>{html.escape(message)}</h2></body></html>"
+        ),
+        media_type="text/html",
+    )
 
 
 class FormFillIn(BaseModel):

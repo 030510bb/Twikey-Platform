@@ -33,6 +33,7 @@ domain + service account (the whole README.md setup, repeated per
 customer) - a real next step, not built here.
 """
 
+import json
 import os
 import secrets
 from collections import defaultdict
@@ -190,6 +191,44 @@ CREATE TABLE IF NOT EXISTS account_profile_questions (
     answer TEXT,
     created_at TEXT NOT NULL,
     answered_at TEXT
+);
+
+-- Fase 3c: intelligente CSV-import (crm-roadmap.md). Een tijdelijke sessie
+-- tussen "preview" (headers + voorgestelde kolom-koppeling + een paar
+-- voorbeeldrijen tonen) en "confirm" (daadwerkelijk importeren met de door
+-- de klant goedgekeurde/aangepaste koppeling) - zodat een klant niet meer
+-- handmatig kolomkoppen hoeft te hernoemen voordat een CSV geimporteerd kan
+-- worden. `raw_headers`/`raw_rows`/`suggested_mapping` staan als JSON-tekst
+-- (net als usps hierboven eenvoudige tekstopslag, hier JSON omdat het om
+-- geneste structuren gaat). Geen cleanup-cron nodig: een verlopen/nooit
+-- bevestigde sessie is gewoon een paar KB tekst die nooit meer opgehaald
+-- wordt - zie POST /api/contacts/import-csv/preview en /confirm in app.py.
+CREATE TABLE IF NOT EXISTS csv_import_sessions (
+    token TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    filename TEXT NOT NULL DEFAULT '',
+    raw_headers TEXT NOT NULL,
+    raw_rows TEXT NOT NULL,
+    suggested_mapping TEXT NOT NULL,
+    mapping_source TEXT NOT NULL DEFAULT 'rules',
+    row_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+-- Ideeenbus: feedback/ideeen van klanten, zodat die worden meegenomen in
+-- toekomstige ontwikkeling i.p.v. alleen mondeling/losse berichten. Bewust
+-- een aparte tabel van support_tickets hieronder - een supportvraag
+-- verwacht een antwoord/oplossing, een ideeenbus-item is input voor de
+-- roadmap en hoeft niet 1-op-1 beantwoord te worden (wel: status
+-- bijhouden zodat Twikey kan laten zien wat ermee gebeurt).
+CREATE TABLE IF NOT EXISTS feedback_items (
+    id SERIAL PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    user_id INTEGER REFERENCES users(id),
+    category TEXT NOT NULL DEFAULT 'idee',
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'nieuw',
+    created_at TEXT NOT NULL
 );
 
 -- Audit trail: one row per CRM-lifecycle event (created/imported, tag
@@ -501,6 +540,28 @@ ALTER TABLE buyer_personas ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DE
 -- icp_scores() hieronder): welke combinatie van sector x omzet x persona
 -- de beste open/click/reply-resultaten oplevert.
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS revenue_range TEXT DEFAULT '';
+
+-- Fase 3c: dagelijkse samenvatting-mail. Standaard AAN (opt-out) - stuurt
+-- elke dag hooguit één mail per account; last_digest_sent_date voorkomt
+-- dubbel versturen als de cron vaker dan eens per dag draait (zie
+-- POST /api/cron/process-digests).
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS daily_digest_enabled INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_digest_sent_date TEXT;
+
+-- Fase 3c: domain warm-up - instelbare dagelijkse verzendlimiet per account.
+-- Standaard UIT (expliciete keuze van Benjamin: alleen accounts die zelf met
+-- een nieuw domein starten zetten 'm aan, met hun eigen gekozen aantal) -
+-- zie remaining_daily_budget() hieronder en de afdwinging in app.py
+-- (campagne-launch + de sequence-cron).
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS daily_send_limit_enabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS daily_send_limit INTEGER NOT NULL DEFAULT 50;
+
+-- Fase 3c: afmeldlink in uitgaande mails (huisregel) - standaard AAN, maar
+-- per account uit te zetten (zie sending-settings) voor wie bewust zonder
+-- wil mailen. Een geldig afmeldverzoek zet altijd het bestaande
+-- do_not_contact op de contactpersoon (geen apart "unsubscribed"-veld -
+-- hergebruikt dezelfde, overal al gerespecteerde stop-vlag).
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS unsubscribe_link_enabled INTEGER NOT NULL DEFAULT 1;
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -3077,3 +3138,461 @@ def reset_user_password_for_account(account_id: int, user_id: int, new_password:
         if not row:
             return False
     return set_password(row["email"], new_password)
+
+
+# ---------------------------------------------------------------------------
+# Fase 3c (crm-roadmap.md): intelligente CSV-import.
+#
+# Twee stappen i.p.v. één: POST /api/contacts/import-csv/preview leest het
+# bestand, stelt een kolom-koppeling voor (deterministische aliassen +
+# optioneel een AI-verfijning, zie app.py/_suggest_header_mapping) en bewaart
+# de ruwe headers/rijen hier onder een token; POST .../confirm haalt die
+# sessie op, past de door de klant gecontroleerde/aangepaste koppeling toe en
+# importeert pas dan echt. Zo hoeft een klant nooit meer handmatig
+# kolomkoppen in het bronbestand te hernoemen voordat importeren lukt - de
+# oude, direct-importerende /api/contacts/import-csv blijft daarnaast gewoon
+# bestaan voor bestaande integraties/scripts.
+# ---------------------------------------------------------------------------
+
+def create_csv_import_session(account_id: int, filename: str, raw_headers: list,
+                               raw_rows: list, suggested_mapping: dict, mapping_source: str) -> dict:
+    token = new_token()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO csv_import_sessions
+                (token, account_id, filename, raw_headers, raw_rows, suggested_mapping, mapping_source, row_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (token, account_id, filename, json.dumps(raw_headers), json.dumps(raw_rows),
+             json.dumps(suggested_mapping), mapping_source, len(raw_rows), now_iso()),
+        )
+    return {
+        "token": token, "filename": filename, "headers": raw_headers, "rows": raw_rows,
+        "suggested_mapping": suggested_mapping, "mapping_source": mapping_source, "row_count": len(raw_rows),
+    }
+
+
+def get_csv_import_session(token: str, account_id: int) -> dict | None:
+    """Scoped to account_id so one account can never confirm/read another
+    account's still-pending import session, even if it somehow guessed the
+    token."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM csv_import_sessions WHERE token = ? AND account_id = ?", (token, account_id)
+        ).fetchone()
+        if not row:
+            return None
+        row = dict(row)
+        row["headers"] = json.loads(row.pop("raw_headers"))
+        row["rows"] = json.loads(row.pop("raw_rows"))
+        row["suggested_mapping"] = json.loads(row["suggested_mapping"])
+        return row
+
+
+def delete_csv_import_session(token: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM csv_import_sessions WHERE token = ?", (token,))
+
+
+# ---------------------------------------------------------------------------
+# Ideeenbus (crm-roadmap.md): feedback/ideeen van klanten, apart van
+# support_tickets - dit is input voor de roadmap, geen supportvraag die een
+# individueel antwoord verwacht (al kan het team er via `status` wel op
+# reageren: nieuw -> in overweging -> op de roadmap -> gebouwd/afgewezen).
+# ---------------------------------------------------------------------------
+
+def create_feedback_item(account_id: int, user_id, category: str, message: str) -> dict:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO feedback_items (account_id, user_id, category, message, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
+            (account_id, user_id, category, message, now_iso()),
+        )
+        item_id = cur.fetchone()["id"]
+        row = conn.execute("SELECT * FROM feedback_items WHERE id = ?", (item_id,)).fetchone()
+        return dict(row)
+
+
+def list_feedback_items(account_id: int) -> list:
+    """Een account ziet alleen zijn eigen ingediende ideeen/feedback (en de
+    status ervan) - net als support_tickets, geen inzage in wat andere
+    klanten hebben ingediend."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM feedback_items WHERE account_id = ? ORDER BY created_at DESC", (account_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_all_feedback_items() -> list:
+    """Voor het superadmin/support-overzicht - over alle accounts heen, met
+    bedrijfsnaam erbij zodat Twikey ziet van wie welk idee komt."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT f.*, a.company_name
+            FROM feedback_items f
+            JOIN accounts a ON a.id = f.account_id
+            ORDER BY f.created_at DESC
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def set_feedback_status(feedback_id: int, status: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM feedback_items WHERE id = ?", (feedback_id,)).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE feedback_items SET status = ? WHERE id = ?", (status, feedback_id))
+        updated = conn.execute("SELECT * FROM feedback_items WHERE id = ?", (feedback_id,)).fetchone()
+        return dict(updated)
+
+
+# ---------------------------------------------------------------------------
+# Fase 3c (crm-roadmap.md): dagelijkse samenvatting-mail + domain warm-up
+# (instelbare dagelijkse verzendlimiet).
+#
+# Beide instellingen leven op de accounts-tabel zelf (net als
+# auto_reply_enabled) - het zijn platform-brede aan/uit-schakelaars per
+# account, geen aparte tabel nodig. get_sending_settings()/
+# update_sending_settings() ontsluiten ze samen omdat de instellingenkaart
+# in het dashboard ze ook samen toont/bewerkt.
+# ---------------------------------------------------------------------------
+
+def get_sending_settings(account_id: int) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT daily_digest_enabled, daily_send_limit_enabled, daily_send_limit,
+                   unsubscribe_link_enabled, last_digest_sent_date
+            FROM accounts WHERE id = ?
+            """,
+            (account_id,),
+        ).fetchone()
+        return {
+            "daily_digest_enabled": bool(row["daily_digest_enabled"]),
+            "daily_send_limit_enabled": bool(row["daily_send_limit_enabled"]),
+            "daily_send_limit": row["daily_send_limit"],
+            "unsubscribe_link_enabled": bool(row["unsubscribe_link_enabled"]),
+            "last_digest_sent_date": row["last_digest_sent_date"],
+        }
+
+
+def update_sending_settings(account_id: int, daily_digest_enabled: bool = None,
+                             daily_send_limit_enabled: bool = None, daily_send_limit: int = None,
+                             unsubscribe_link_enabled: bool = None) -> dict:
+    fields, params = [], []
+    if daily_digest_enabled is not None:
+        fields.append("daily_digest_enabled = ?")
+        params.append(1 if daily_digest_enabled else 0)
+    if daily_send_limit_enabled is not None:
+        fields.append("daily_send_limit_enabled = ?")
+        params.append(1 if daily_send_limit_enabled else 0)
+    if daily_send_limit is not None:
+        fields.append("daily_send_limit = ?")
+        params.append(daily_send_limit)
+    if unsubscribe_link_enabled is not None:
+        fields.append("unsubscribe_link_enabled = ?")
+        params.append(1 if unsubscribe_link_enabled else 0)
+    if fields:
+        params.append(account_id)
+        with get_conn() as conn:
+            conn.execute(f"UPDATE accounts SET {', '.join(fields)} WHERE id = ?", params)
+    return get_sending_settings(account_id)
+
+
+def set_do_not_contact_by_id(contact_id: int) -> dict | None:
+    """Zet do_not_contact voor één contact op basis van diens id alleen -
+    GEEN account_id-scoping, want de aanroeper hier is altijd de publieke,
+    ongeauthenticeerde afmeldlink (zie /track/unsubscribe/{token} in app.py),
+    waar het HMAC-ondertekende token zelf al de autorisatie is (hetzelfde
+    patroon als de bestaande open/click-tracking op tracking_token). Logt
+    een contact_activity-event zodat het afmelden ook in de tijdlijn
+    zichtbaar is. Geeft None terug als het contact niet (meer) bestaat."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT id, account_id FROM contacts WHERE id = ?", (contact_id,)).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE contacts SET do_not_contact = 1 WHERE id = ?", (contact_id,))
+        conn.execute(
+            "INSERT INTO contact_activity (account_id, contact_id, event_type, description, created_at) VALUES (?, ?, ?, ?, ?)",
+            (row["account_id"], contact_id, "unsubscribed", "Afgemeld via afmeldlink in een mail.", now_iso()),
+        )
+        updated = conn.execute("SELECT * FROM contacts WHERE id = ?", (contact_id,)).fetchone()
+        return dict(updated)
+
+
+# ---------------------------------------------------------------------------
+# "Aandacht nodig"-dashboard (crm-roadmap.md): een klein, samengesteld
+# overzicht van dingen die actie van de klant vragen - bewust hergebruikt
+# bestaande data (mislukte verzendingen, openstaande conceptantwoorden,
+# vervallen herinneringen, een eventuele verzendwachtrij) i.p.v. een nieuwe
+# tabel/tracking-mechanisme, zodat dit meteen werkt voor elk bestaand
+# account.
+# ---------------------------------------------------------------------------
+
+def attention_items(account_id: int) -> list:
+    items = []
+    with get_conn() as conn:
+        failed_campaigns = conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM campaign_recipients cr
+            JOIN campaigns camp ON camp.id = cr.campaign_id
+            WHERE camp.account_id = ? AND cr.send_error IS NOT NULL
+              AND cr.sent_at IS NULL
+            """,
+            (account_id,),
+        ).fetchone()["n"]
+        failed_sequences = conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM sequence_sends ss
+            JOIN sequence_enrollments se ON se.id = ss.enrollment_id
+            WHERE se.account_id = ? AND ss.send_error IS NOT NULL AND ss.sent_at IS NULL
+            """,
+            (account_id,),
+        ).fetchone()["n"]
+        failed_total = (failed_campaigns or 0) + (failed_sequences or 0)
+        if failed_total:
+            items.append({
+                "type": "failed_sends", "severity": "high",
+                "message": f"{failed_total} mail(s) konden niet verstuurd worden - controleer je mailinstellingen.",
+                "count": failed_total, "tab": "email",
+            })
+
+        pending_drafts = conn.execute(
+            "SELECT COUNT(*) AS n FROM reply_drafts WHERE account_id = ? AND status = 'pending'", (account_id,)
+        ).fetchone()["n"]
+        if pending_drafts:
+            items.append({
+                "type": "pending_reply_drafts", "severity": "medium",
+                "message": f"{pending_drafts} conceptantwoord(en) wachten op jouw goedkeuring.",
+                "count": pending_drafts, "tab": "replies",
+            })
+
+        due_reminders_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM reminders WHERE account_id = ? AND status = 'open' AND remind_at <= ?",
+            (account_id, now_iso()),
+        ).fetchone()["n"]
+        if due_reminders_count:
+            items.append({
+                "type": "due_reminders", "severity": "medium",
+                "message": f"{due_reminders_count} herinnering(en) staan open om weer contact op te nemen.",
+                "count": due_reminders_count, "tab": "contacts",
+            })
+
+    queued = len(pending_campaign_recipients_for_account(account_id, limit=100000))
+    if queued:
+        items.append({
+            "type": "campaign_queue", "severity": "low",
+            "message": f"{queued} campagne-mail(s) staan in de wachtrij door de dagelijkse verzendlimiet.",
+            "count": queued, "tab": "abtest",
+        })
+
+    order = {"high": 0, "medium": 1, "low": 2}
+    items.sort(key=lambda i: order.get(i["severity"], 9))
+    return items
+
+
+def _utc_day_start(now: datetime = None) -> str:
+    now = now or datetime.now(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+
+def _utc_today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def emails_sent_today(account_id: int, day_start_iso: str = None) -> int:
+    """Telt alle daadwerkelijk verzonden mails (campagnes + opvolgsequenties)
+    voor dit account sinds day_start_iso (standaard: middernacht UTC vandaag)
+    - de teller achter de dagelijkse verzendlimiet (domain warm-up, zie
+    remaining_daily_budget()). Mislukte verzendpogingen tellen niet mee -
+    alleen wat daadwerkelijk de deur uit is gegaan raakt het domein."""
+    day_start_iso = day_start_iso or _utc_day_start()
+    with get_conn() as conn:
+        campaign_count = conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM campaign_recipients cr
+            JOIN campaigns camp ON camp.id = cr.campaign_id
+            WHERE camp.account_id = ? AND cr.sent_at >= ?
+            """,
+            (account_id, day_start_iso),
+        ).fetchone()["n"]
+        sequence_count = conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM sequence_sends ss
+            JOIN sequence_enrollments se ON se.id = ss.enrollment_id
+            WHERE se.account_id = ? AND ss.sent_at >= ?
+            """,
+            (account_id, day_start_iso),
+        ).fetchone()["n"]
+        return (campaign_count or 0) + (sequence_count or 0)
+
+
+def remaining_daily_budget(account_id: int) -> int | None:
+    """None = geen limiet (uitgeschakeld - standaard). Anders het aantal
+    mails dat dit account vandaag (nog) mag versturen, nooit negatief."""
+    settings = get_sending_settings(account_id)
+    if not settings["daily_send_limit_enabled"]:
+        return None
+    return max(0, settings["daily_send_limit"] - emails_sent_today(account_id))
+
+
+def pending_campaign_recipients_for_account(account_id: int, limit: int) -> list:
+    """Ontvangers van (al gelanceerde) campagnes van dit account die nog
+    NOOIT geprobeerd zijn te versturen (sent_at en send_error allebei leeg) -
+    dat is precies de wachtrij die ontstaat als een campagne-launch werd
+    afgekapt door de dagelijkse verzendlimiet (zie api_launch_campaign in
+    app.py). Oudste campagne/ontvanger eerst, zodat een wachtrij op volgorde
+    wordt weggewerkt zodra er weer ruimte in het dagbudget is."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT cr.id AS recipient_id, cr.tracking_token,
+                   cv.group_label, cv.offer_name, cv.subject_template, cv.body_template,
+                   c.id AS contact_id, c.first_name, c.last_name, c.email, c.company
+            FROM campaign_recipients cr
+            JOIN campaign_variants cv ON cv.id = cr.variant_id
+            JOIN contacts c ON c.id = cr.contact_id
+            JOIN campaigns camp ON camp.id = cr.campaign_id
+            WHERE camp.account_id = ? AND camp.status = 'launched'
+              AND cr.sent_at IS NULL AND cr.send_error IS NULL
+            ORDER BY camp.launched_at ASC, cr.id ASC
+            LIMIT ?
+            """,
+            (account_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def account_ids_with_pending_campaign_sends() -> list:
+    """Across all accounts - used by the campaign-queue cron so it only has
+    to compute a remaining-budget check for accounts that actually have
+    something waiting, instead of looping over every account every run."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT camp.account_id AS account_id
+            FROM campaign_recipients cr
+            JOIN campaigns camp ON camp.id = cr.campaign_id
+            WHERE camp.status = 'launched' AND cr.sent_at IS NULL AND cr.send_error IS NULL
+            """
+        ).fetchall()
+        return [r["account_id"] for r in rows]
+
+
+def accounts_needing_digest() -> list:
+    """Alle accounts met daily_digest_enabled=1 die vandaag (UTC) nog geen
+    samenvatting-mail hebben gehad - idempotent ongeacht hoe vaak de cron
+    draait (zie POST /api/cron/process-digests)."""
+    today = _utc_today()
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, company_name FROM accounts
+            WHERE daily_digest_enabled = 1
+              AND (last_digest_sent_date IS NULL OR last_digest_sent_date <> ?)
+            """,
+            (today,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_digest_sent(account_id: int):
+    with get_conn() as conn:
+        conn.execute("UPDATE accounts SET last_digest_sent_date = ? WHERE id = ?", (_utc_today(), account_id))
+
+
+def digest_stats(account_id: int, since_iso: str = None) -> dict:
+    """Activiteiten/resultaten van de afgelopen 24 uur (of sinds since_iso)
+    voor de dagelijkse samenvatting-mail: verzonden mails (campagnes +
+    sequenties), opens, clicks, nieuwe replies en het aantal actieve
+    campagnes/sequenties - dezelfde brondata als de Analytics-tab, alleen
+    over een vast tijdvenster i.p.v. all-time."""
+    since_iso = since_iso or (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    with get_conn() as conn:
+        camp = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN cr.sent_at >= ? THEN 1 ELSE 0 END) AS sent,
+                SUM(CASE WHEN cr.opened_at >= ? THEN 1 ELSE 0 END) AS opens,
+                SUM(CASE WHEN cr.clicked_at >= ? THEN 1 ELSE 0 END) AS clicks
+            FROM campaign_recipients cr
+            JOIN campaigns camp ON camp.id = cr.campaign_id
+            WHERE camp.account_id = ?
+            """,
+            (since_iso, since_iso, since_iso, account_id),
+        ).fetchone()
+        seq_sent = conn.execute(
+            """
+            SELECT SUM(CASE WHEN ss.sent_at >= ? THEN 1 ELSE 0 END) AS sent
+            FROM sequence_sends ss
+            JOIN sequence_enrollments se ON se.id = ss.enrollment_id
+            WHERE se.account_id = ?
+            """,
+            (since_iso, account_id),
+        ).fetchone()
+        new_replies = conn.execute(
+            "SELECT COUNT(*) AS n FROM incoming_replies WHERE account_id = ? AND received_at >= ?",
+            (account_id, since_iso),
+        ).fetchone()
+        active_campaigns = conn.execute(
+            "SELECT COUNT(*) AS n FROM campaigns WHERE account_id = ? AND status = 'launched'", (account_id,)
+        ).fetchone()
+        active_sequences = conn.execute(
+            "SELECT COUNT(*) AS n FROM sequences WHERE account_id = ? AND status = 'active'", (account_id,)
+        ).fetchone()
+        return {
+            "emails_sent": (camp["sent"] or 0) + (seq_sent["sent"] or 0),
+            "opens": camp["opens"] or 0,
+            "clicks": camp["clicks"] or 0,
+            "new_replies": new_replies["n"],
+            "active_campaigns": active_campaigns["n"],
+            "active_sequences": active_sequences["n"],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Campagne-overzicht (crm-roadmap.md): één rij per campagne met verzonden/
+# opens/clicks/replies/conversie - anders dan campaign_results() (dat gaat
+# per VARIANT binnen één campagne), dit is het overzicht over ALLE campagnes
+# van een account heen voor de nieuwe "Campagne-overzicht"-kaart.
+# ---------------------------------------------------------------------------
+
+def campaigns_overview(account_id: int) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT camp.id, camp.name, camp.status, camp.created_at, camp.launched_at,
+                   COUNT(cr.id) AS total_recipients,
+                   SUM(CASE WHEN cr.sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent,
+                   SUM(CASE WHEN cr.send_error IS NOT NULL THEN 1 ELSE 0 END) AS failed,
+                   SUM(CASE WHEN cr.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opens,
+                   SUM(CASE WHEN cr.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicks
+            FROM campaigns camp
+            LEFT JOIN campaign_recipients cr ON cr.campaign_id = camp.id
+            WHERE camp.account_id = ?
+            GROUP BY camp.id
+            ORDER BY camp.created_at DESC
+            """,
+            (account_id,),
+        ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            reply_row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT ir.contact_id) AS n
+                FROM incoming_replies ir
+                JOIN campaign_recipients cr ON cr.contact_id = ir.contact_id
+                WHERE cr.campaign_id = ? AND ir.account_id = ?
+                """,
+                (d["id"], account_id),
+            ).fetchone()
+            sent = d["sent"] or 0
+            d["replies"] = reply_row["n"] or 0
+            d["pending"] = max(0, (d["total_recipients"] or 0) - sent - (d["failed"] or 0))
+            d["conversion_rate"] = round(d["replies"] / sent, 3) if sent else 0.0
+            result.append(d)
+        return result

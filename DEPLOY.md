@@ -214,6 +214,47 @@ de laagdrempeligste optie omdat je dan alles op één plek beheert.
 Dit is dezelfde `ADMIN_SECRET` als voor `/api/admin/accounts` — geen aparte
 credential nodig.
 
+## Cron: verzendwachtrij (domain warm-up) afwerken
+
+Fase 3c voegde een optionele dagelijkse verzendlimiet per account toe
+("domain warm-up", zie `crm-roadmap.md` en het tabblad Instellingen in het
+dashboard — standaard uit). Ontvangers die bij het lanceren van een
+campagne niet meer binnen de limiet van die dag pasten, blijven gewoon "nog
+niet verstuurd" staan; dit endpoint werkt die wachtrij periodiek verder af
+zodra er weer ruimte is:
+
+```bash
+curl -X POST https://api.justmeet.tech/api/cron/process-campaign-queue \
+  -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
+```
+
+Zelfde opzet als de sequenties-cron hierboven: één aanroep verwerkt alle
+accounts, en is onschadelijk als je 'm vaker aanroept dan nodig (een account
+zonder wachtrij of zonder resterend dagbudget wordt gewoon overgeslagen).
+Richt 'm op dezelfde manier in als hierboven beschreven — een tweede Render
+Cron Job met dit endpoint als **Command**, bijvoorbeeld elk uur
+(`0 * * * *`), met dezelfde `ADMIN_SECRET` bij **Environment**. Dit
+endpoint is alleen relevant voor accounts die de verzendlimiet daadwerkelijk
+aanzetten — voor de rest is het een no-op.
+
+## Cron: dagelijkse samenvatting-mail (digest)
+
+Ook uit Fase 3c: elk teamlid krijgt (standaard aan, uitzetbaar in
+Instellingen) 's ochtends een mail met de activiteiten/resultaten van de
+afgelopen dag. Dat vereist één dagelijkse trigger:
+
+```bash
+curl -X POST https://api.justmeet.tech/api/cron/process-digests \
+  -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
+```
+
+Idempotent per (UTC-)dag — een account dat vandaag al een digest kreeg
+wordt bij een herhaalde aanroep overgeslagen, dus vaker draaien dan nodig
+is onschadelijk. Richt in als een derde Render Cron Job, **Schedule**
+bijvoorbeeld `0 6 * * *` (06:00 UTC, dus 08:00 zomertijd/07:00 wintertijd
+in Nederland) — of een ander tijdstip naar smaak, zolang het dagelijks
+draait — met dezelfde `ADMIN_SECRET` bij **Environment**.
+
 ## Stap 5 — Eigen domein koppelen (justmeet.tech)
 
 Dit platform draait op zichzelf prima op de Render-URLs

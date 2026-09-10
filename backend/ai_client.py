@@ -185,3 +185,63 @@ def generate_variant_suggestions(value_proposition: str, usps: list, persona: di
     if not cleaned:
         raise ValueError("Claude gaf geen variant terug met de verwachte velden")
     return cleaned
+
+
+# ---------------------------------------------------------------------------
+# Fase 3c (crm-roadmap.md): intelligente CSV-import.
+#
+# Zelfde verdeling als hierboven: dit raist op elke fout, app.py vangt af en
+# valt terug op alleen de deterministische alias-matching
+# (_CSV_COLUMN_ALIASES) - de AI-laag verfijnt alleen de kolommen die de
+# alias-matching niet herkende, ze vervangt die matching niet.
+# ---------------------------------------------------------------------------
+
+def suggest_csv_mapping(headers: list, sample_rows: list, canonical_fields: dict) -> dict:
+    """Vraagt Claude om elke ruwe CSV-header te koppelen aan het best
+    passende canonieke veld (of null als niets past), met een paar
+    voorbeeldrijen als context (bv. een kolom "Bedrag" met waarden als
+    "1-10M" wordt zo eerder herkend als omzet dan als iets anders). Geeft
+    een dict {header: field_of_null} terug; raist als Claude niets bruikbaars
+    teruggeeft."""
+    import json
+
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    fields_desc = "\n".join(f'- "{field}": {desc}' for field, desc in canonical_fields.items())
+    sample_lines = []
+    for row in sample_rows[:5]:
+        sample_lines.append(", ".join(f"{h}={row.get(h, '')!r}" for h in headers))
+    system = (
+        "Je koppelt kolomkoppen uit een geuploade CSV (contactenlijst voor een B2B "
+        "sales-tool) aan een vaste lijst canonieke velden. Beschikbare velden:\n"
+        f"{fields_desc}\n\n"
+        "Geef het antwoord ALLEEN als geldige JSON: een object waarbij elke sleutel "
+        "letterlijk één van de gegeven ruwe kolomkoppen is, en de waarde het best "
+        "passende canonieke veld (letterlijk één van de veldnamen hierboven) of null "
+        "als geen enkel veld past. Elke ruwe kolomkop moet als sleutel voorkomen. "
+        "Geen uitleg, geen markdown-codeblok, alleen het JSON-object."
+    )
+    user = f"Ruwe kolomkoppen: {json.dumps(headers, ensure_ascii=False)}\n\nVoorbeeldrijen:\n" + "\n".join(sample_lines)
+    message = client.messages.create(
+        model=_MODEL,
+        max_tokens=500,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    raw = _text_of(message)
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+    mapping = json.loads(raw)
+    if not isinstance(mapping, dict) or not mapping:
+        raise ValueError("Claude gaf geen bruikbare kolom-koppeling terug")
+    cleaned = {}
+    for header in headers:
+        field = mapping.get(header)
+        if field in canonical_fields:
+            cleaned[header] = field
+        else:
+            cleaned[header] = None
+    return cleaned

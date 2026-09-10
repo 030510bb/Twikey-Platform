@@ -281,6 +281,152 @@ scoring, ranking en aanbevolen-ICP-logica de juiste winnaar aanwijst) - plus
 de volledige bestaande suites (`test_crm.py`, `test_fase2.py`,
 `test_fase3.py`) opnieuw gedraaid, alles groen, geen regressies.
 
+## Fase 3c (gebouwd, getest, geleverd — 10 sept. 2026): slimme import, digest, verzendlimiet, overzicht, ideeënbus
+
+Zes kleinere, onafhankelijke uitbreidingen op verzoek van Benjamin, gebouwd
+in één vervolgsessie op Fase 3b. Doel: de eerste klanten kunnen het
+platform nu zelfstandig gebruiken zonder dat Benjamin per klant handmatig
+CSV's hoeft voor te bewerken, zonder risico op geblokkeerde domeinen door
+te hard versturen, en met een centrale plek om te zien wat nog aandacht
+nodig heeft en om feedback te verzamelen.
+
+**1. Intelligente CSV-import (preview + bevestigen).**
+Voorheen moest een CSV precies de verwachte kolomnamen hebben. Nu:
+`POST /api/contacts/import-csv/preview` leest de kolomkoppen + een paar
+voorbeeldrijen, koppelt ze automatisch aan de bekende contactvelden (naam,
+e-mail, bedrijf, functie, sector, omzet, LinkedIn, telefoon, notitie) via
+een combinatie van bekende aliassen (NL/EN) en fuzzy matching, en vult voor
+de kolommen die daarmee niet herkend worden — als er een `ANTHROPIC_API_KEY`
+is — de koppeling aan via Claude (die de voorbeeldwaarden meeweegt, bv. een
+kolom "Bedrag" met waarden als "1-10M" wordt herkend als omzet). De klant
+ziet de voorgestelde koppeling in een tabel, past aan waar nodig (elke
+kolom is een keuzelijst, inclusief "niet importeren"), en bevestigt pas
+daarna echt via `POST /api/contacts/import-csv/confirm`. Zonder AI-key of
+bij een mislukte aanroep valt dit automatisch terug op alleen de
+alias/fuzzy-matching — de knop werkt altijd. De oude, simpele
+`/api/contacts/import-csv` blijft ongewijzigd bestaan voor bestaande
+integraties.
+
+**2. Dagelijkse samenvatting-mail (digest).**
+Elke ochtend (cron) ontvangt elk teamlid van een account een mail met de
+activiteiten en resultaten van de afgelopen dag (verzonden mails, opens,
+clicks, replies, nieuwe contacten). Standaard **aan**
+(`accounts.daily_digest_enabled`), per account uit te zetten. Verstuurd via
+het eigen verzendpad van dat account (eigen SMTP indien ingesteld, anders
+de gedeelde Twikey-afzender) — bewust niet via het generieke
+platform-adres, omdat een digest een rapportage over dát account is en dus
+logischer vanaf de eigen afzender komt. Idempotent per (UTC-)dag
+(`accounts.last_digest_sent_date`) zodat een cron die per ongeluk twee keer
+draait niemand dubbel mailt. Nieuwe cron-endpoint:
+`POST /api/cron/process-digests`.
+
+**3. Domain warm-up: instelbare dagelijkse verzendlimiet.**
+Een nieuw domein dat in één keer honderden mails verstuurt loopt het risico
+als spam gemarkeerd te worden. Daarom: een optionele dagelijkse
+verzendlimiet per account (`accounts.daily_send_limit_enabled`, **standaard
+uit**, en `accounts.daily_send_limit`, standaard 50 — beide vrij aan te
+passen of helemaal uit te zetten in Instellingen). Alleen **succesvolle**
+verzendingen tellen mee voor de limiet (een mislukte/bounced mail mag de
+klant niet "op laten" alsof er wél verstuurd is — zie huisregel 2 hieronder).
+Bij het lanceren van een campagne die de limiet zou overschrijden worden de
+extra ontvangers niet meteen geprobeerd maar blijven ze in hun normale
+"nog niet verstuurd"-status staan; een nieuwe cron
+(`POST /api/cron/process-campaign-queue`) werkt de wachtrij vervolgens
+elke dag verder af zodra er weer ruimte in de limiet is. Opvolgsequenties
+respecteren dezelfde limiet (ze slaan een verzending die dag over en
+proberen automatisch de volgende cron-run opnieuw — geen aparte
+"wachtrij"-status nodig, de sequence-engine ziet zo'n contact gewoon nog
+als "nog te versturen").
+
+**4. Campagne-overzicht.**
+Nieuwe kaart op het Analytics-tabblad (`GET /api/campaigns/overview`,
+`database.campaigns_overview()`) met per campagne: aantal verstuurd,
+mislukt, geopend, geklikt, replies, nog in de wachtrij, en een
+conversiepercentage (replies / verstuurd) — een totaaloverzicht naast de
+al bestaande per-variant resultaten (A/B Test-tabblad).
+
+**5. "Aandacht nodig"-dashboard + de twee huisregels voor verzenden.**
+Nieuwe kaart bovenaan het Dashboard-tabblad (`GET
+/api/dashboard/attention`, `database.attention_items()`) die in één
+overzicht toont wat aandacht nodig heeft: mislukte verzendingen, openstaande
+AI-conceptantwoorden die nog goedgekeurd moeten worden, vervallen/openstaande
+reminders, en campagnes die nog in de verzendwachtrij staan door de
+domain warm-up-limiet — geprioriteerd (hoog/gemiddeld/laag), zodat een
+teamlid niet zelf door alle tabbladen hoeft te zoeken. Volledig opgebouwd
+uit bestaande data, geen nieuwe trackingtabel nodig.
+Daarbij zijn twee huisregels voor verzenden toegevoegd:
+  1. **Afmeldlink**: elke uitgaande mail (campagne + opvolgsequentie) krijgt
+     een afmeldlink in de footer. Klikken zet het bestaande
+     `do_not_contact`-veld van dat contact (geen nieuw veld nodig) en het
+     contact wordt overal gerespecteerd zoals nu al gebeurt voor handmatig
+     op "niet meer benaderen" gezette contacten. De link is een
+     ondertekend token (HMAC, met de bestaande `ADMIN_SECRET` — geen nieuwe
+     sleutel nodig) zodat afmelden zonder in te loggen kan, maar niet te
+     vervalsen is. **Uitzetbaar**: op uitdrukkelijk verzoek van Benjamin is
+     dit geen verplichting — `accounts.unsubscribe_link_enabled` (standaard
+     **aan**) is een instelling op het Integraties-tabblad, zodat een
+     account er ook zonder afmeldlink mee kan blijven mailen als dat nodig
+     is.
+  2. **Mislukte verzendingen tellen niet mee voor de dagelijkse
+     verzendlimiet** (zie punt 3 hierboven) — een bounce of SMTP-fout mag
+     nooit stilzwijgend "verzendbudget" opeten dat er niet echt gebruikt is.
+
+**6. Ideeënbus (feedback van gebruikers).**
+Nieuwe kaart op het Support-tabblad waar een gebruiker een idee of stuk
+feedback kan achterlaten (`POST /api/feedback`, zichtbaar voor het eigen
+account via `GET /api/feedback`). Twikey-kant: een cross-account overzicht
+voor de superadmin (`GET /api/superadmin/feedback`) met een status per
+item (nieuw / in overweging / op de roadmap / gebouwd / afgewezen,
+`PUT /api/superadmin/feedback/{id}/status`) zodat feedback traceerbaar
+meegenomen kan worden in toekomstige ontwikkeling.
+
+**Daarnaast: "coming soon"-labels.** Om de eerste klanten alvast te laten
+zien wat er nog aankomt, zijn er oranje "binnenkort beschikbaar"-badges
+gezet bij onderdelen die wel al deels bestaan maar bewust nog niet volledig
+gebouwd zijn (bv. het punt "volledig doorlopend AI-chatgesprek tijdens de
+intake" bij het Profiel-tabblad), plus een verzamelkaart "🚀 Binnenkort
+beschikbaar" op het Support-tabblad met de volledige lijst: het doorlopende
+AI-intakegesprek, periodieke auto-verbetervoorstellen, en leads uit
+Instagram/LinkedIn-advertenties (zie hieronder — "nog te plannen").
+
+**Daarnaast: audit trail/tijdlijn als uitklap-paneel.** De tijdlijn per
+contact opende voorheen als pop-up (Fase 3a) — dit is omgebouwd naar een
+inline uitklapbare rij direct in de contactentabel (Contacten-tabblad), zodat
+je 'm niet meer hoeft weg te klikken om verder te werken. Er kan telkens
+maar één contact tegelijk uitgeklapt staan; de opgehaalde tijdlijn wordt
+client-side gecachet zodat opnieuw in-/uitklappen niet opnieuw hoeft te
+laden.
+
+Getest: nieuwe suite `test_fase3c.py` (CSV-import preview/bevestigen,
+verzendinstellingen, verzendlimiet-afdwinging bij lancering én via de
+wachtrij-cron, campagne-overzicht, afmeldlink geldig/vervalst/uitgezet,
+digest-cron idempotentie, aandacht-dashboard, ideeënbus, tenant-isolatie)
+plus de volledige bestaande suites (`test_crm.py`, `test_fase2.py`,
+`test_fase3.py`, `test_fase3b.py`, `test_icp.py`) opnieuw gedraaid — alles
+groen, geen regressies.
+
+## Toekomstig idee (nog niet gescoped): leads uit Instagram/LinkedIn-advertenties
+
+Door Benjamin geopperd tijdens de Fase 3c-sessie: naast koud e-mailen ook
+advertenties draaien op Instagram/LinkedIn, en de resulterende leaddata (of
+berichten die prospects achterlaten) rechtstreeks importeren in de CRM voor
+directe opvolging. Bewust **niet** meegenomen in Fase 3c — dit is een
+nieuw, apart te scopen stuk werk, geen kleine uitbreiding:
+- Per platform een andere koppeling (Meta/Instagram Lead Ads API vs.
+  LinkedIn Lead Gen Forms API), allebei met een eigen OAuth-app-registratie
+  en goedkeuringsproces bij het platform zelf — dat kost tijd, los van het
+  bouwen.
+- Nog te kiezen: polling (periodiek ophalen) vs. webhooks (realtime
+  doorgestuurd) per platform, en hoe dat samenkomt met accountauthenticatie
+  (elk account koppelt straks vermoedelijk zijn eigen advertentie-account,
+  zoals nu ook al met SMTP/HubSpot/Explorium gebeurt).
+- Nog te bepalen: hoe een geïmporteerde ad-lead zich verhoudt tot de
+  bestaande contactbron-indeling (`source`: csv/manual/vibe_prospecting/
+  hubspot) en of/hoe zo'n lead meteen in een opvolgsequentie terechtkomt.
+
+Staat als "nog te plannen" in de "coming soon"-lijst op het
+Support-tabblad, zodat klanten weten dat dit eraan zit te komen.
+
 ## Fase 3 (nog niet gescoped) — AI-gedreven intake & optimalisatie
 
 **Update 9 sept. 2026**: de kern hiervan is gebouwd, zie "Fase 3b"

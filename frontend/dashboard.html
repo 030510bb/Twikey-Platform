@@ -624,6 +624,11 @@
                 ✓ Platform Ready - All systems operational
             </div>
 
+            <div class="card" id="attention-card" style="display:none;">
+                <h2><span class="icon">🔔</span>Aandacht nodig</h2>
+                <div id="attention-body"></div>
+            </div>
+
             <div class="grid-2">
                 <div class="stats-box">
                     <div class="value" id="dashboard-contact-count">-</div>
@@ -1060,6 +1065,26 @@
                 <button class="button button-primary" id="analytics-round2-button" style="display:none;" onclick="launchRound2()">🚀 Launch Round 2 with Winner</button>
             </div>
 
+            <!-- Fase 3c: overzicht over ALLE campagnes heen (crm-roadmap.md -
+                 "hoeveel mails verstuurd, replies, conversie" per campagne). -->
+            <div class="card">
+                <h2><span class="icon">📋</span>Campagne-overzicht</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Verstuurd, opens, clicks, replies en conversie per campagne, in één
+                    overzicht.
+                </p>
+                <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr><th>Campagne</th><th>Status</th><th>Verstuurd</th><th>Opens</th><th>Clicks</th><th>Replies</th><th>Conversie</th></tr>
+                    </thead>
+                    <tbody id="campaigns-overview-body">
+                        <tr><td colspan="7" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+                </div>
+            </div>
+
             <!-- Fase 3: ICP-scoring (crm-roadmap.md - welke combinatie van
                  sector x buyer persona x omzet presteert het beste, o.b.v.
                  bestaande open/click/reply-data). -->
@@ -1069,6 +1094,10 @@
                     Scoort sector, buyer persona en omzetcategorie — los en gecombineerd —
                     op basis van de open-, klik- en reply-cijfers van al je verzonden mails,
                     om te zien welk klantprofiel het beste past ("ideal customer profile").
+                </p>
+                <p style="font-size:12px; margin-bottom:15px;">
+                    <span style="background:#FFE7C9; color:#B46500; font-weight:700; padding:2px 8px; border-radius:20px;">🚀 Binnenkort</span>
+                    <span style="color:#999;"> periodieke, automatisch gegenereerde verbetervoorstellen op basis van deze data — zie Support &gt; Binnenkort beschikbaar.</span>
                 </p>
                 <div id="icp-recommended"></div>
                 <div id="icp-data-quality" style="color:#999; font-size:12px; margin:10px 0;"></div>
@@ -1222,17 +1251,6 @@
             </div>
         </div>
 
-        <!-- Simple timeline modal -->
-        <div id="timeline-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
-            <div style="background:#fff; border-radius:10px; padding:25px; max-width:720px; width:90%; max-height:80vh; overflow-y:auto;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                    <h2 style="margin:0;">Tijdlijn: <span id="timeline-contact-name"></span></h2>
-                    <button class="button button-secondary" onclick="closeTimelineModal()">Sluiten</button>
-                </div>
-                <div id="timeline-body"></div>
-            </div>
-        </div>
-
         <div id="integrations" class="tab-content">
             <div class="card">
                 <h2><span class="icon">✉️</span>Mail: verzenden (SMTP) en replies lezen (IMAP)</h2>
@@ -1327,6 +1345,46 @@
             </div>
 
             <div class="card">
+                <h2><span class="icon">📮</span>Verzendinstellingen</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Dagelijkse samenvatting-mail, een dagelijkse verzendlimiet (handig bij
+                    het opwarmen van een nieuw domein) en de afmeldlink in uitgaande mails -
+                    alle drie standaard ingesteld op wat voor de meeste accounts prettig is,
+                    hieronder aan te passen.
+                </p>
+                <div id="sendingsettings-alert"></div>
+
+                <div class="input-group" style="margin-bottom: 14px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="sendingsettings-digest" style="width:auto;">
+                        Dagelijkse samenvatting-mail (activiteiten &amp; resultaten) naar alle teamleden
+                    </label>
+                </div>
+
+                <div class="input-group" style="margin-bottom: 6px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="sendingsettings-limit-enabled" style="width:auto;" onchange="onSendingLimitToggle()">
+                        Dagelijkse verzendlimiet aan (domain warm-up voor een nieuw domein)
+                    </label>
+                </div>
+                <div id="sendingsettings-limit-row" style="display:none; margin:0 0 14px 26px; max-width:220px;">
+                    <div class="input-group" style="margin:0;">
+                        <label>Max. mails per dag (campagnes + opvolgmails samen)</label>
+                        <input type="number" id="sendingsettings-limit-value" min="1" value="50">
+                    </div>
+                </div>
+
+                <div class="input-group" style="margin-bottom: 14px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="sendingsettings-unsub" style="width:auto;">
+                        Afmeldlink toevoegen onderaan uitgaande mails
+                    </label>
+                </div>
+
+                <button class="button button-primary" onclick="saveSendingSettings()">Opslaan</button>
+            </div>
+
+            <div class="card">
                 <h2><span class="icon">🧭</span>Vibe Prospecting / Explorium</h2>
                 <p style="color:#666; margin-bottom: 15px;">
                     Koppel je eigen Explorium-account om hieronder nieuwe leads en
@@ -1397,16 +1455,37 @@
             <div class="card">
                 <h2><span class="icon">📂</span>Contacten importeren / exporteren</h2>
                 <p style="color:#666; margin-bottom: 15px;">
-                    Importeer een CSV met contacten (kolommen als voornaam, achternaam,
-                    e-mail, bedrijf, functie, sector, omzet, tags worden automatisch herkend,
-                    ook in het Nederlands), of exporteer alle contacten inclusief tags,
-                    toewijzing en uitsluitingsstatus.
+                    Upload een CSV - het platform herkent zelf welke kolom bij welk veld
+                    hoort (ook onbekende/afwijkende kolomkoppen, met AI-hulp als dat is
+                    ingesteld) en laat je de koppeling controleren voordat er iets wordt
+                    geimporteerd. Geen handmatig voorbewerken van het bestand meer nodig.
+                    Exporteren gaat in één klik, inclusief tags, toewijzing en
+                    uitsluitingsstatus.
                 </p>
                 <div id="integrations-import-alert"></div>
                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                     <input type="file" id="contacts-csv-file" accept=".csv">
-                    <button class="button button-primary" onclick="importContactsCsv()">Contacten importeren</button>
+                    <button class="button button-primary" onclick="previewContactsCsv()">Bestand analyseren</button>
                     <button class="button button-secondary" onclick="exportContactsCsv()">📥 Alle contacten exporteren (CSV)</button>
+                </div>
+
+                <div id="csv-mapping-panel" style="display:none; margin-top:18px; border-top:1px solid #eee; padding-top:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                        <p style="margin:0; color:#444;">
+                            <strong id="csv-mapping-summary"></strong><br>
+                            <span style="font-size:12px; color:#888;" id="csv-mapping-source-note"></span>
+                        </p>
+                    </div>
+                    <div style="overflow-x:auto; margin-top:12px;">
+                        <table>
+                            <thead><tr><th>Kolom in je bestand</th><th>Voorbeeldwaarde</th><th>Koppelen aan veld</th></tr></thead>
+                            <tbody id="csv-mapping-body"></tbody>
+                        </table>
+                    </div>
+                    <div style="margin-top:14px; display:flex; gap:10px;">
+                        <button class="button button-primary" onclick="confirmContactsCsvImport()">Importeren</button>
+                        <button class="button button-secondary" onclick="cancelContactsCsvImport()">Annuleren</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1544,7 +1623,10 @@
                 <p style="color:#666; margin-bottom:15px;">
                     Laat Claude een paar gerichte vervolgvragen stellen om vage of
                     onvolledige antwoorden hierboven aan te scherpen (werkt ook zonder
-                    AI-koppeling, dan krijg je een vaste set nuttige vragen).
+                    AI-koppeling, dan krijg je een vaste set nuttige vragen). Dit is
+                    momenteel één ronde met vaste vragen -
+                    <span style="background:#FFE7C9; color:#B46500; font-weight:700; padding:2px 8px; border-radius:20px; font-size:11px;">🚀 Binnenkort</span>
+                    <span style="color:#999; font-size:12px;"> een volledig doorlopend AI-gesprek.</span>
                 </p>
                 <button class="button button-secondary" onclick="generateProfileQuestions()">Verdiepende vragen genereren</button>
                 <div id="profile-questions-list" style="margin-top:15px;"></div>
@@ -1586,6 +1668,59 @@
                 <table>
                     <thead><tr><th>Datum</th><th>Onderwerp</th><th>Status</th><th>Antwoord</th></tr></thead>
                     <tbody id="support-tickets-body">
+                        <tr><td colspan="4" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">🚀</span>Binnenkort beschikbaar</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Waar we op dit moment aan werken - zodat je weet wat er nog aankomt.
+                </p>
+                <div class="metric-row">
+                    <span class="metric-label">Volledig doorlopend AI-chatgesprek tijdens de intake (i.p.v. de huidige ene AI-verdiepingsronde)</span>
+                    <span class="status-badge status-warning">Binnenkort</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Periodieke, automatisch gegenereerde verbetervoorstellen op basis van de ICP-analyse</span>
+                    <span class="status-badge status-warning">Binnenkort</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Leads uit Instagram-/LinkedIn-advertenties automatisch importeren</span>
+                    <span class="status-badge status-warning">Nog te plannen</span>
+                </div>
+                <p style="color:#999; font-size:12px; margin-top:12px;">
+                    Mis je iets in deze lijst, of heb je een eigen idee? Laat het weten hieronder.
+                </p>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">💡</span>Ideeën &amp; feedback</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Deel een idee, knelpunt of bug - dit komt binnen bij het Twikey-team en
+                    voedt de roadmap hierboven.
+                </p>
+                <div id="feedback-alert"></div>
+                <div style="display:grid; grid-template-columns: 140px 1fr; gap:10px; align-items:end; margin-bottom:10px;">
+                    <div class="input-group" style="margin:0;">
+                        <label>Type</label>
+                        <select id="feedback-category">
+                            <option value="idee">Idee</option>
+                            <option value="bug">Bug</option>
+                            <option value="vraag">Vraag</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin:0;">
+                        <label>Omschrijving</label>
+                        <input type="text" id="feedback-message" placeholder="Waar zou je bij geholpen zijn?">
+                    </div>
+                </div>
+                <button class="button button-primary" onclick="submitFeedback()">Versturen</button>
+
+                <table style="margin-top:18px;">
+                    <thead><tr><th>Datum</th><th>Type</th><th>Omschrijving</th><th>Status</th></tr></thead>
+                    <tbody id="feedback-items-body">
                         <tr><td colspan="4" style="color:#666;">Laden...</td></tr>
                     </tbody>
                 </table>
@@ -1701,6 +1836,7 @@
             if (tabName === 'analytics') {
                 loadCampaignsList();
                 loadIcpScores();
+                loadCampaignsOverview();
             }
             if (tabName === 'dashboard') {
                 loadDashboardStats();
@@ -1712,6 +1848,7 @@
                 loadEmailSettings();
                 loadProspectingSettings();
                 loadHubspotSettings();
+                loadSendingSettings();
             }
             if (tabName === 'contacts') {
                 loadTeammatesForAssignDropdown();
@@ -1724,6 +1861,7 @@
             if (tabName === 'support') {
                 loadKbArticles();
                 loadSupportTickets();
+                loadFeedbackItems();
             }
             if (tabName === 'profile') {
                 loadAccountProfile();
@@ -2115,6 +2253,52 @@
                 loadEmailSettings();
             } catch (err) {
                 emailSettingsAlert(`Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Integraties: Verzendinstellingen (digest, verzendlimiet, afmeldlink) ---
+
+        function sendingSettingsAlert(message, kind) {
+            const el = document.getElementById('sendingsettings-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        function onSendingLimitToggle() {
+            document.getElementById('sendingsettings-limit-row').style.display =
+                document.getElementById('sendingsettings-limit-enabled').checked ? 'block' : 'none';
+        }
+
+        async function loadSendingSettings() {
+            try {
+                const data = await apiGet('/api/account/sending-settings');
+                document.getElementById('sendingsettings-digest').checked = data.daily_digest_enabled;
+                document.getElementById('sendingsettings-limit-enabled').checked = data.daily_send_limit_enabled;
+                document.getElementById('sendingsettings-limit-value').value = data.daily_send_limit;
+                document.getElementById('sendingsettings-unsub').checked = data.unsubscribe_link_enabled;
+                onSendingLimitToggle();
+            } catch (err) {
+                sendingSettingsAlert(`Kon instellingen niet laden: ${err.message}`, 'warning');
+            }
+        }
+
+        async function saveSendingSettings() {
+            const limitEnabled = document.getElementById('sendingsettings-limit-enabled').checked;
+            const limitValue = parseInt(document.getElementById('sendingsettings-limit-value').value, 10);
+            if (limitEnabled && (!limitValue || limitValue < 1)) {
+                sendingSettingsAlert('Vul een geldige dagelijkse verzendlimiet in (minstens 1).', 'warning');
+                return;
+            }
+            try {
+                await apiPut('/api/account/sending-settings', {
+                    daily_digest_enabled: document.getElementById('sendingsettings-digest').checked,
+                    daily_send_limit_enabled: limitEnabled,
+                    daily_send_limit: limitValue || 50,
+                    unsubscribe_link_enabled: document.getElementById('sendingsettings-unsub').checked,
+                });
+                sendingSettingsAlert('✓ Verzendinstellingen opgeslagen.', 'success');
+            } catch (err) {
+                sendingSettingsAlert(`Opslaan mislukt: ${err.message}`, 'warning');
             }
         }
 
@@ -2944,7 +3128,7 @@
                 }
                 tbody.innerHTML = data.contacts.map(c => `
                     <tr>
-                        <td><a href="#" onclick="openTimelineModal(${c.id}, '${(c.first_name + ' ' + c.last_name).replace(/'/g, "\\'")}'); return false;">${c.first_name} ${c.last_name}</a><br><span style="color:#666; font-size:12px;">${c.email}</span></td>
+                        <td><a href="#" onclick="toggleContactTimeline(${c.id}); return false;">${c.first_name} ${c.last_name} <span id="timeline-arrow-${c.id}" style="font-size:10px; color:#999;">▸ tijdlijn</span></a><br><span style="color:#666; font-size:12px;">${c.email}</span></td>
                         <td>${c.company || ''}</td>
                         <td>${c.job_title || ''}${c.sector ? ' · ' + c.sector : ''}${c.revenue_range ? ' · ' + c.revenue_range : ''}</td>
                         <td style="max-width:180px;">${tagsHtml(c)}</td>
@@ -2958,6 +3142,9 @@
                         <td>
                             <button class="button button-secondary" style="margin:2px 0; font-size:12px; padding:4px 8px;" onclick="promptReminder(${c.id}, '${(c.first_name + ' ' + c.last_name).replace(/'/g, "\\'")}')">⏰ Herinnering</button>
                         </td>
+                    </tr>
+                    <tr class="timeline-expand-row" id="timeline-row-${c.id}" style="display:none;">
+                        <td colspan="8" id="timeline-container-${c.id}" style="background:#f9fafb; padding:10px 14px; border-bottom:1px solid #e5e7eb;"></td>
                     </tr>
                 `).join('');
             } catch (err) {
@@ -3041,17 +3228,17 @@
             linkedin_action: '#1d4ed8',
         };
 
-        let currentTimeline = [];
+        const timelineCache = {}; // contactId -> already-fetched timeline events, so re-toggling doesn't re-fetch
 
-        function timelineRowHtml(e, idx) {
+        function timelineRowHtml(contactId, e, idx) {
             const color = TIMELINE_EVENT_COLORS[e.type] || '#333';
             const hasContent = (e.type === 'email_sent' || e.type === 'email_failed') && (e.subject || e.body);
             const dateStr = e.at ? new Date(e.at).toLocaleString('nl-NL') : '-';
             const detailRow = hasContent ? `
-                <tr id="timeline-detail-${idx}" style="display:none;">
+                <tr id="timeline-detail-${contactId}-${idx}" style="display:none;">
                     <td></td>
                     <td style="padding:0 8px 12px;">
-                        <div style="background:#f9fafb; border:1px solid #eee; border-radius:6px; padding:10px 12px; font-size:13px;">
+                        <div style="background:#fff; border:1px solid #eee; border-radius:6px; padding:10px 12px; font-size:13px;">
                             ${e.subject ? `<div style="margin-bottom:6px;"><strong>Onderwerp:</strong> ${escapeHtml(e.subject)}</div>` : ''}
                             <div style="white-space:pre-wrap; color:#444;">${escapeHtml(e.body || '(geen inhoud bewaard voor deze verzending)')}</div>
                         </div>
@@ -3062,49 +3249,70 @@
                     <td style="padding:10px 8px; color:#999; font-size:12px; white-space:nowrap; vertical-align:top;">${dateStr}</td>
                     <td style="padding:10px 8px;">
                         <span style="color:${color}; font-weight:600;">${escapeHtml(e.description)}</span>
-                        ${hasContent ? ` <a href="#" id="timeline-toggle-${idx}" onclick="toggleTimelineDetail(${idx}); return false;" style="font-size:12px; margin-left:6px;">e-mail bekijken ▸</a>` : ''}
+                        ${hasContent ? ` <a href="#" id="timeline-toggle-${contactId}-${idx}" onclick="toggleTimelineDetail(${contactId}, ${idx}); return false;" style="font-size:12px; margin-left:6px;">e-mail bekijken ▸</a>` : ''}
                     </td>
                 </tr>${detailRow}`;
         }
 
-        function toggleTimelineDetail(idx) {
-            const row = document.getElementById(`timeline-detail-${idx}`);
-            const toggle = document.getElementById(`timeline-toggle-${idx}`);
+        function toggleTimelineDetail(contactId, idx) {
+            const row = document.getElementById(`timeline-detail-${contactId}-${idx}`);
+            const toggle = document.getElementById(`timeline-toggle-${contactId}-${idx}`);
             const open = row.style.display !== 'none';
             row.style.display = open ? 'none' : 'table-row';
             toggle.textContent = open ? 'e-mail bekijken ▸' : 'e-mail verbergen ▾';
         }
 
-        async function openTimelineModal(contactId, name) {
-            document.getElementById('timeline-contact-name').textContent = name;
-            document.getElementById('timeline-body').innerHTML = '<p style="color:#666;">Laden...</p>';
-            document.getElementById('timeline-modal').style.display = 'flex';
+        // Fase 3c: tijdlijn als inline uitklap-rij i.p.v. een pop-up die je
+        // steeds moet wegklikken - zo kun je 'm open laten staan terwijl je
+        // verder werkt in de contactenlijst. Eén tijdlijn tegelijk open houdt
+        // de lijst overzichtelijk; nogmaals klikken op dezelfde rij klapt 'm
+        // weer dicht.
+        async function toggleContactTimeline(contactId) {
+            const row = document.getElementById(`timeline-row-${contactId}`);
+            const arrow = document.getElementById(`timeline-arrow-${contactId}`);
+            if (!row) return;
+            const isOpen = row.style.display !== 'none';
+
+            document.querySelectorAll('.timeline-expand-row').forEach(r => { r.style.display = 'none'; });
+            document.querySelectorAll('[id^="timeline-arrow-"]').forEach(a => { a.textContent = '▸ tijdlijn'; });
+
+            if (isOpen) return; // was al open -> zojuist dichtgeklapt, klaar
+
+            row.style.display = 'table-row';
+            if (arrow) arrow.textContent = '▾ tijdlijn';
+            const container = document.getElementById(`timeline-container-${contactId}`);
+
+            if (timelineCache[contactId]) {
+                container.innerHTML = renderTimelineTable(contactId, timelineCache[contactId]);
+                return;
+            }
+            container.innerHTML = '<p style="color:#666; margin:0;">Laden...</p>';
             try {
                 const data = await apiGet(`/api/contacts/${contactId}/timeline`);
-                currentTimeline = data.timeline || [];
-                if (!currentTimeline.length) {
-                    document.getElementById('timeline-body').innerHTML = '<p style="color:#666;">Nog geen activiteit.</p>';
-                    return;
-                }
-                document.getElementById('timeline-body').innerHTML = `
-                    <table style="width:100%; border-collapse:collapse;">
-                        <thead>
-                            <tr style="border-bottom:2px solid #e5e7eb;">
-                                <th style="text-align:left; padding:6px 8px; font-size:12px; color:#666;">Datum</th>
-                                <th style="text-align:left; padding:6px 8px; font-size:12px; color:#666;">Gebeurtenis</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${currentTimeline.map((e, idx) => timelineRowHtml(e, idx)).join('')}
-                        </tbody>
-                    </table>`;
+                const timeline = data.timeline || [];
+                timelineCache[contactId] = timeline;
+                container.innerHTML = renderTimelineTable(contactId, timeline);
             } catch (err) {
-                document.getElementById('timeline-body').innerHTML = `<div class="alert alert-warning">Kon tijdlijn niet laden: ${err.message}</div>`;
+                container.innerHTML = `<div class="alert alert-warning">Kon tijdlijn niet laden: ${err.message}</div>`;
             }
         }
 
-        function closeTimelineModal() {
-            document.getElementById('timeline-modal').style.display = 'none';
+        function renderTimelineTable(contactId, timeline) {
+            if (!timeline.length) {
+                return '<p style="color:#666; margin:0;">Nog geen activiteit.</p>';
+            }
+            return `
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr style="border-bottom:2px solid #e5e7eb;">
+                            <th style="text-align:left; padding:6px 8px; font-size:12px; color:#666;">Datum</th>
+                            <th style="text-align:left; padding:6px 8px; font-size:12px; color:#666;">Gebeurtenis</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${timeline.map((e, idx) => timelineRowHtml(contactId, e, idx)).join('')}
+                    </tbody>
+                </table>`;
         }
 
         // --- Herinneringen (agenderen) ---------------------------------------
@@ -3221,18 +3429,76 @@
 
         // --- Integraties: CSV import/export voor contacten -------------------
 
-        async function importContactsCsv() {
+        // Fase 3c: intelligente CSV-import - twee stappen i.p.v. direct
+        // importeren. csvImportState bewaart het token + de huidige
+        // (eventueel door de klant aangepaste) koppeling tussen preview en
+        // confirm.
+        let csvImportState = null;
+
+        async function previewContactsCsv() {
             const fileInput = document.getElementById('contacts-csv-file');
             const alertEl = 'integrations-import-alert';
             if (!fileInput.files.length) { contactsAlert(alertEl, 'Kies eerst een CSV-bestand.', 'warning'); return; }
             try {
-                const result = await apiUpload('/api/contacts/import-csv', fileInput.files[0]);
+                const result = await apiUpload('/api/contacts/import-csv/preview', fileInput.files[0]);
+                csvImportState = { token: result.token, mapping: { ...result.suggested_mapping } };
+                renderCsvMappingPanel(result);
+                contactsAlert(alertEl, '', '');
+            } catch (err) {
+                contactsAlert(alertEl, `Analyseren mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        function renderCsvMappingPanel(result) {
+            document.getElementById('csv-mapping-panel').style.display = 'block';
+            const mappedCount = Object.values(result.suggested_mapping).filter(Boolean).length;
+            document.getElementById('csv-mapping-summary').textContent =
+                `${result.filename} - ${result.row_count} rij(en), ${mappedCount}/${result.headers.length} kolommen automatisch herkend.`;
+            document.getElementById('csv-mapping-source-note').textContent = result.mapping_source === 'ai'
+                ? 'Aangevuld met AI-suggesties voor kolommen die niet direct herkend werden - controleer deze even.'
+                : 'Herkend op basis van veelgebruikte kolomnamen (NL/EN).';
+
+            const fieldEntries = Object.entries(result.available_fields);
+
+            document.getElementById('csv-mapping-body').innerHTML = result.headers.map(header => {
+                const sample = result.sample_rows.find(r => (r[header] || '').trim()) || {};
+                const current = csvImportState.mapping[header] || '';
+                const options = [['', '(niet importeren)'], ...fieldEntries].map(([field, label]) =>
+                    `<option value="${field}" ${field === current ? 'selected' : ''}>${label}</option>`
+                ).join('');
+                return `
+                    <tr>
+                        <td><strong>${escapeHtml(header)}</strong></td>
+                        <td style="color:#666; font-size:12px;">${escapeHtml(sample[header] || '-')}</td>
+                        <td>
+                            <select onchange="csvImportState.mapping['${header.replace(/'/g, "\\'")}'] = this.value || null;">
+                                ${options}
+                            </select>
+                        </td>
+                    </tr>`;
+            }).join('');
+        }
+
+        async function confirmContactsCsvImport() {
+            if (!csvImportState) return;
+            const alertEl = 'integrations-import-alert';
+            try {
+                const result = await apiPost('/api/contacts/import-csv/confirm', {
+                    token: csvImportState.token, mapping: csvImportState.mapping,
+                });
                 const errorNote = result.errors.length ? ` (${result.errors.length} rij(en) overgeslagen wegens ontbrekend/ongeldig e-mailadres)` : '';
                 contactsAlert(alertEl, `✓ ${result.added} contact(en) geïmporteerd.${errorNote}`, 'success');
-                fileInput.value = '';
+                cancelContactsCsvImport();
+                loadContacts();
             } catch (err) {
                 contactsAlert(alertEl, `Importeren mislukt: ${err.message}`, 'warning');
             }
+        }
+
+        function cancelContactsCsvImport() {
+            csvImportState = null;
+            document.getElementById('csv-mapping-panel').style.display = 'none';
+            document.getElementById('contacts-csv-file').value = '';
         }
 
         async function exportContactsCsv() {
@@ -3308,6 +3574,52 @@
             }
         }
 
+        // --- Ideeenbus (Fase 3c) -------------------------------------------
+
+        const FEEDBACK_STATUS_LABELS = {
+            'nieuw': 'Nieuw', 'in overweging': 'In overweging', 'op de roadmap': 'Op de roadmap',
+            'gebouwd': 'Gebouwd', 'afgewezen': 'Afgewezen',
+        };
+
+        async function submitFeedback() {
+            const category = document.getElementById('feedback-category').value;
+            const message = document.getElementById('feedback-message').value.trim();
+            if (!message) {
+                contactsAlert('feedback-alert', 'Vul een omschrijving in.', 'warning');
+                return;
+            }
+            try {
+                await apiPost('/api/feedback', { category, message });
+                contactsAlert('feedback-alert', '✓ Bedankt! Je idee is bij ons binnengekomen.', 'success');
+                document.getElementById('feedback-message').value = '';
+                loadFeedbackItems();
+            } catch (err) {
+                contactsAlert('feedback-alert', `Versturen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function loadFeedbackItems() {
+            const tbody = document.getElementById('feedback-items-body');
+            tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">Laden...</td></tr>';
+            try {
+                const data = await apiGet('/api/feedback');
+                if (!data.items.length) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">Nog geen ideeën/feedback ingediend.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.items.map(i => `
+                    <tr>
+                        <td>${new Date(i.created_at).toLocaleDateString('nl-NL')}</td>
+                        <td>${escapeHtml(i.category)}</td>
+                        <td>${escapeHtml(i.message)}</td>
+                        <td>${FEEDBACK_STATUS_LABELS[i.status] || i.status}</td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="4" style="color:#666;">Kon ideeën/feedback niet laden: ${err.message}</td></tr>`;
+            }
+        }
+
         // --- Dashboard ---------------------------------------------------
 
         async function loadDashboardStats() {
@@ -3316,6 +3628,27 @@
                 document.getElementById('dashboard-contact-count').textContent = data.count;
             } catch (err) {
                 document.getElementById('dashboard-contact-count').textContent = '?';
+            }
+            loadAttentionItems();
+        }
+
+        const ATTENTION_SEVERITY_COLOR = { high: '#b91c1c', medium: '#b45309', low: '#666' };
+
+        async function loadAttentionItems() {
+            const card = document.getElementById('attention-card');
+            try {
+                const data = await apiGet('/api/dashboard/attention');
+                const items = data.items || [];
+                if (!items.length) { card.style.display = 'none'; return; }
+                card.style.display = 'block';
+                document.getElementById('attention-body').innerHTML = items.map(item => `
+                    <div class="metric-row">
+                        <span class="metric-label" style="color:${ATTENTION_SEVERITY_COLOR[item.severity] || '#666'};">${escapeHtml(item.message)}</span>
+                        <button class="button button-secondary" style="font-size:12px; padding:4px 10px;" onclick="switchTab('${item.tab}')">Bekijken</button>
+                    </div>
+                `).join('');
+            } catch (err) {
+                card.style.display = 'none';
             }
         }
 
@@ -3547,6 +3880,33 @@
                 loadCampaignResults(targetId);
             } catch (err) {
                 select.innerHTML = `<option value="">Kon campagnes niet laden: ${escapeHtml(err.message)}</option>`;
+            }
+        }
+
+        // --- Campagne-overzicht (Fase 3c) ---------------------------------
+
+        async function loadCampaignsOverview() {
+            const tbody = document.getElementById('campaigns-overview-body');
+            tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">Laden...</td></tr>';
+            try {
+                const data = await apiGet('/api/campaigns/overview');
+                if (!data.campaigns.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">Nog geen campagnes.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.campaigns.map(c => `
+                    <tr>
+                        <td>${escapeHtml(c.name)}</td>
+                        <td>${c.status === 'launched' ? '✓ Verstuurd' : 'Concept'}${c.pending ? ` (${c.pending} in wachtrij)` : ''}</td>
+                        <td>${c.sent || 0}</td>
+                        <td>${c.opens || 0}</td>
+                        <td>${c.clicks || 0}</td>
+                        <td>${c.replies || 0}</td>
+                        <td>${pct(c.conversion_rate)}</td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="7" style="color:#666;">Kon campagne-overzicht niet laden: ${escapeHtml(err.message)}</td></tr>`;
             }
         }
 

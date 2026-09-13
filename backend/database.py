@@ -1976,6 +1976,29 @@ def create_email_generator_template(account_id: int, sector: str, persona: str, 
         return dict(row)
 
 
+def update_email_generator_template(template_id: int, account_id: int, subject: str = None,
+                                     body: str = None, angle: str = None):
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT * FROM email_generator_templates WHERE id = ? AND account_id = ?",
+            (template_id, account_id)
+        ).fetchone()
+        if not existing:
+            return None
+        conn.execute(
+            "UPDATE email_generator_templates SET subject = ?, body = ?, angle = ? "
+            "WHERE id = ? AND account_id = ?",
+            (
+                subject if subject is not None else existing["subject"],
+                body if body is not None else existing["body"],
+                angle if angle is not None else existing["angle"],
+                template_id, account_id,
+            ),
+        )
+        row = conn.execute("SELECT * FROM email_generator_templates WHERE id = ?", (template_id,)).fetchone()
+        return dict(row)
+
+
 # ---------------------------------------------------------------------------
 # Fase 2: incoming replies (via IMAP - see imap_client.py) + AI/template
 # concept-antwoorden (reply_drafts - see ai_client.py) + de

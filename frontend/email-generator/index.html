@@ -15,7 +15,7 @@
             color: #1f2937;
         }
         .container {
-            height: 100%;
+            min-height: 100%;
             display: flex;
             flex-direction: column;
             padding: 24px;
@@ -62,7 +62,7 @@
             color: #374151;
             margin-bottom: 4px;
         }
-        select, input[type=text] {
+        select, input[type=text], input[type=number], textarea {
             width: 100%;
             padding: 7px 8px;
             border: 1px solid #d1d5db;
@@ -71,11 +71,12 @@
             font-family: inherit;
             background: #fff;
         }
-        select:focus, input[type=text]:focus {
+        select:focus, input[type=text]:focus, input[type=number]:focus, textarea:focus {
             outline: none;
             border-color: #18407D;
             box-shadow: 0 0 0 2px rgba(24, 64, 125, 0.15);
         }
+        textarea { resize: vertical; min-height: 60px; }
         .btn {
             width: 100%;
             padding: 9px 12px;
@@ -215,6 +216,83 @@
             background: #fef3c7;
             border-radius: 8px;
         }
+        .saved-template-edit {
+            margin-top: 6px;
+        }
+        .saved-template-edit .form-section { margin-bottom: 8px; }
+        .item-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .slot-picker {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 6px;
+            font-size: 11px;
+            color: #6b7280;
+        }
+        .btn-slot {
+            width: 22px;
+            height: 22px;
+            padding: 0;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            font-size: 11px;
+            line-height: 1;
+        }
+        .btn-slot-filled {
+            background: #F18700;
+            color: #fff;
+            border-color: #F18700;
+        }
+        .builder-panel {
+            margin-top: 16px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 18px;
+            background: #fff;
+        }
+        .builder-slots {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .builder-slot {
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 10px;
+        }
+        .builder-slot-empty {
+            color: #9ca3af;
+            font-size: 12px;
+            padding: 10px;
+            border: 1px dashed #d1d5db;
+            border-radius: 6px;
+        }
+        .builder-slot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .builder-slot-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #18407D;
+        }
+        .builder-slot-row {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            margin-top: 6px;
+        }
+        .builder-slot-row .form-label { margin-bottom: 2px; }
+        .builder-wait-days { max-width: 90px; }
     </style>
 </head>
 <body>
@@ -313,6 +391,26 @@
                 </div>
             </div>
         </div>
+
+        <div class="builder-panel" id="sequenceBuilderPanel">
+            <div class="panel-title">Sequence-opbouw (5 stappen)</div>
+            <p class="help-text" style="margin-bottom:12px;">
+                Vul alle 5 stappen met "Gebruik voor stap" bij een gegenereerde of opgeslagen e-mail hierboven.
+                Elke stap is hieronder direct te bewerken. Zodra alle 5 stappen zijn ingevuld, kun je de sequence
+                aanmaken - deze is dan meteen actief, klaar om contacten in te schrijven op het tabblad Sequenties.
+            </p>
+            <div class="builder-slots" id="sequenceBuilderSlots"></div>
+            <div class="form-section">
+                <label class="form-label">Naam van de sequence</label>
+                <input type="text" id="sequenceBuilderName" placeholder="Horeca cold-outreach 5-staps">
+            </div>
+            <div class="form-section">
+                <label class="form-label">Buyer persona (optioneel)</label>
+                <select id="sequenceBuilderPersona"><option value="">Geen specifieke persona</option></select>
+            </div>
+            <button class="btn btn-primary" id="sequenceBuilderCommitBtn" disabled onclick="commitSequence()">Sequence aanmaken en starten</button>
+            <div id="sequenceBuilderMessage"></div>
+        </div>
     </div>
 
     <script>
@@ -351,6 +449,17 @@
             return data;
         }
 
+        async function apiPut(path, body) {
+            const res = await fetch(`${API_BASE}${path}`, {
+                method: 'PUT',
+                headers: authHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify(body || {}),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+            return data;
+        }
+
         function escapeHtml(str) {
             const div = document.createElement('div');
             div.textContent = str ?? '';
@@ -371,6 +480,12 @@
         // --- State -----------------------------------------------------------
         let kbData = null;
         let generatedEmails = [];
+        let savedTemplates = [];
+        // 5 slots voor de sequence-opbouw hieronder; index 0-4 = step_order 0-4.
+        // Puur een UI-construct - sequence_steps in de database kent geen
+        // "stage", alleen step_order (de array-index bij het opslaan) en
+        // wait_days.
+        let sequenceSteps = [null, null, null, null, null];
 
         function currentSelection() {
             return {
@@ -487,6 +602,18 @@
             }
         }
 
+        // Rij van 5 genummerde knoppen om een e-mail (vers gegenereerd of
+        // opgeslagen) toe te wijzen aan een van de 5 sequence-stappen. Een
+        // gevulde stap wordt gemarkeerd (niet uitgeschakeld), zodat een
+        // andere bron dezelfde stap in één klik kan overschrijven.
+        function slotPickerHtml(addFn, sourceIdx) {
+            const buttons = [1, 2, 3, 4, 5].map(n => {
+                const filled = sequenceSteps[n - 1] ? 'btn-slot-filled' : '';
+                return `<button class="btn-slot ${filled}" onclick="${addFn}(${sourceIdx}, ${n - 1})">${n}</button>`;
+            }).join('');
+            return `<div class="slot-picker"><span>Gebruik voor stap:</span>${buttons}</div>`;
+        }
+
         function renderEmails() {
             const area = document.getElementById('resultsArea');
             area.innerHTML = generatedEmails.map((e, i) => `
@@ -498,6 +625,7 @@
                         <button class="btn btn-primary btn-small" onclick="copyEmail(${i})">Kopieer</button>
                         <button class="btn btn-accent btn-small" onclick="saveTemplate(${i})">Opslaan</button>
                     </div>
+                    ${slotPickerHtml('addGeneratedToSlot', i)}
                     <div id="emailAction${i}"></div>
                 </div>
             `).join('');
@@ -528,11 +656,35 @@
             }
         }
 
-        let savedTemplates = [];
-
         function copySavedTemplate(idx) {
             const t = savedTemplates[idx];
             navigator.clipboard.writeText(`Subject: ${t.subject}\n\n${t.body}`);
+        }
+
+        // Losstaand van loadSavedTemplates() zodat een slot-toewijzing de
+        // highlight-status hier kan verversen zonder opnieuw te hoeven
+        // ophalen bij de server.
+        function renderSavedTemplatesList() {
+            const listEl = document.getElementById('savedTemplatesList');
+            if (!savedTemplates.length) {
+                listEl.innerHTML = '<div class="empty-state">Nog geen opgeslagen templates.</div>';
+                return;
+            }
+            listEl.innerHTML = savedTemplates.map((t, i) => `
+                <div class="saved-template-item" id="savedTemplateItem${i}">
+                    <div id="savedTemplateView${i}">
+                        <div class="saved-template-subject">${escapeHtml(t.subject)}</div>
+                        <div class="saved-template-body">${escapeHtml(t.body)}</div>
+                        <div class="item-actions">
+                            <button class="btn btn-primary btn-small" onclick="copySavedTemplate(${i})">Kopieer</button>
+                            <button class="btn btn-accent btn-small" onclick="editSavedTemplate(${i})">Bewerken</button>
+                        </div>
+                        ${slotPickerHtml('addSavedToSlot', i)}
+                    </div>
+                    <div id="savedTemplateEdit${i}" class="saved-template-edit" style="display:none;"></div>
+                    <div id="savedTemplateAction${i}"></div>
+                </div>
+            `).join('');
         }
 
         async function loadSavedTemplates() {
@@ -541,23 +693,185 @@
             try {
                 const data = await apiGet('/api/email-generator/templates');
                 savedTemplates = data.templates || [];
-                if (!savedTemplates.length) {
-                    listEl.innerHTML = '<div class="empty-state">Nog geen opgeslagen templates.</div>';
-                    return;
-                }
-                listEl.innerHTML = savedTemplates.map((t, i) => `
-                    <div class="saved-template-item">
-                        <div class="saved-template-subject">${escapeHtml(t.subject)}</div>
-                        <div class="saved-template-body">${escapeHtml(t.body)}</div>
-                        <button class="btn btn-primary btn-small" onclick="copySavedTemplate(${i})">Kopieer</button>
-                    </div>
-                `).join('');
+                renderSavedTemplatesList();
             } catch (err) {
                 listEl.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
             }
         }
 
-        window.addEventListener('load', loadSavedTemplates);
+        function editSavedTemplate(idx) {
+            const t = savedTemplates[idx];
+            document.getElementById(`savedTemplateView${idx}`).style.display = 'none';
+            const editEl = document.getElementById(`savedTemplateEdit${idx}`);
+            editEl.innerHTML = `
+                <div class="form-section">
+                    <label class="form-label">Onderwerp</label>
+                    <input type="text" id="savedTemplateEditSubject${idx}" value="${escapeHtml(t.subject)}">
+                </div>
+                <div class="form-section">
+                    <label class="form-label">Inhoud</label>
+                    <textarea id="savedTemplateEditBody${idx}">${escapeHtml(t.body)}</textarea>
+                </div>
+                <div class="item-actions">
+                    <button class="btn btn-primary btn-small" onclick="saveSavedTemplateEdit(${idx})">Opslaan</button>
+                    <button class="btn btn-small" onclick="cancelSavedTemplateEdit(${idx})">Annuleren</button>
+                </div>
+            `;
+            editEl.style.display = 'block';
+        }
+
+        function cancelSavedTemplateEdit(idx) {
+            document.getElementById(`savedTemplateEdit${idx}`).style.display = 'none';
+            document.getElementById(`savedTemplateView${idx}`).style.display = 'block';
+        }
+
+        async function saveSavedTemplateEdit(idx) {
+            const subject = document.getElementById(`savedTemplateEditSubject${idx}`).value.trim();
+            const body = document.getElementById(`savedTemplateEditBody${idx}`).value.trim();
+            const actionEl = document.getElementById(`savedTemplateAction${idx}`);
+            if (!subject || !body) {
+                actionEl.innerHTML = '<div class="message error">Onderwerp en inhoud mogen niet leeg zijn.</div>';
+                return;
+            }
+            try {
+                await apiPut(`/api/email-generator/templates/${savedTemplates[idx].id}`, { subject, body });
+                await loadSavedTemplates();
+            } catch (err) {
+                actionEl.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        // --- Sequence-opbouw ---------------------------------------------
+
+        function addGeneratedToSlot(emailIdx, slotIdx) {
+            const e = generatedEmails[emailIdx];
+            sequenceSteps[slotIdx] = { wait_days: 3, subject: e.subject, body: e.body };
+            renderSequenceBuilder();
+            renderEmails();
+            renderSavedTemplatesList();
+        }
+
+        function addSavedToSlot(templateIdx, slotIdx) {
+            const t = savedTemplates[templateIdx];
+            sequenceSteps[slotIdx] = { wait_days: 3, subject: t.subject, body: t.body };
+            renderSequenceBuilder();
+            renderEmails();
+            renderSavedTemplatesList();
+        }
+
+        function clearSlot(slotIdx) {
+            sequenceSteps[slotIdx] = null;
+            renderSequenceBuilder();
+            renderEmails();
+            renderSavedTemplatesList();
+        }
+
+        // Muteert alleen de state (geen re-render) zodat typen in een
+        // stap-veld niet steeds de cursor laat springen door een volledige
+        // innerHTML-rebuild.
+        function updateSlotField(slotIdx, field, value) {
+            if (!sequenceSteps[slotIdx]) return;
+            sequenceSteps[slotIdx][field] = value;
+        }
+
+        function validateSequenceSteps() {
+            return sequenceSteps.every(s => s && s.subject.trim() && s.body.trim());
+        }
+
+        function renderSequenceBuilder() {
+            const slotsEl = document.getElementById('sequenceBuilderSlots');
+            slotsEl.innerHTML = sequenceSteps.map((s, idx) => {
+                if (!s) {
+                    return `<div class="builder-slot-empty">Stap ${idx + 1}: nog leeg - gebruik "Gebruik voor stap ${idx + 1}" bij een e-mail hierboven.</div>`;
+                }
+                return `
+                    <div class="builder-slot">
+                        <div class="builder-slot-header">
+                            <span class="builder-slot-title">Stap ${idx + 1}</span>
+                            <button class="btn btn-small" onclick="clearSlot(${idx})">Leegmaken</button>
+                        </div>
+                        <div class="form-section">
+                            <label class="form-label">Onderwerp</label>
+                            <input type="text" value="${escapeHtml(s.subject)}"
+                                   oninput="updateSlotField(${idx}, 'subject', this.value)">
+                        </div>
+                        <div class="form-section">
+                            <label class="form-label">Inhoud</label>
+                            <textarea oninput="updateSlotField(${idx}, 'body', this.value)">${escapeHtml(s.body)}</textarea>
+                        </div>
+                        <div class="builder-slot-row">
+                            <div>
+                                <label class="form-label">Wachtdagen na vorige stap</label>
+                                <input type="number" class="builder-wait-days" min="0" value="${s.wait_days}"
+                                       oninput="updateSlotField(${idx}, 'wait_days', parseInt(this.value, 10) || 0)">
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('sequenceBuilderCommitBtn').disabled = !validateSequenceSteps();
+        }
+
+        async function loadPersonasForBuilder() {
+            if (!getToken()) return;
+            try {
+                const data = await apiGet('/api/buyer-personas');
+                const personas = data.personas || [];
+                const select = document.getElementById('sequenceBuilderPersona');
+                select.innerHTML = '<option value="">Geen specifieke persona</option>' +
+                    personas.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+            } catch (err) {
+                // Persona-select blijft dan gewoon leeg - geen blokkerende fout.
+            }
+        }
+
+        async function commitSequence() {
+            const msgEl = document.getElementById('sequenceBuilderMessage');
+            msgEl.innerHTML = '';
+            if (!validateSequenceSteps()) {
+                msgEl.innerHTML = '<div class="message error">Vul eerst alle 5 stappen in.</div>';
+                return;
+            }
+            const name = document.getElementById('sequenceBuilderName').value.trim();
+            if (!name) {
+                msgEl.innerHTML = '<div class="message error">Geef de sequence een naam.</div>';
+                return;
+            }
+            const personaValue = document.getElementById('sequenceBuilderPersona').value;
+            const personaId = personaValue ? parseInt(personaValue, 10) : null;
+            const btn = document.getElementById('sequenceBuilderCommitBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Bezig...';
+            try {
+                await apiPost('/api/sequences', {
+                    name,
+                    persona_id: personaId,
+                    steps: sequenceSteps.map(s => ({
+                        wait_days: s.wait_days, subject_template: s.subject, body_template: s.body,
+                    })),
+                });
+                sequenceSteps = [null, null, null, null, null];
+                document.getElementById('sequenceBuilderName').value = '';
+                renderSequenceBuilder();
+                renderEmails();
+                renderSavedTemplatesList();
+                msgEl.innerHTML =
+                    '<div class="message success">✅ Sequence aangemaakt en actief. ' +
+                    '<button class="btn btn-primary btn-small" style="margin-top:6px;" ' +
+                    'onclick="window.parent.switchTab(\'sequences\')">Ga naar Sequenties</button></div>';
+            } catch (err) {
+                msgEl.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
+            } finally {
+                btn.disabled = !validateSequenceSteps();
+                btn.textContent = 'Sequence aanmaken en starten';
+            }
+        }
+
+        window.addEventListener('load', () => {
+            loadSavedTemplates();
+            loadPersonasForBuilder();
+            renderSequenceBuilder();
+        });
     </script>
 </body>
 </html>

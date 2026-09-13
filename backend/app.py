@@ -1547,6 +1547,23 @@ def api_list_email_generator_templates(account: dict = Depends(get_current_accou
     return {"templates": database.list_email_generator_templates(account["id"])}
 
 
+class EmailGeneratorTemplateEditIn(BaseModel):
+    subject: str | None = None
+    body: str | None = None
+    angle: str | None = None
+
+
+@app.put("/api/email-generator/templates/{template_id}")
+def api_update_email_generator_template(template_id: int, payload: EmailGeneratorTemplateEditIn,
+                                         account: dict = Depends(get_current_account)):
+    row = database.update_email_generator_template(
+        template_id, account["id"], payload.subject, payload.body, payload.angle
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Template niet gevonden.")
+    return {"success": True, "template": row}
+
+
 # ---------------------------------------------------------------------------
 # Toewijzen aan een teamlid
 # ---------------------------------------------------------------------------

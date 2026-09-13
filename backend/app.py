@@ -1496,6 +1496,26 @@ _FALLBACK_STAGE_EMAILS = {
             ),
             "angle": "Introductie: open vraag als opener",
         },
+        {
+            "subject": "Nieuwsgierig naar jullie aanpak, {{firstName}}",
+            "body": (
+                "Hoi {{firstName}},<br><br>Ik kom regelmatig horeca-groothandels tegen die worstelen "
+                "met het op tijd binnenkrijgen van betalingen, zonder dat er echt een vast proces "
+                "voor is.<br><br>Hoe pakken jullie dat bij {{company}} eigenlijk aan? Puur uit "
+                "nieuwsgierigheid - ben benieuwd of {focus} daar al een rol in speelt."
+            ),
+            "angle": "Introductie: nieuwsgierige vraag naar huidige aanpak",
+        },
+        {
+            "subject": "{{firstName}}, mag ik iets vragen?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Ik werk veel met horeca-groothandels en zie vaak hetzelfde "
+                "patroon: betalingen die uitlopen, en niemand die er structureel tijd voor vrijmaakt "
+                "om dat bij te sturen.<br><br>Is dat bij {{company}} ook zo, of hebben jullie dit al "
+                "goed voor elkaar? Gewoon benieuwd."
+            ),
+            "angle": "Introductie: patroon herkennen, open uitnodiging tot reactie",
+        },
     ],
     "2": [
         {
@@ -1527,6 +1547,26 @@ _FALLBACK_STAGE_EMAILS = {
                 "{{company}}? Benieuwd of dit al ergens op de agenda staat."
             ),
             "angle": "Probleem herkenning: rol/verantwoordelijkheid als invalshoek",
+        },
+        {
+            "subject": "Wat kost het opvolgen van facturen jullie echt?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Vaak wordt onderschat hoeveel tijd het kost om achter "
+                "openstaande facturen aan te zitten - bellen, mailen, nog een keer bellen. Bij "
+                "{{company}} speelt dat vast ook, en het raakt direct {focus}.<br><br>Heb je hier al "
+                "eens concreet naar gekeken, of is het meer iets wat er gewoon bij hoort?"
+            ),
+            "angle": "Probleem herkenning: kosten van handmatig opvolgen concreet maken",
+        },
+        {
+            "subject": "Herkenbaar: laatste-moment betalers?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Bij veel horeca-groothandels is er een vaste groep klanten "
+                "die altijd tot het laatste moment wacht met betalen - en dat kost tijd, energie en "
+                "uiteindelijk {focus}.<br><br>Speelt dat bij {{company}} ook, en hoe gaan jullie daar "
+                "nu mee om?"
+            ),
+            "angle": "Probleem herkenning: specifiek klantgedrag als herkenningspunt",
         },
     ],
     "3": [
@@ -1561,6 +1601,26 @@ _FALLBACK_STAGE_EMAILS = {
             ),
             "angle": "Oplossing interesse: social proof + uitnodiging",
         },
+        {
+            "subject": "Van achteraf bellen naar automatisch herinneren",
+            "body": (
+                "Hoi {{firstName}},<br><br>In plaats van zelf achter betalingen aan te bellen, zorgt "
+                "Twikey ervoor dat herinneringen automatisch en op het juiste moment verstuurd worden "
+                "- wat direct {focus} verbetert.<br><br>Klinkt dit als iets wat waarde zou kunnen "
+                "hebben voor {{company}}?"
+            ),
+            "angle": "Oplossing interesse: van handmatig naar automatisch als kernboodschap",
+        },
+        {
+            "subject": "Eén systeem, minder gedoe",
+            "body": (
+                "Hoi {{firstName}},<br><br>Twikey geeft horeca-groothandels één overzichtelijk "
+                "systeem voor betalingsherinneringen en incasso, in plaats van losse mailtjes en "
+                "telefoontjes - met merkbaar effect op {focus}.<br><br>Zou je het interessant vinden "
+                "om te zien hoe dat er voor {{company}} uit zou zien?"
+            ),
+            "angle": "Oplossing interesse: overzicht/eenvoud als invalshoek",
+        },
     ],
     "4": [
         {
@@ -1593,6 +1653,25 @@ _FALLBACK_STAGE_EMAILS = {
             ),
             "angle": "Engagement: vervolgstap na eerder contact",
         },
+        {
+            "subject": "Kort telefoontje, {{firstName}}?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Ik wil je niet te veel van je tijd vragen - een "
+                "telefoontje van 10 minuten is genoeg om te bepalen of dit interessant is voor "
+                "{{company}}, met name op het gebied van {focus}.<br><br>Zullen we deze week iets "
+                "inplannen?"
+            ),
+            "angle": "Engagement: laagdrempelig telefonisch contact",
+        },
+        {
+            "subject": "Wanneer komt het jou uit, {{firstName}}?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Ik denk dat we in een kort gesprek al snel kunnen bepalen "
+                "of dit voor {{company}} de moeite waard is, vooral gezien {focus}.<br><br>Laat "
+                "gerust weten welk moment deze of volgende week jou uitkomt, dan plan ik het in."
+            ),
+            "angle": "Engagement: flexibele planning als CTA",
+        },
     ],
     "5": [
         {
@@ -1621,6 +1700,24 @@ _FALLBACK_STAGE_EMAILS = {
                 "hoor.<br><br>Mocht {focus} later alsnog relevant worden, hoor ik het graag."
             ),
             "angle": "Urgentie: aanname + deadline als duw",
+        },
+        {
+            "subject": "Definitief laatste bericht, {{firstName}}",
+            "body": (
+                "Hoi {{firstName}},<br><br>Dit is echt mijn laatste poging - ik wil je tijd niet "
+                "verder in beslag nemen.<br><br>Mocht {focus} op enig moment weer relevant worden "
+                "voor {{company}}, hoor ik het graag. Tot dan wens ik je succes."
+            ),
+            "angle": "Urgentie: vriendelijke afsluiting met open deur",
+        },
+        {
+            "subject": "Nog één keer, {{firstName}}",
+            "body": (
+                "Hoi {{firstName}},<br><br>Ik snap het als de timing nu niet goed is - dit is dan ook "
+                "echt de laatste keer dat ik hierover mail.<br><br>Een kort 'nee, bedankt' is ook "
+                "prima, dan weet ik dat en stop ik ermee."
+            ),
+            "angle": "Urgentie: expliciete uitnodiging om af te wijzen",
         },
     ],
 }

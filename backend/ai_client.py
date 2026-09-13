@@ -360,7 +360,7 @@ def generate_outreach_emails(persona: str, goal: str, stage: str, tone: str,
     parts.append(f"Genereer precies {count} verschillende variant(en).")
 
     message = client.messages.create(
-        model=_MODEL, max_tokens=1800, system=system,
+        model=_MODEL, max_tokens=2600, system=system,
         messages=[{"role": "user", "content": "\n\n".join(parts)}],
     )
     raw = _text_of(message)

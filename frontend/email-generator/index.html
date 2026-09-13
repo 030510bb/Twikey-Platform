@@ -587,7 +587,7 @@
             try {
                 const data = await apiPost('/api/email-generator/emails', {
                     sector: sel.sector, persona: sel.persona, goal: sel.goal, stage: sel.stage, tone: sel.tone,
-                    pains: selected.pains, values: selected.values, objections: selected.objections, count: 3,
+                    pains: selected.pains, values: selected.values, objections: selected.objections, count: 5,
                 });
                 generatedEmails = data.emails;
                 renderEmails();

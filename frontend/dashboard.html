@@ -643,6 +643,7 @@
 
                 <div class="sidebar-group-label">Outreach</div>
                 <button class="tab-button" onclick="switchTab('email')">📧 Email Sync</button>
+                <button class="tab-button" onclick="switchTab('emailgenerator')">✉️ Email Generator</button>
                 <button class="tab-button" onclick="switchTab('linkedin')">🔗 LinkedIn</button>
                 <button class="tab-button" onclick="switchTab('abtest')">🧪 A/B Test</button>
                 <button class="tab-button" onclick="switchTab('sequences')">🔁 Sequenties</button>
@@ -788,6 +789,12 @@
                         </tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <div id="emailgenerator" class="tab-content">
+            <div class="card" style="padding: 0; overflow: hidden;">
+                <iframe src="email-generator/index.html" style="width: 100%; height: calc(100vh - 250px); border: none; display: block;"></iframe>
             </div>
         </div>
 
@@ -1863,6 +1870,7 @@
             dashboard: { icon: '📊', label: 'Dashboard' },
             contacts: { icon: '👤', label: 'Contacten' },
             email: { icon: '📧', label: 'Email Sync' },
+            emailgenerator: { icon: '✉️', label: 'Email Generator' },
             linkedin: { icon: '🔗', label: 'LinkedIn' },
             abtest: { icon: '🧪', label: 'A/B Test' },
             sequences: { icon: '🔁', label: 'Sequenties' },

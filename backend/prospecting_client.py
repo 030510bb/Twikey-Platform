@@ -3,27 +3,28 @@ Vibe Prospecting / Explorium client (Fase 2, crm-roadmap.md punt 3 + Fase 2
 "Vibe Prospecting/Explorium: echte zoek- en lookalike-endpoints").
 
 Per-account "bring your own key" - see prospecting_settings in database.py.
-Talks directly to Explorium's v2 REST API (developers.explorium.ai) - there
+Talks directly to Explorium's v1 REST API (developers.explorium.ai) - there
 is no official Python SDK, so this is a thin `requests` wrapper using their
-documented `api_key` header auth (a plain header, not a Bearer token).
+documented `API_KEY` header auth (a plain header, not a Bearer token).
 
-Endpoints used here (per crm-roadmap.md's "Openstaande vragen" note - these
-are the documented v2 endpoints, not yet exercised against a live customer
-key since no customer has connected one yet; the account settings screen
-deliberately allows saving without one, see database.py's
-prospecting_settings comment):
-  - POST /v2/businesses/match   - find a business by name/domain, returns a business_id
-  - POST /v2/businesses/search  - filter-based business search, used here for lookalikes
-  - POST /v2/prospects/match    - find people at a matched business
-  - POST /v2/prospects/contact_information/enrich - email/phone for matched prospects
+Endpoints used here - verified against developers.explorium.ai on
+2026-09-14 (the first time an account actually connected a live key and
+every path/shape below turned out to differ from what this module
+originally assumed - a stale /v2/... base path, a batched enrich call that
+Explorium only ever supported one-prospect-at-a-time, and a "match
+prospects by business_id" call that isn't what that endpoint is for at
+all, see fetch_prospects() below):
+  - POST /v1/businesses/match                    - find a business by name/domain, returns a business_id
+  - POST /v1/businesses                          - filter-based business search (sector search, lookalikes)
+  - POST /v1/prospects/match                     - match ONE already-identified person (by email/phone/linkedin/full_name+company)
+  - POST /v1/prospects                           - filter-based prospect search (e.g. business_id + job_title) - this is
+                                                     the one to use for "find people at this company", not prospects/match
+  - POST /v1/prospects/contacts_information/enrich - email/phone for ONE prospect_id per call (not batched)
        (2 credits/email, 5/phone per Explorium's pricing)
 
 Every call raises ExploriumError with a readable, Dutch message on any
 non-2xx response so app.py can surface it to the customer instead of a raw
-traceback. Response field names below (matched_businesses/data etc.) are
-best-effort against Explorium's published docs - worth a quick sanity check
-against the real response shape the first time an account connects a real
-key, since that hasn't happened yet.
+traceback.
 """
 
 import requests
@@ -40,7 +41,7 @@ def _request(api_key: str, method: str, path: str, json_body: dict = None) -> di
     try:
         resp = requests.request(
             method, f"{BASE_URL}{path}",
-            headers={"api_key": api_key, "Content-Type": "application/json"},
+            headers={"API_KEY": api_key, "Content-Type": "application/json"},
             json=json_body, timeout=REQUEST_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -62,20 +63,18 @@ def match_businesses(api_key: str, businesses: list) -> list:
     """businesses: [{"name": ..., "domain": ...}, ...], at least one of
     name/domain per entry. Returns the matched business records
     (including a business_id used by the other functions below)."""
-    data = _request(api_key, "POST", "/v2/businesses/match", {"businesses_to_match": businesses})
+    data = _request(api_key, "POST", "/v1/businesses/match", {"businesses_to_match": businesses})
     return data.get("matched_businesses") or data.get("data") or []
 
 
 def search_businesses(api_key: str, filters: dict, size: int = 20) -> list:
-    """Generieke filter-based business search (v2/businesses/search) -
-    filters is een Explorium filter-dict, bv. {"linkedin_category": [...]}
-    voor sector-zoeken (dagelijkse prospecting-cron) of
-    {"linkedin_similar_companies": [id]} voor lookalikes (zie
-    search_lookalike_businesses). linkedin_category/naics_category zijn
-    reële, actuele Explorium filter-velden (bevestigd via het Vibe
-    Prospecting MCP-tool schema, niet geraden) - wel nog een sanity-check
-    waard tegen een live klant-key, zie de module-docstring hierboven."""
-    data = _request(api_key, "POST", "/v2/businesses/search", {
+    """Generieke filter-based business search (POST /v1/businesses) -
+    filters is een Explorium filter-dict met per veld een {"values": [...]}
+    object, bv. {"linkedin_category": {"values": [...]}} voor sector-zoeken
+    (dagelijkse prospecting-cron) of
+    {"linkedin_similar_companies": {"values": [id]}} voor lookalikes (zie
+    search_lookalike_businesses)."""
+    data = _request(api_key, "POST", "/v1/businesses", {
         "mode": "full",
         "size": size,
         "filters": filters,
@@ -84,20 +83,70 @@ def search_businesses(api_key: str, filters: dict, size: int = 20) -> list:
 
 
 def search_lookalike_businesses(api_key: str, business_id: str, size: int = 20) -> list:
-    """Lookalikes (crm-roadmap.md punt 3) - ongewijzigd gedrag t.o.v. voor
-    de refactor naar search_businesses hierboven."""
-    return search_businesses(api_key, {"linkedin_similar_companies": [business_id]}, size)
+    """Lookalikes (crm-roadmap.md punt 3)."""
+    return search_businesses(api_key, {"linkedin_similar_companies": {"values": [business_id]}}, size)
 
 
 def match_prospects(api_key: str, prospects: list) -> list:
-    """prospects: [{"business_id": ..., "job_titles": [...]}] or
-    [{"full_name": ..., "company_name": ...}], etc."""
-    data = _request(api_key, "POST", "/v2/prospects/match", {"prospects_to_match": prospects})
+    """Matcht een AL BEKEND, specifiek persoon (bv. via e-mail/telefoon/
+    linkedin/full_name+company_name) tegen Explorium's database - dit is
+    GEEN zoek-/discovery-endpoint (een kaal business_id is hier niet
+    genoeg om iemand mee te matchen). Voor "vind mensen bij dit bedrijf"
+    is fetch_prospects() hieronder het juiste endpoint.
+    prospects: [{"full_name": ..., "company_name": ...}] of
+    [{"email": ...}] / [{"phone_number": ...}] / [{"linkedin": ...}] /
+    [{"business_id": ...}] (dat laatste matcht op zichzelf zelden iets
+    zinnigs, zie hierboven)."""
+    data = _request(api_key, "POST", "/v1/prospects/match", {"prospects_to_match": prospects})
     return data.get("matched_prospects") or data.get("data") or []
 
 
-def enrich_prospect_contacts(api_key: str, prospect_ids: list) -> list:
-    data = _request(api_key, "POST", "/v2/prospects/contact_information/enrich", {
-        "prospect_ids": prospect_ids,
+def fetch_prospects(api_key: str, filters: dict, size: int = 20) -> list:
+    """Filter-based prospect search (POST /v1/prospects) - het juiste
+    endpoint om mensen bij een bedrijf te VINDEN (i.t.t. match_prospects
+    hierboven, dat een al bekend persoon bevestigt). filters bv.
+    {"business_id": {"values": [id]}, "job_title": {"values": [...],
+    "include_related_job_titles": True}}. Geeft records met o.a.
+    prospect_id/first_name/last_name/full_name/job_title/business_id
+    terug - dus i.t.t. match_prospects/enrich_prospect_contacts hoef je
+    voor naam/functie niet nog een aparte aanroep te doen."""
+    data = _request(api_key, "POST", "/v1/prospects", {
+        "mode": "full",
+        "size": size,
+        "filters": filters,
     })
     return data.get("data") or []
+
+
+def _first_dict_value(items) -> str:
+    """Explorium's enrich-response geeft e-mails/telefoonnummers terug als
+    een array van objecten met een niet in de documentatie vastgelegde
+    sleutelnaam (bv. {"email_address_key": "..."}) - dit pakt gewoon de
+    eerste waarde uit het eerste object, ongeacht hoe die sleutel heet."""
+    if not items:
+        return ""
+    first = items[0]
+    if isinstance(first, dict) and first:
+        return next(iter(first.values()), "") or ""
+    return str(first) if first else ""
+
+
+def enrich_prospect_contacts(api_key: str, prospect_ids: list) -> list:
+    """Explorium's enrich-endpoint neemt één prospect_id per aanroep (niet
+    gebatcht, ondanks wat de naam 'contacts_information' doet vermoeden) -
+    dit itereert intern zodat roepers een simpele lijst-in/lijst-uit
+    contract behouden. Geeft per id {"prospect_id", "email", "phone"}
+    terug (lege strings als er geen contactgegevens beschikbaar zijn)."""
+    results = []
+    for prospect_id in prospect_ids:
+        data = _request(api_key, "POST", "/v1/prospects/contacts_information/enrich", {
+            "prospect_id": prospect_id,
+            "parameters": {"contact_types": ["email", "phone"]},
+        })
+        payload = data.get("data") or {}
+        results.append({
+            "prospect_id": prospect_id,
+            "email": _first_dict_value(payload.get("emails")),
+            "phone": _first_dict_value(payload.get("phone_numbers")),
+        })
+    return results

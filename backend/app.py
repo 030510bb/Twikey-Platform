@@ -2144,11 +2144,24 @@ class ProspectingProspectsIn(BaseModel):
 
 @app.post("/api/prospecting/prospects/match")
 def api_prospecting_match_prospects(payload: ProspectingProspectsIn, account: dict = Depends(get_current_account)):
+    """Ondanks de route-naam ("match") roept dit fetch_prospects() aan als
+    er een business_id is meegegeven - een kale business_id is bij
+    Explorium geen geldige match-invoer (match_prospects verwacht een al
+    bekend, specifiek persoon), dus "vind mensen bij dit bedrijf" moet via
+    het filter-based search-endpoint. Route-pad en frontend-contract
+    (POST met `prospects: [{business_id, job_titles}]`, terug: `prospects:
+    [{prospect_id, full_name, ...}]`) blijven ongewijzigd."""
     api_key = _decrypted_prospecting_key(account["id"])
     try:
-        results = prospecting_client.match_prospects(
-            api_key, [p.model_dump(exclude_none=True) for p in payload.prospects]
-        )
+        results = []
+        for p in payload.prospects:
+            if p.business_id:
+                filters = {"business_id": {"values": [p.business_id]}}
+                if p.job_titles:
+                    filters["job_title"] = {"values": p.job_titles, "include_related_job_titles": True}
+                results.extend(prospecting_client.fetch_prospects(api_key, filters))
+            else:
+                results.extend(prospecting_client.match_prospects(api_key, [p.model_dump(exclude_none=True)]))
     except prospecting_client.ExploriumError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"prospects": results}
@@ -2220,7 +2233,7 @@ def api_process_prospecting():
         sector = (settings_row["daily_import_sector"] or "").strip()
         try:
             api_key = crypto.decrypt(settings_row["api_key_encrypted"])
-            filters = {"linkedin_category": [sector]} if sector else {}
+            filters = {"linkedin_category": {"values": [sector]}} if sector else {}
             businesses = prospecting_client.search_businesses(api_key, filters, size=target * 3)
             new_count = 0
             for business in businesses:
@@ -2229,23 +2242,32 @@ def api_process_prospecting():
                 business_id = business.get("business_id")
                 if not business_id:
                     continue
-                prospects = prospecting_client.match_prospects(
-                    api_key, [{"business_id": business_id, "job_titles": DAILY_PROSPECTING_JOB_TITLES}],
-                )
-                prospect_ids = [p["prospect_id"] for p in prospects if p.get("prospect_id")]
-                if not prospect_ids:
+                # fetch_prospects (niet match_prospects) is het juiste
+                # endpoint om mensen bij een bedrijf te VINDEN - geeft
+                # naam/functie meteen mee, dus geen aparte match-stap nodig
+                # voor die velden.
+                prospects = prospecting_client.fetch_prospects(api_key, {
+                    "business_id": {"values": [business_id]},
+                    "job_title": {"values": DAILY_PROSPECTING_JOB_TITLES, "include_related_job_titles": True},
+                }, size=target - new_count)
+                if not prospects:
                     continue
-                for enriched in prospecting_client.enrich_prospect_contacts(api_key, prospect_ids):
+                prospect_ids = [p["prospect_id"] for p in prospects if p.get("prospect_id")]
+                enriched_by_id = {e["prospect_id"]: e for e in prospecting_client.enrich_prospect_contacts(api_key, prospect_ids)}
+                for prospect in prospects:
                     if new_count >= target:
                         break
+                    enriched = enriched_by_id.get(prospect.get("prospect_id"), {})
                     email = (enriched.get("email") or "").strip()
                     if not email:
                         continue
                     if database.get_contact_by_email(account_id, email):
                         continue  # al bekend - niet als nieuw tellen (add_contact zou 'm alsnog upserten, maar niet dubbel meetellen)
-                    full_name = (enriched.get("full_name") or "Onbekend").split(" ")
                     contact = database.add_contact(
-                        account_id=account_id, first_name=full_name[0], last_name=" ".join(full_name[1:]),
+                        account_id=account_id,
+                        first_name=prospect.get("first_name") or (prospect.get("full_name") or "Onbekend").split(" ")[0],
+                        last_name=prospect.get("last_name") or "",
+                        job_title=prospect.get("job_title") or "",
                         email=email, company=business.get("name") or "", sector=sector,
                         source="vibe_prospecting_daily",
                     )

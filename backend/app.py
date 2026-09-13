@@ -1449,32 +1449,197 @@ _HORECA_KB = {
     ],
 }
 
-_FALLBACK_OUTREACH_EMAILS = [
-    {
-        "subject": "{{firstName}}, betalingsproblemen opgelost?",
-        "body": (
-            "Hoi {{firstName}},<br><br>Merken jullie bij {{company}} ook dat betalingen steeds langer "
-            "duren? Veel horecazaken hebben hier last van.<br><br>Benieuwd of dit ook bij jullie speelt?"
-        ),
-        "angle": "Algemene opener over late betalingen",
-    },
-    {
-        "subject": "Sneller cashflow bij {{company}}?",
-        "body": (
-            "Hoi {{firstName}},<br><br>We helpen horeca-groothandels hun cashflow met 10-15 dagen te "
-            "verbeteren door betalingsherinneringen te automatiseren.<br><br>Interesse in een korte demo?"
-        ),
-        "angle": "Concreet cashflow-voordeel",
-    },
-    {
-        "subject": "Korte vraag over betaaltermijnen",
-        "body": (
-            "Hoi {{firstName}},<br><br>Gemiddeld hoeveel dagen wachten jullie bij {{company}} op betaling "
-            "van klanten? We doen onderzoek en horen graag jullie ervaring.<br><br>Twee minuten van je tijd?"
-        ),
-        "angle": "Laagdrempelige onderzoeksvraag",
-    },
-]
+_FALLBACK_PERSONA_FOCUS = {
+    "owner": "jullie cashflow en omzetrisico",
+    "manager": "de tijd die het team kwijt is aan opvolgen",
+    "admin": "het handmatige werk in het incassoproces",
+    "it": "hoe eenvoudig en veilig dit te koppelen is aan jullie systemen",
+    "": "wat dit voor {{company}} kan betekenen",
+}
+
+# Niet-AI fallback - bewust per fase een eigen set van 3 voorbeeld-mails
+# (niet één generieke lijst voor alle fases), zodat de output ook zonder
+# ANTHROPIC_API_KEY nog herkenbaar verschilt per gekozen fase. `{focus}`
+# wordt per persona ingevuld via _FALLBACK_PERSONA_FOCUS, zie
+# _fallback_outreach_emails().
+_FALLBACK_STAGE_EMAILS = {
+    "1": [
+        {
+            "subject": "{{firstName}}, herkenbaar bij {{company}}?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Veel horeca-groothandels waar ik mee spreek, merken dat "
+                "betalingen van klanten steeds langer duren en dat het versturen van herinneringen "
+                "best wat tijd kost. Vaak blijft dat onderbelicht, terwijl het wel invloed heeft op "
+                "{focus}.<br><br>Speelt dit ook bij {{company}}? Ben benieuwd hoe jullie dit nu "
+                "aanpakken - geen verplichting, gewoon nieuwsgierig."
+            ),
+            "angle": "Introductie: herkenbare situatie benoemen, geen hard aanbod",
+        },
+        {
+            "subject": "Kort voorstellen, {{firstName}}",
+            "body": (
+                "Hoi {{firstName}},<br><br>Ik help horeca-groothandels zoals {{company}} met het "
+                "automatiseren van betalingsherinneringen en incasso, zodat er minder tijd in "
+                "handmatig opvolgen gaat zitten en {focus} verbetert.<br><br>Nog geen idee of dit "
+                "voor jullie relevant is - vandaar dit korte berichtje. Interessant genoeg om even "
+                "kennis te maken?"
+            ),
+            "angle": "Introductie: zachte kennismaking met wat Twikey doet",
+        },
+        {
+            "subject": "Even een korte vraag, {{firstName}}",
+            "body": (
+                "Hoi {{firstName}},<br><br>Bij veel horeca-groothandelbedrijven loopt het opvolgen "
+                "van openstaande facturen op tot flink wat uren per week - vaak zonder dat er echt "
+                "naar gekeken wordt.<br><br>Is dat bij {{company}} ook een onderwerp waar wel wat "
+                "tijd in gaat zitten? Ben benieuwd naar jullie situatie."
+            ),
+            "angle": "Introductie: open vraag als opener",
+        },
+    ],
+    "2": [
+        {
+            "subject": "Hoeveel dagen wachten jullie op betaling?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Een concrete vraag: gemiddeld hoeveel dagen wachten jullie "
+                "bij {{company}} op betaling van klanten, en hoeveel tijd gaat er wekelijks in het "
+                "versturen van herinneringen?<br><br>Bij veel horeca-groothandels loopt dit flink op "
+                "en raakt het direct {focus}. Benieuwd of dat bij jullie ook speelt."
+            ),
+            "angle": "Probleem herkenning: concreet doorvragen op het pijnpunt",
+        },
+        {
+            "subject": "Late betalingen - herkenbaar?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Steeds meer horeca-groothandels geven aan dat late "
+                "betalingen en het bijhouden van wie nog moet betalen veel tijd en energie kost - en "
+                "dat dit uiteindelijk {focus} onder druk zet.<br><br>Is dit ook een terugkerend "
+                "gesprek binnen {{company}}? Zou graag horen hoe jullie dit nu oplossen."
+            ),
+            "angle": "Probleem herkenning: bredere trend + persoonlijke vraag",
+        },
+        {
+            "subject": "Wie houdt bij {{company}} de betalingen bij?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Bij veel bedrijven in de horeca-groothandel is er niemand "
+                "die structureel bijhoudt welke klanten traag betalen, totdat het een probleem wordt. "
+                "Dat kost vaak meer dan gedacht, ook qua {focus}.<br><br>Hoe gaat dit nu bij "
+                "{{company}}? Benieuwd of dit al ergens op de agenda staat."
+            ),
+            "angle": "Probleem herkenning: rol/verantwoordelijkheid als invalshoek",
+        },
+    ],
+    "3": [
+        {
+            "subject": "Zo lossen horeca-groothandels dit op",
+            "body": (
+                "Hoi {{firstName}},<br><br>Twikey automatiseert betalingsherinneringen en incasso "
+                "specifiek voor horeca-groothandels, waardoor {focus} merkbaar verbetert - zonder dat "
+                "jullie team er extra werk aan heeft.<br><br>Klanten van ons zien doorgaans binnen "
+                "enkele weken al minder openstaande facturen. Wil je kort zien hoe dat er voor "
+                "{{company}} uit zou zien?"
+            ),
+            "angle": "Oplossing interesse: concreet resultaat + zachte CTA",
+        },
+        {
+            "subject": "Minder handwerk, sneller betaald",
+            "body": (
+                "Hoi {{firstName}},<br><br>In plaats van zelf herinneringen te versturen en bij te "
+                "houden wie nog moet betalen, regelt Twikey dit automatisch - wat direct {focus} ten "
+                "goede komt.<br><br>Voor {{company}} zou dit betekenen dat het team minder tijd kwijt "
+                "is aan opvolgen. Interessant om hier kort kennis mee te maken?"
+            ),
+            "angle": "Oplossing interesse: automatisering als kernvoordeel",
+        },
+        {
+            "subject": "Een concreet voorbeeld voor {{company}}",
+            "body": (
+                "Hoi {{firstName}},<br><br>Andere horeca-groothandels die met Twikey werken, zien dat "
+                "betalingsherinneringen vanzelf gaan en dat {focus} daardoor verbetert, zonder dat er "
+                "iemand achteraan hoeft te bellen.<br><br>Zou je het interessant vinden om te zien hoe "
+                "dat er specifiek voor {{company}} uit zou kunnen zien?"
+            ),
+            "angle": "Oplossing interesse: social proof + uitnodiging",
+        },
+    ],
+    "4": [
+        {
+            "subject": "15 minuten deze week, {{firstName}}?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Zullen we deze week 15 minuten inplannen om te bespreken "
+                "hoe Twikey {focus} kan verbeteren bij {{company}}? Ik laat je graag concreet zien wat "
+                "dit in de praktijk oplevert, zonder verplichtingen.<br><br>Welke dag komt jou het "
+                "beste uit?"
+            ),
+            "angle": "Engagement: directe afspraak-CTA",
+        },
+        {
+            "subject": "Zullen we bellen, {{firstName}}?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Ik denk dat een kort gesprek van 10 à 15 minuten al "
+                "duidelijk kan maken of Twikey iets voor {{company}} kan betekenen, vooral op het "
+                "gebied van {focus}.<br><br>Kan ik je deze of volgende week even bellen? Zeg maar "
+                "welk moment schikt."
+            ),
+            "angle": "Engagement: telefonisch contact als lagedrempel-CTA",
+        },
+        {
+            "subject": "Klaar voor de volgende stap, {{firstName}}?",
+            "body": (
+                "Hoi {{firstName}},<br><br>We hebben het eerder al even gehad over "
+                "betalingsherinneringen bij {{company}} - ik denk dat het nu een goed moment is om "
+                "samen te kijken wat dit concreet kan opleveren voor {focus}.<br><br>Zullen we een "
+                "korte call inplannen deze week?"
+            ),
+            "angle": "Engagement: vervolgstap na eerder contact",
+        },
+    ],
+    "5": [
+        {
+            "subject": "Laatste check, {{firstName}}",
+            "body": (
+                "Hoi {{firstName}},<br><br>Ik wil je niet langer lastigvallen - dit is mijn laatste "
+                "bericht hierover.<br><br>Als {focus} relevant is voor {{company}}, laat het gerust "
+                "weten. Anders hoor je niets meer van me."
+            ),
+            "angle": "Urgentie: korte, laagdrempelige laatste poging",
+        },
+        {
+            "subject": "Nog interesse, {{firstName}}?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Korte laatste vraag: is dit nog relevant voor {{company}}? "
+                "Zo niet, geen probleem - dan laat ik het hierbij.<br><br>Een simpel 'ja' of 'nee' is "
+                "al genoeg."
+            ),
+            "angle": "Urgentie: minimale inspanning gevraagd",
+        },
+        {
+            "subject": "Sluit ik dit af, {{firstName}}?",
+            "body": (
+                "Hoi {{firstName}},<br><br>Ik neem aan dat de timing nu niet goed is en sluit dit "
+                "dossier voor {{company}} dan ook af, tenzij ik voor vrijdag nog iets van je "
+                "hoor.<br><br>Mocht {focus} later alsnog relevant worden, hoor ik het graag."
+            ),
+            "angle": "Urgentie: aanname + deadline als duw",
+        },
+    ],
+}
+
+
+def _fallback_outreach_emails(persona: str, stage: str, count: int) -> list:
+    """Niet-AI fallback (zie api_generate_outreach_emails) - per fase een
+    eigen set voorbeelden i.p.v. één generieke lijst, met een
+    persona-specifieke focus verweven in de tekst via {focus}."""
+    focus = _FALLBACK_PERSONA_FOCUS.get(persona, _FALLBACK_PERSONA_FOCUS[""])
+    variants = _FALLBACK_STAGE_EMAILS.get(stage, _FALLBACK_STAGE_EMAILS["1"])
+    # .replace(), not .format(): these bodies contain literal {{firstName}}/
+    # {{company}} merge fields that must survive untouched - str.format()
+    # would collapse the doubled braces to {firstName}/{company}.
+    emails = [
+        {"subject": v["subject"], "body": v["body"].replace("{focus}", focus), "angle": v["angle"]}
+        for v in variants
+    ]
+    return emails[:count]
 
 
 class EmailGeneratorKbIn(BaseModel):
@@ -1518,7 +1683,7 @@ def api_generate_outreach_emails(payload: EmailGeneratorEmailsIn, account: dict 
         except Exception as exc:  # noqa: BLE001 - fall back to the static examples below
             logger.warning("AI-outreach-mails genereren mislukt voor account %s: %s", account["id"], exc)
     if not emails:
-        emails = _FALLBACK_OUTREACH_EMAILS[:count]
+        emails = _fallback_outreach_emails(payload.persona, payload.stage, count)
     return {"success": True, "source": source, "emails": emails}
 
 

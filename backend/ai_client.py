@@ -257,16 +257,48 @@ def suggest_csv_mapping(headers: list, sample_rows: list, canonical_fields: dict
 # ---------------------------------------------------------------------------
 
 _PERSONA_LABELS = {
-    "owner": "Eigenaar / Directeur", "manager": "Operations Manager",
-    "admin": "Administratief Medewerker", "it": "IT / Technisch",
+    "owner": (
+        "Eigenaar/Directeur - denkt in cashflow, omzetrisico en het totaalplaatje van het bedrijf. "
+        "Focus op financiële impact en ROI, niet op technische details."
+    ),
+    "manager": (
+        "Operations Manager - verantwoordelijk voor de dagelijkse bedrijfsvoering. "
+        "Focus op tijdsbesparing, minder gedoe voor het team en operationele efficiëntie."
+    ),
+    "admin": (
+        "Administratief Medewerker - voert het incasso- en herinneringswerk zelf handmatig uit. "
+        "Focus op minder handmatig werk en een eenvoudigere, overzichtelijkere workflow."
+    ),
+    "it": (
+        "IT/Technisch - beoordeelt nieuwe tools op integratie, betrouwbaarheid en veiligheid. "
+        "Focus op eenvoudige koppeling en technische soliditeit, geen verkooppraatjes."
+    ),
 }
 _GOAL_LABELS = {
     "appointment": "een afspraak maken", "webinar": "inschrijven voor een webinar",
     "analysis": "een (gratis) analyse laten invullen", "contact": "contactgegevens verkrijgen",
 }
 _STAGE_LABELS = {
-    "1": "Introductie (eerste kennismaking)", "2": "Probleem herkenning",
-    "3": "Oplossing interesse", "4": "Engagement / call-to-action", "5": "Urgentie / laatste duw",
+    "1": (
+        "Introductie - eerste kennismaking. Kort en nieuwsgierig makend, nog geen concreet aanbod. "
+        "Benoem een herkenbare situatie, geen harde ask."
+    ),
+    "2": (
+        "Probleem herkenning - ga dieper in op één specifiek pijnpunt en vraag expliciet of dit "
+        "herkenbaar is voor de ontvanger."
+    ),
+    "3": (
+        "Oplossing interesse - introduceer kort en concreet hoe Twikey dit pijnpunt oplost, met een "
+        "tastbaar voordeel."
+    ),
+    "4": (
+        "Engagement/call-to-action - duidelijke, directe uitnodiging om te reageren of een afspraak "
+        "te maken; iets dringender dan de vorige stappen."
+    ),
+    "5": (
+        "Urgentie/laatste duw - kortste en meest to-the-point mail van de reeks, met een "
+        "laagdrempelige call-to-action en een gevoel van 'laatste kans'."
+    ),
 }
 _TONE_LABELS = {
     "friendly": "vriendelijk, begripvol", "formal": "formeel, professioneel",
@@ -287,21 +319,30 @@ def generate_outreach_emails(persona: str, goal: str, stage: str, tone: str,
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     system = (
-        "Je schrijft korte, Nederlandse eerste-contact cold-outreach e-mails "
-        "voor Twikey (automatische incasso en betalingsherinneringen), "
-        "gericht aan horeca-groothandelbedrijven. Gebruik de meegegeven "
-        "pijnpunten en waardeproposities als inhoudelijke basis, en speel "
-        "eventuele bezwaren subtiel voor - noem ze niet letterlijk. Gebruik "
-        "de merge-velden {{firstName}}, {{lastName}} en {{company}} waar "
-        "relevant - laat ze letterlijk staan, vul ze niet in. Subject: kort "
-        "en persoonlijk, max 8 woorden. Body: max 100 woorden, mag <br><br> "
-        "gebruiken voor alinea's, geen aanhef ('Beste ...') en geen "
-        "afsluiting met naam. Schrijf in het Nederlands, informeel-zakelijk "
-        "(je-vorm). Geef het antwoord ALLEEN als geldige JSON: een array "
-        'van objecten met de sleutels "subject", "body" en "angle" (angle = '
-        "één korte Nederlandse zin die de invalshoek samenvat, bijv. 'Focus "
-        "op cashflow-risico'). Geen uitleg, geen markdown-codeblok, alleen "
-        "de JSON-array."
+        "Je schrijft Nederlandse eerste-contact cold-outreach e-mails voor "
+        "Twikey (automatische incasso en betalingsherinneringen), gericht "
+        "aan horeca-groothandelbedrijven. Gebruik de meegegeven pijnpunten "
+        "en waardeproposities als inhoudelijke basis, en speel eventuele "
+        "bezwaren subtiel voor - noem ze niet letterlijk. Gebruik de "
+        "merge-velden {{firstName}}, {{lastName}} en {{company}} waar "
+        "relevant - laat ze letterlijk staan, vul ze niet in. "
+        "BELANGRIJK: de toon, invalshoek, opbouw en call-to-action moeten "
+        "duidelijk verschillen per gekozen fase (zie 'Fase in het traject' "
+        "hieronder) en per persona (zie 'Persona van de ontvanger' "
+        "hieronder) - schrijf geen generieke mail die voor elke combinatie "
+        "zou passen, maar laat de fase-beschrijving en de persona-focus "
+        "expliciet doorklinken in wat je schrijft. Subject: kort en "
+        "persoonlijk, max 8 woorden. Body: 100-160 woorden (fase 5 "
+        "'Urgentie/laatste duw' mag korter en directer, fase 1 "
+        "'Introductie' en fase 2 'Probleem herkenning' iets uitgebreider), "
+        "mag <br><br> gebruiken "
+        "voor alinea's, geen aanhef ('Beste ...') en geen afsluiting met "
+        "naam. Schrijf in het Nederlands, informeel-zakelijk (je-vorm). "
+        "Geef het antwoord ALLEEN als geldige JSON: een array van objecten "
+        'met de sleutels "subject", "body" en "angle" (angle = één korte '
+        "Nederlandse zin die de invalshoek samenvat, bijv. 'Focus op "
+        "cashflow-risico voor de eigenaar'). Geen uitleg, geen "
+        "markdown-codeblok, alleen de JSON-array."
     )
     parts = [
         f"Doelgroep-sector: {sector}",
@@ -319,7 +360,7 @@ def generate_outreach_emails(persona: str, goal: str, stage: str, tone: str,
     parts.append(f"Genereer precies {count} verschillende variant(en).")
 
     message = client.messages.create(
-        model=_MODEL, max_tokens=1200, system=system,
+        model=_MODEL, max_tokens=1800, system=system,
         messages=[{"role": "user", "content": "\n\n".join(parts)}],
     )
     raw = _text_of(message)

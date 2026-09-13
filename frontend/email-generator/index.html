@@ -604,11 +604,15 @@
 
         // Rij van 5 genummerde knoppen om een e-mail (vers gegenereerd of
         // opgeslagen) toe te wijzen aan een van de 5 sequence-stappen. Een
-        // gevulde stap wordt gemarkeerd (niet uitgeschakeld), zodat een
-        // andere bron dezelfde stap in één klik kan overschrijven.
-        function slotPickerHtml(addFn, sourceIdx) {
+        // knop wordt alleen gemarkeerd als DEZE specifieke kaart de bron is
+        // van die stap (vergelijking op sourceKey, niet "is de stap gevuld
+        // door iets") - anders lichtten alle 5 knoppen op zodra alle 5
+        // stappen gevuld waren, ook op kaarten die met geen van die stappen
+        // iets te maken hadden. Niet uitgeschakeld, zodat een andere bron
+        // dezelfde stap in één klik kan overschrijven.
+        function slotPickerHtml(addFn, sourceIdx, sourceKey) {
             const buttons = [1, 2, 3, 4, 5].map(n => {
-                const filled = sequenceSteps[n - 1] ? 'btn-slot-filled' : '';
+                const filled = sequenceSteps[n - 1] && sequenceSteps[n - 1].sourceKey === sourceKey ? 'btn-slot-filled' : '';
                 return `<button class="btn-slot ${filled}" onclick="${addFn}(${sourceIdx}, ${n - 1})">${n}</button>`;
             }).join('');
             return `<div class="slot-picker"><span>Gebruik voor stap:</span>${buttons}</div>`;
@@ -625,7 +629,7 @@
                         <button class="btn btn-primary btn-small" onclick="copyEmail(${i})">Kopieer</button>
                         <button class="btn btn-accent btn-small" onclick="saveTemplate(${i})">Opslaan</button>
                     </div>
-                    ${slotPickerHtml('addGeneratedToSlot', i)}
+                    ${slotPickerHtml('addGeneratedToSlot', i, 'generated:' + i)}
                     <div id="emailAction${i}"></div>
                 </div>
             `).join('');
@@ -679,7 +683,7 @@
                             <button class="btn btn-primary btn-small" onclick="copySavedTemplate(${i})">Kopieer</button>
                             <button class="btn btn-accent btn-small" onclick="editSavedTemplate(${i})">Bewerken</button>
                         </div>
-                        ${slotPickerHtml('addSavedToSlot', i)}
+                        ${slotPickerHtml('addSavedToSlot', i, 'saved:' + t.id)}
                     </div>
                     <div id="savedTemplateEdit${i}" class="saved-template-edit" style="display:none;"></div>
                     <div id="savedTemplateAction${i}"></div>
@@ -745,7 +749,7 @@
 
         function addGeneratedToSlot(emailIdx, slotIdx) {
             const e = generatedEmails[emailIdx];
-            sequenceSteps[slotIdx] = { wait_days: 3, subject: e.subject, body: e.body };
+            sequenceSteps[slotIdx] = { wait_days: 3, subject: e.subject, body: e.body, sourceKey: 'generated:' + emailIdx };
             renderSequenceBuilder();
             renderEmails();
             renderSavedTemplatesList();
@@ -753,7 +757,7 @@
 
         function addSavedToSlot(templateIdx, slotIdx) {
             const t = savedTemplates[templateIdx];
-            sequenceSteps[slotIdx] = { wait_days: 3, subject: t.subject, body: t.body };
+            sequenceSteps[slotIdx] = { wait_days: 3, subject: t.subject, body: t.body, sourceKey: 'saved:' + t.id };
             renderSequenceBuilder();
             renderEmails();
             renderSavedTemplatesList();

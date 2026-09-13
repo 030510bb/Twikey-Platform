@@ -255,6 +255,29 @@ bijvoorbeeld `0 6 * * *` (06:00 UTC, dus 08:00 zomertijd/07:00 wintertijd
 in Nederland) — of een ander tijdstip naar smaak, zolang het dagelijks
 draait — met dezelfde `ADMIN_SECRET` bij **Environment**.
 
+## Cron: dagelijkse prospecting (Vibe Prospecting/Explorium)
+
+Importeert dagelijks automatisch nieuwe contacten via Vibe
+Prospecting/Explorium, gefilterd op sector/branche — alleen voor accounts
+die dit expliciet aanzetten (Integraties-tabblad, standaard uit). Nieuw
+geïmporteerde contacten worden NOOIT automatisch benaderd; ze verschijnen
+gewoon in de contactenlijst, klaar om handmatig (bulk-selecteren + "toevoegen
+aan campagne") aan een bestaande campagne toe te voegen.
+
+```bash
+curl -X POST https://api.justmeet.tech/api/cron/process-prospecting \
+  -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
+```
+
+Zelfde opzet als de sequenties-cron hierboven: één aanroep verwerkt alle
+accounts, en een fout bij één account (bv. een ongeldige/verlopen
+Explorium-key) stopt de rest van de run niet — die telt gewoon mee in
+`errors` in het antwoord. Richt in als een vierde Render Cron Job, met dit
+endpoint als **Command**, bijvoorbeeld één keer per dag (`0 7 * * *`), met
+dezelfde `ADMIN_SECRET` bij **Environment**. Voor accounts zonder
+`daily_import_enabled` aan is dit endpoint een no-op — veilig om toe te
+voegen zonder bestaande klanten te raken.
+
 ## Stap 5 — Eigen domein koppelen (justmeet.tech)
 
 Dit platform draait op zichzelf prima op de Render-URLs

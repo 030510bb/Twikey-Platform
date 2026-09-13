@@ -34,9 +34,11 @@ import io
 import json
 import logging
 import os
+import random
 import secrets
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -563,6 +565,23 @@ def _verify_unsubscribe_token(token: str) -> int | None:
     return contact_id
 
 
+def _with_signature_html(account_id: int, body_html: str) -> str:
+    """Plakt (als ingesteld) de account-handtekening onder de mail, vóór een
+    eventuele afmeldlink - zie accounts.email_signature, instelbaar bij
+    Verzendinstellingen."""
+    signature = database.get_sending_settings(account_id)["email_signature"]
+    if not signature:
+        return body_html
+    return f'{body_html}<br><br>{signature.replace(chr(10), "<br>")}'
+
+
+def _with_signature_plain(account_id: int, body: str) -> str:
+    signature = database.get_sending_settings(account_id)["email_signature"]
+    if not signature:
+        return body
+    return f"{body}\n\n{signature}"
+
+
 def _with_unsubscribe_footer_html(account_id: int, contact_id: int, body_html: str) -> str:
     """Voegt (als de instelling aan staat) een kleine afmeldlink toe onder
     een campagne-mail. Bewust optioneel per account (zie
@@ -768,6 +787,7 @@ class SendingSettingsIn(BaseModel):
     daily_send_limit_enabled: bool | None = None
     daily_send_limit: int | None = None
     unsubscribe_link_enabled: bool | None = None
+    email_signature: str | None = None
 
 
 @app.put("/api/account/sending-settings")
@@ -780,6 +800,7 @@ def api_update_sending_settings(payload: SendingSettingsIn, account: dict = Depe
         daily_send_limit_enabled=payload.daily_send_limit_enabled,
         daily_send_limit=payload.daily_send_limit,
         unsubscribe_link_enabled=payload.unsubscribe_link_enabled,
+        email_signature=payload.email_signature,
     )
     return {"success": True, **settings}
 
@@ -1918,20 +1939,35 @@ async def api_import_exclusions_csv(file: UploadFile = File(...), account: dict 
 # ---------------------------------------------------------------------------
 
 class ProspectingSettingsIn(BaseModel):
-    api_key: str
+    api_key: str | None = None  # leeg = huidige key behouden (alleen de andere velden bijwerken)
+    daily_import_enabled: bool = False
+    daily_import_count: int = 10
+    daily_import_sector: str = ''
 
 
 @app.get("/api/integrations/prospecting")
 def api_get_prospecting_settings(account: dict = Depends(get_current_account)):
     row = database.get_prospecting_settings(account["id"])
-    return {"configured": bool(row)}
+    if not row:
+        return {"configured": False}
+    return {
+        "configured": True,
+        "daily_import_enabled": bool(row["daily_import_enabled"]),
+        "daily_import_count": row["daily_import_count"],
+        "daily_import_sector": row["daily_import_sector"],
+    }
 
 
 @app.post("/api/integrations/prospecting")
 def api_save_prospecting_settings(payload: ProspectingSettingsIn, account: dict = Depends(get_current_account)):
-    if not payload.api_key.strip():
-        raise HTTPException(status_code=400, detail="API-key mag niet leeg zijn.")
-    database.save_prospecting_settings(account["id"], crypto.encrypt(payload.api_key.strip()))
+    api_key_encrypted = crypto.encrypt(payload.api_key.strip()) if payload.api_key and payload.api_key.strip() else None
+    try:
+        database.save_prospecting_settings(
+            account["id"], api_key_encrypted, payload.daily_import_enabled,
+            payload.daily_import_count, payload.daily_import_sector.strip(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True}
 
 
@@ -2161,6 +2197,66 @@ def api_prospecting_import(payload: ProspectingImportIn, account: dict = Depends
         _apply_hubspot_exclusion(account["id"], contact)
         added.append(contact)
     return {"success": True, "added": len(added), "contacts": added}
+
+
+# v1 simplificatie: vaste functietitel-lijst i.p.v. nog een instelling -
+# makkelijk later te promoveren tot een settings-veld, zelfde patroon als
+# daily_import_count, mocht dat nodig blijken.
+DAILY_PROSPECTING_JOB_TITLES = ["Eigenaar", "Directeur", "Inkoop"]
+
+
+@app.post("/api/cron/process-prospecting", dependencies=[Depends(require_admin_secret)])
+def api_process_prospecting():
+    """Dagelijkse automatische prospecting via Vibe Prospecting/Explorium,
+    gefilterd op sector/branche (niet op een lookalike-seed). Importeert
+    alleen NIEUWE contacten - nooit automatisch benaderd, dat blijft een
+    expliciete actie via de contacten-bulk-select + 'toevoegen aan
+    campagne'. Zelfde beveiliging/aanroeppatroon als
+    /api/cron/process-sequences, zie DEPLOY.md."""
+    accounts_processed, contacts_imported, errors = 0, 0, 0
+    for settings_row in database.accounts_with_daily_prospecting_enabled():
+        account_id = settings_row["account_id"]
+        target = settings_row["daily_import_count"] or 10
+        sector = (settings_row["daily_import_sector"] or "").strip()
+        try:
+            api_key = crypto.decrypt(settings_row["api_key_encrypted"])
+            filters = {"linkedin_category": [sector]} if sector else {}
+            businesses = prospecting_client.search_businesses(api_key, filters, size=target * 3)
+            new_count = 0
+            for business in businesses:
+                if new_count >= target:
+                    break
+                business_id = business.get("business_id")
+                if not business_id:
+                    continue
+                prospects = prospecting_client.match_prospects(
+                    api_key, [{"business_id": business_id, "job_titles": DAILY_PROSPECTING_JOB_TITLES}],
+                )
+                prospect_ids = [p["prospect_id"] for p in prospects if p.get("prospect_id")]
+                if not prospect_ids:
+                    continue
+                for enriched in prospecting_client.enrich_prospect_contacts(api_key, prospect_ids):
+                    if new_count >= target:
+                        break
+                    email = (enriched.get("email") or "").strip()
+                    if not email:
+                        continue
+                    if database.get_contact_by_email(account_id, email):
+                        continue  # al bekend - niet als nieuw tellen (add_contact zou 'm alsnog upserten, maar niet dubbel meetellen)
+                    full_name = (enriched.get("full_name") or "Onbekend").split(" ")
+                    contact = database.add_contact(
+                        account_id=account_id, first_name=full_name[0], last_name=" ".join(full_name[1:]),
+                        email=email, company=business.get("name") or "", sector=sector,
+                        source="vibe_prospecting_daily",
+                    )
+                    _apply_hubspot_exclusion(account_id, contact)
+                    new_count += 1
+            contacts_imported += new_count
+            accounts_processed += 1
+        except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
+            logger.warning("Dagelijkse prospecting mislukt voor account %s: %s", account_id, exc)
+            errors += 1
+    return {"success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported, "errors": errors}
 
 
 # ---------------------------------------------------------------------------
@@ -2448,6 +2544,36 @@ def api_auto_enroll_by_persona(account: dict = Depends(get_current_account)):
     return {"success": True, **database.auto_enroll_by_persona(account["id"])}
 
 
+# Tussenoplossing (zie crm-roadmap.md, "verzenddagen en verzendtijdstip
+# instellen" - nog niet gescoped als volwaardige instelling): spreidt
+# automatische verzending vanuit de cron-endpoints hieronder random uit
+# tussen 08:00-09:30 Amsterdam-tijd, i.p.v. alles in één klap te versturen
+# zodra de cron due-items tegenkomt - dat oogt minder als een
+# geautomatiseerde blast richting de ontvanger. Geldt niet voor een
+# handmatige "Campagne lanceren"-klik (api_launch_campaign) - dat is een
+# expliciete gebruikersactie, geen automatische periodieke verzending.
+AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
+SEND_WINDOW_START_MINUTE = 8 * 60       # 08:00
+SEND_WINDOW_END_MINUTE = 9 * 60 + 30    # 09:30
+
+
+def _in_send_window(item_key) -> bool:
+    """Elk item (sequence-enrollment/campaign-recipient) krijgt een
+    stabiel, deterministisch moment binnen het venster (afgeleid van zijn
+    eigen id, dus hetzelfde resultaat bij elke cron-aanroep) en wordt pas
+    verstuurd zodra de huidige tijd dat moment is gepasseerd. Buiten
+    08:00-09:30 wordt nooit verstuurd - het item blijft gewoon 'due' en
+    wordt bij de eerstvolgende cron-run binnen het venster alsnog
+    opgepakt."""
+    now = datetime.now(AMSTERDAM_TZ)
+    minute_of_day = now.hour * 60 + now.minute
+    if not (SEND_WINDOW_START_MINUTE <= minute_of_day <= SEND_WINDOW_END_MINUTE):
+        return False
+    window_length = SEND_WINDOW_END_MINUTE - SEND_WINDOW_START_MINUTE
+    target_offset = random.Random(item_key).randint(0, window_length)
+    return minute_of_day >= SEND_WINDOW_START_MINUTE + target_offset
+
+
 @app.post("/api/cron/process-sequences", dependencies=[Depends(require_admin_secret)])
 def api_process_sequences():
     """Verstuurt elke vervallen sequence-stap, over ALLE accounts heen - dus
@@ -2455,12 +2581,15 @@ def api_process_sequences():
     beheer-endpoints, niet met een account-sessie. Bedoeld om periodiek
     aangeroepen te worden (bv. een uur-cron op Render of een externe
     scheduler) - zie DEPLOY.md."""
-    processed, skipped, errors, throttled = 0, 0, 0, 0
+    processed, skipped, errors, throttled, waiting_for_window = 0, 0, 0, 0, 0
     for enrollment in database.due_enrollments():
         account_id = enrollment["seq_account_id"]
         if enrollment["do_not_contact"] or enrollment["excluded_reason"]:
             database.skip_enrollment(enrollment["id"], "Contact is niet meer te benaderen of uitgesloten.")
             skipped += 1
+            continue
+        if not _in_send_window(f"seq:{enrollment['id']}"):
+            waiting_for_window += 1
             continue
         remaining_budget = database.remaining_daily_budget(account_id)
         if remaining_budget is not None and remaining_budget <= 0:
@@ -2483,6 +2612,7 @@ def api_process_sequences():
         }
         subject = _render_template(step["subject_template"], contact)
         body = _render_template(step["body_template"], contact)
+        body = _with_signature_plain(account_id, body)
         body = _with_unsubscribe_footer_plain(account_id, enrollment["contact_id"], body)
         try:
             _send_plain_for_account(account_id, enrollment["email"], subject, body)
@@ -2496,7 +2626,10 @@ def api_process_sequences():
                 rendered_subject=subject, rendered_body=body,
             )
             errors += 1
-    return {"success": True, "processed": processed, "skipped": skipped, "errors": errors, "throttled": throttled}
+    return {
+        "success": True, "processed": processed, "skipped": skipped, "errors": errors,
+        "throttled": throttled, "waiting_for_window": waiting_for_window,
+    }
 
 
 @app.post("/api/cron/process-campaign-queue", dependencies=[Depends(require_admin_secret)])
@@ -2508,7 +2641,7 @@ def api_process_campaign_queue():
     campagne/ontvanger eerst. Zelfde beveiliging/aanroeppatroon als
     POST /api/cron/process-sequences: bedoeld om periodiek (bv. elk uur)
     van buitenaf getriggerd te worden, zie DEPLOY.md."""
-    sent, failed, throttled_accounts = 0, 0, 0
+    sent, failed, throttled_accounts, waiting_for_window = 0, 0, 0, 0
     for account_id in database.account_ids_with_pending_campaign_sends():
         remaining_budget = database.remaining_daily_budget(account_id)
         if remaining_budget is not None and remaining_budget <= 0:
@@ -2516,11 +2649,17 @@ def api_process_campaign_queue():
             continue
         take = remaining_budget if remaining_budget is not None else 1000
         for r in database.pending_campaign_recipients_for_account(account_id, take):
+            if not _in_send_window(f"camp:{r['id']}"):
+                waiting_for_window += 1
+                continue
             if _attempt_send_campaign_recipient(account_id, r):
                 sent += 1
             else:
                 failed += 1
-    return {"success": True, "sent": sent, "failed": failed, "throttled_accounts": throttled_accounts}
+    return {
+        "success": True, "sent": sent, "failed": failed,
+        "throttled_accounts": throttled_accounts, "waiting_for_window": waiting_for_window,
+    }
 
 
 @app.post("/api/cron/process-digests", dependencies=[Depends(require_admin_secret)])
@@ -2685,6 +2824,7 @@ class CampaignIn(BaseModel):
     variants: list[VariantIn] | None = None  # omit to use the 4 default lead-magnet offers
     include_excluded: bool = False  # override de uitsluitlijst (bestaande klant/lopende offerte)
     persona_id: int | None = None  # Fase 3: stuur deze campagne alleen naar contacten met deze buyer persona
+    sector: str = ''  # sector/branche-label op de campagne zelf, voor latere performance-vergelijking
 
 
 @app.get("/api/campaigns/default-variants")
@@ -2714,7 +2854,44 @@ def api_create_campaign(payload: CampaignIn, account: dict = Depends(get_current
     variants = [v.model_dump() for v in payload.variants] if payload.variants else DEFAULT_VARIANTS
     result = database.create_campaign(
         aid, payload.name, variants, include_excluded=payload.include_excluded, only_persona_id=payload.persona_id,
+        sector=payload.sector,
     )
+    return {"success": True, **result}
+
+
+class CampaignUpdateIn(BaseModel):
+    sector: str | None = None
+    persona_id: int | None = None
+    clear_persona: bool = False
+
+
+@app.put("/api/campaigns/{campaign_id}")
+def api_update_campaign(campaign_id: int, payload: CampaignUpdateIn, account: dict = Depends(get_current_account)):
+    """Sector/persona op een al aangemaakte campagne bijwerken - ook voor
+    campagnes die al 'launched' zijn (retroactief taggen zodat sector/
+    persona-analyse ze kan meenemen), zie database.update_campaign."""
+    result = database.update_campaign(
+        campaign_id, account["id"], sector=payload.sector,
+        persona_id=payload.persona_id, clear_persona=payload.clear_persona,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Campagne niet gevonden.")
+    return {"success": True, "campaign": result}
+
+
+class AddCampaignContactsIn(BaseModel):
+    contact_ids: list[int]
+
+
+@app.post("/api/campaigns/{campaign_id}/add-contacts")
+def api_add_contacts_to_campaign(campaign_id: int, payload: AddCampaignContactsIn, account: dict = Depends(get_current_account)):
+    """Contacten aan een bestaande campagne toevoegen (bv. na dagelijkse
+    prospecting) - zie database.add_contacts_to_campaign voor de
+    ronde-robin-verdeling en de bewuste afwijking t.o.v. create_campaign
+    m.b.t. excluded_reason."""
+    result = database.add_contacts_to_campaign(campaign_id, account["id"], payload.contact_ids)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Campagne niet gevonden.")
     return {"success": True, **result}
 
 
@@ -2748,6 +2925,7 @@ def _attempt_send_campaign_recipient(aid: int, r: dict) -> bool:
         f'<a href="{click_url}">Bekijk je gratis {html.escape(r["offer_name"])}</a>'
         f'<img src="{pixel_url}" width="1" height="1" style="display:none" alt="">'
     )
+    full_html = _with_signature_html(aid, full_html)
     full_html = _with_unsubscribe_footer_html(aid, r["contact_id"], full_html)
 
     try:

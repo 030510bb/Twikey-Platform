@@ -580,6 +580,25 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS daily_send_limit INTEGER NOT NULL 
 -- do_not_contact op de contactpersoon (geen apart "unsubscribed"-veld -
 -- hergebruikt dezelfde, overal al gerespecteerde stop-vlag).
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS unsubscribe_link_enabled INTEGER NOT NULL DEFAULT 1;
+
+-- Sector/persona-labels op de campagne zelf (voorheen was persona_id alleen
+-- een transiente filter bij het aanmaken, nooit opgeslagen) - zodat lopende
+-- en afgeronde campagnes achteraf per sector/persona te vergelijken zijn.
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sector TEXT NOT NULL DEFAULT '';
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS persona_id INTEGER REFERENCES buyer_personas(id);
+
+-- Dagelijkse automatische prospecting (Vibe Prospecting/Explorium) - per
+-- account uit te zetten, standaard uit. daily_import_count is bewust een
+-- instelling (niet hardcoded) zodat het later zonder codewijziging omhoog
+-- kan.
+ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS daily_import_enabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS daily_import_count INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS daily_import_sector TEXT NOT NULL DEFAULT '';
+
+-- Optionele e-mailhandtekening, onder campagne- en opvolgmails geplakt
+-- (boven een eventuele afmeldlink) - per account in te stellen bij
+-- Verzendinstellingen.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email_signature TEXT NOT NULL DEFAULT '';
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -1152,6 +1171,12 @@ def add_contact(
         result = _run(conn)
         log_contact_activity(account_id, result["id"], "created", f"Contact aangemaakt (bron: {source})", _conn=conn)
         return result
+
+
+def get_contact_by_email(account_id: int, email: str):
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM contacts WHERE account_id = ? AND email = ?", (account_id, email)).fetchone()
+        return dict(row) if row else None
 
 
 def list_contacts(account_id: int, q: str = None, tag: str = None, persona_id: int = None, assigned_to=None,
@@ -1831,17 +1856,48 @@ def get_prospecting_settings(account_id: int):
         return dict(row) if row else None
 
 
-def save_prospecting_settings(account_id: int, api_key_encrypted: str) -> dict:
+def save_prospecting_settings(account_id: int, api_key_encrypted: str = None, daily_import_enabled: bool = False,
+                               daily_import_count: int = 10, daily_import_sector: str = '') -> dict:
+    """api_key_encrypted=None keeps the existing key (so the daily-import
+    toggle/count/sector can be saved without re-pasting the key every
+    time) - raises ValueError if no key exists yet either."""
     with get_conn() as conn:
+        existing = conn.execute("SELECT * FROM prospecting_settings WHERE account_id = ?", (account_id,)).fetchone()
+        if api_key_encrypted is None:
+            if not existing:
+                raise ValueError("Geen API-key opgegeven en nog geen bestaande koppeling.")
+            api_key_encrypted = existing["api_key_encrypted"]
         conn.execute(
             """
-            INSERT INTO prospecting_settings (account_id, api_key_encrypted, updated_at) VALUES (?, ?, ?)
-            ON CONFLICT (account_id) DO UPDATE SET api_key_encrypted = excluded.api_key_encrypted, updated_at = excluded.updated_at
+            INSERT INTO prospecting_settings
+                (account_id, api_key_encrypted, daily_import_enabled, daily_import_count, daily_import_sector, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (account_id) DO UPDATE SET
+                api_key_encrypted = excluded.api_key_encrypted,
+                daily_import_enabled = excluded.daily_import_enabled,
+                daily_import_count = excluded.daily_import_count,
+                daily_import_sector = excluded.daily_import_sector,
+                updated_at = excluded.updated_at
             """,
-            (account_id, api_key_encrypted, now_iso()),
+            (account_id, api_key_encrypted, int(daily_import_enabled), daily_import_count, daily_import_sector, now_iso()),
         )
         row = conn.execute("SELECT * FROM prospecting_settings WHERE account_id = ?", (account_id,)).fetchone()
         return dict(row)
+
+
+def accounts_with_daily_prospecting_enabled() -> list:
+    """Cross-account voor POST /api/cron/process-prospecting - alleen
+    accounts met daily_import_enabled=1. Een account zonder gekoppelde key
+    kan deze toggle niet aanzetten (de UI vereist eerst een key), dus die
+    combinatie hoeft hier niet apart afgevangen te worden."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT account_id, api_key_encrypted, daily_import_count, daily_import_sector
+            FROM prospecting_settings WHERE daily_import_enabled = 1
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def delete_prospecting_settings(account_id: int) -> bool:
@@ -2546,7 +2602,7 @@ def reply_support_ticket(ticket_id: int, admin_reply: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def create_campaign(account_id: int, name: str, variants: list, include_excluded: bool = False,
-                     only_persona_id: int = None) -> dict:
+                     only_persona_id: int = None, sector: str = '') -> dict:
     """
     variants: list of dicts with keys group_label, offer_name, subject_template,
     body_template, and an optional persona_id (Fase 3 - ties a variant to one
@@ -2561,7 +2617,7 @@ def create_campaign(account_id: int, name: str, variants: list, include_excluded
     persona-tagged variants, a contact with no matching persona still falls
     back to a plain round-robin across all variants, so nobody is silently
     skipped. Nothing is sent yet - see launch_campaign(). Contacts marked
-    "niet meer benaderen" (do_not_contact) or matched by the uitsluitlijst
+    "niet meer benaderen" (do_not_contact) or matched by de uitsluitlijst
     (excluded_reason - existing customer/open quote) are skipped by default,
     so a prospecting campaign never re-approaches them and never frustrates a
     live offerte-traject - pass include_excluded=True to deliberately
@@ -2569,12 +2625,17 @@ def create_campaign(account_id: int, name: str, variants: list, include_excluded
     everyone). only_persona_id (Fase 3): restricts the whole campaign to
     contacts with that one buyer persona - the simple, UI-driven way to send
     a persona-targeted round of the existing (e.g. default) variants,
-    independent of any per-variant persona_id above.
+    independent of any per-variant persona_id above. Also persisted onto the
+    campaign row itself (as persona_id) alongside sector, purely as a label
+    for later performance-comparison - see update_campaign() to change it
+    after the fact, e.g. for a campaign that was launched before this label
+    existed.
     """
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO campaigns (account_id, name, status, created_at) VALUES (?, ?, 'draft', ?) RETURNING id",
-            (account_id, name, now_iso()),
+            "INSERT INTO campaigns (account_id, name, status, sector, persona_id, created_at) "
+            "VALUES (?, ?, 'draft', ?, ?, ?) RETURNING id",
+            (account_id, name, sector, only_persona_id, now_iso()),
         )
         campaign_id = cur.fetchone()["id"]
 
@@ -2656,6 +2717,106 @@ def get_campaign(campaign_id: int, account_id: int, _conn=None) -> dict:
         return _query(_conn)
     with get_conn() as conn:
         return _query(conn)
+
+
+def update_campaign(campaign_id: int, account_id: int, sector: str = None,
+                     persona_id: int = None, clear_persona: bool = False) -> dict:
+    """Sector/persona-label op een al aangemaakte (mogelijk al lopende)
+    campagne aanpassen - zodat een campagne die vóór dit label bestond,
+    of waarvan de doelgroep achteraf duidelijker werd, alsnog te vergelijken
+    is met andere campagnes. None = niet wijzigen. persona_id alleen is
+    ambigu tussen 'niet meegegeven' en 'expliciet leegmaken', dus
+    clear_persona is de expliciete manier om een persona weer los te
+    koppelen. Returns None als de campagne niet bij dit account hoort."""
+    with get_conn() as conn:
+        owned = conn.execute(
+            "SELECT * FROM campaigns WHERE id = ? AND account_id = ?", (campaign_id, account_id)
+        ).fetchone()
+        if not owned:
+            return None
+        new_sector = sector if sector is not None else owned["sector"]
+        if clear_persona:
+            new_persona_id = None
+        elif persona_id is not None:
+            new_persona_id = persona_id
+        else:
+            new_persona_id = owned["persona_id"]
+        conn.execute(
+            "UPDATE campaigns SET sector = ?, persona_id = ? WHERE id = ?",
+            (new_sector, new_persona_id, campaign_id),
+        )
+        row = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+        return dict(row)
+
+
+def add_contacts_to_campaign(campaign_id: int, account_id: int, contact_ids: list) -> dict:
+    """Contacten toevoegen aan een AL bestaande campagne - de brug voor de
+    dagelijkse prospecting-import (nieuw geprospecte contacten landen in
+    een bestaande campagne i.p.v. alleen in gloednieuwe). Zelfde
+    ronde-robin-verdeling als create_campaign(), maar tegen de bestaande
+    campaign_variants van deze campagne i.p.v. net aangemaakte, en tegen
+    een expliciet meegegeven contact_ids-lijst i.p.v. een SELECT over alle
+    contacten.
+
+    Bewuste afwijking t.o.v. create_campaign(): excluded_reason wordt hier
+    NIET herchecked - de gebruiker kiest deze contacten hier bewust en
+    expliciet via de UI, dus de automatische uitsluitlijst mag daar niet
+    tussen zitten. do_not_contact blijft wel een harde stop, net als in elk
+    ander verzendpad. Retourneert None als de campagne niet bij dit account
+    hoort."""
+    with get_conn() as conn:
+        campaign = get_campaign(campaign_id, account_id, _conn=conn)
+        if not campaign:
+            return None
+        variants = campaign["variants"]
+        if not variants:
+            return {"added": 0, "skipped": len(contact_ids)}
+
+        variant_ids = []
+        persona_variant_ids = defaultdict(list)
+        generic_variant_ids = []
+        for v in variants:
+            variant_ids.append(v["id"])
+            if v["persona_id"]:
+                persona_variant_ids[v["persona_id"]].append(v["id"])
+            else:
+                generic_variant_ids.append(v["id"])
+
+        added, skipped = 0, 0
+        persona_counters = defaultdict(int)
+        generic_counter = 0
+        for contact_id in contact_ids:
+            contact = conn.execute(
+                "SELECT id, persona_id FROM contacts WHERE id = ? AND account_id = ? AND do_not_contact = 0",
+                (contact_id, account_id),
+            ).fetchone()
+            if not contact:
+                skipped += 1
+                continue
+            already = conn.execute(
+                "SELECT 1 FROM campaign_recipients WHERE campaign_id = ? AND contact_id = ?",
+                (campaign_id, contact_id),
+            ).fetchone()
+            if already:
+                skipped += 1
+                continue
+            persona_id = contact["persona_id"]
+            if persona_id and persona_variant_ids.get(persona_id):
+                pool = persona_variant_ids[persona_id]
+                variant_id = pool[persona_counters[persona_id] % len(pool)]
+                persona_counters[persona_id] += 1
+            elif generic_variant_ids:
+                variant_id = generic_variant_ids[generic_counter % len(generic_variant_ids)]
+                generic_counter += 1
+            else:
+                variant_id = variant_ids[generic_counter % len(variant_ids)]
+                generic_counter += 1
+            conn.execute(
+                "INSERT INTO campaign_recipients (campaign_id, variant_id, contact_id, tracking_token) VALUES (?, ?, ?, ?)",
+                (campaign_id, variant_id, contact_id, new_token()),
+            )
+            added += 1
+        return {"added": added, "skipped": skipped}
 
 
 def list_campaigns(account_id: int) -> list:
@@ -3333,7 +3494,7 @@ def get_sending_settings(account_id: int) -> dict:
         row = conn.execute(
             """
             SELECT daily_digest_enabled, daily_send_limit_enabled, daily_send_limit,
-                   unsubscribe_link_enabled, last_digest_sent_date
+                   unsubscribe_link_enabled, email_signature, last_digest_sent_date
             FROM accounts WHERE id = ?
             """,
             (account_id,),
@@ -3343,13 +3504,14 @@ def get_sending_settings(account_id: int) -> dict:
             "daily_send_limit_enabled": bool(row["daily_send_limit_enabled"]),
             "daily_send_limit": row["daily_send_limit"],
             "unsubscribe_link_enabled": bool(row["unsubscribe_link_enabled"]),
+            "email_signature": row["email_signature"],
             "last_digest_sent_date": row["last_digest_sent_date"],
         }
 
 
 def update_sending_settings(account_id: int, daily_digest_enabled: bool = None,
                              daily_send_limit_enabled: bool = None, daily_send_limit: int = None,
-                             unsubscribe_link_enabled: bool = None) -> dict:
+                             unsubscribe_link_enabled: bool = None, email_signature: str = None) -> dict:
     fields, params = [], []
     if daily_digest_enabled is not None:
         fields.append("daily_digest_enabled = ?")
@@ -3363,6 +3525,9 @@ def update_sending_settings(account_id: int, daily_digest_enabled: bool = None,
     if unsubscribe_link_enabled is not None:
         fields.append("unsubscribe_link_enabled = ?")
         params.append(1 if unsubscribe_link_enabled else 0)
+    if email_signature is not None:
+        fields.append("email_signature = ?")
+        params.append(email_signature)
     if fields:
         params.append(account_id)
         with get_conn() as conn:
@@ -3633,6 +3798,7 @@ def campaigns_overview(account_id: int) -> list:
         rows = conn.execute(
             """
             SELECT camp.id, camp.name, camp.status, camp.created_at, camp.launched_at,
+                   camp.sector, camp.persona_id, bp.name AS persona_name,
                    COUNT(cr.id) AS total_recipients,
                    SUM(CASE WHEN cr.sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent,
                    SUM(CASE WHEN cr.send_error IS NOT NULL THEN 1 ELSE 0 END) AS failed,
@@ -3640,8 +3806,9 @@ def campaigns_overview(account_id: int) -> list:
                    SUM(CASE WHEN cr.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicks
             FROM campaigns camp
             LEFT JOIN campaign_recipients cr ON cr.campaign_id = camp.id
+            LEFT JOIN buyer_personas bp ON bp.id = camp.persona_id
             WHERE camp.account_id = ?
-            GROUP BY camp.id
+            GROUP BY camp.id, bp.name
             ORDER BY camp.created_at DESC
             """,
             (account_id,),

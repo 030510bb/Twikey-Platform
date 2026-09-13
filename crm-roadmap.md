@@ -462,6 +462,50 @@ nieuw, apart te scopen stuk werk, geen kleine uitbreiding:
 Staat als "nog te plannen" in de "coming soon"-lijst op het
 Support-tabblad, zodat klanten weten dat dit eraan zit te komen.
 
+## Toekomstig idee (nog niet gescoped): verzenddagen en verzendtijdstip instellen
+
+Door Benjamin geopperd: naast de bestaande dagelijkse verzendlimiet (zie
+Fase 3c, "domain warm-up") ook kunnen instellen op welke dagen mails
+wel/niet verstuurd mogen worden (bijv. geen weekend, of specifieke dagen
+uitsluiten), én op welk tijdstip (of tijdsvenster) de cron-verzending
+daadwerkelijk mails de deur uit doet.
+
+**Tussenoplossing al gebouwd**: `process-sequences`/`process-campaign-queue`
+in `backend/app.py` versturen nu alleen nog tussen 08:00-09:30
+Amsterdam-tijd, met een per-item random moment binnen dat venster (zie
+`_in_send_window()`) zodat het niet als één blast tegelijk aankomt. Vast
+ingebakken, nog niet instelbaar. Nog te bepalen voor de volwaardige versie:
+- Per account instelbaar (venster + dagen, naast de bestaande
+  verzendlimiet-instelling) of platform-breed?
+- Geldt een uitgesloten dag alleen voor nieuwe verzendingen vanaf het
+  moment van instellen, of moet een al geplande/wachtende verzending (bv.
+  in de campagne-wachtrij, of een sequence-stap die net due is) ook
+  wachten tot het eerstvolgende toegestane moment?
+- Hoe verhoudt een uitgesloten dag zich tot de `wait_days`-logica van
+  sequence-stappen - telt zo'n dag mee in de wachttijd, of schuift de
+  verzending gewoon door naar de eerstvolgende toegestane dag?
+
+## Toekomstig idee (nog niet gescoped): eigen afzenderadres per teamlid
+
+Door Benjamin geopperd (n.a.v. de vraag of vanaf een ander adres dan het
+ingestelde verstuurd kan worden - nu al mogelijk via Mail-instellingen,
+maar als één gedeeld afzenderadres voor het hele account). Idee: elk
+teamlid verstuurt automatische mails (campagnes/opvolgsequenties) vanaf
+zijn eigen adres (bv. benjamin@ i.p.v. het gedeelde sales@), zodat mail
+persoonlijker aankomt bij de ontvanger. Bewust niet meegenomen - nog te
+bepalen:
+- Vereist een eigen SMTP-credential per teamlid (net als nu per account
+  bij Mail-instellingen), of kan één gedeeld account met een "Van"-alias
+  per teamlid werken (afhankelijk van wat de mailprovider toestaat)?
+- Hoe wordt bepaald welk teamlid "de afzender" is van een automatische
+  sequence-stap/campagne-verzending - de aanmaker, de toegewezen
+  accountmanager van het contact (`contacts.assigned_to`, al aanwezig),
+  of een handmatige keuze per campagne/sequence?
+- Wat gebeurt er met bestaande gedeelde instellingen (dagelijkse
+  verzendlimiet, handtekening, afmeldlink) die nu account-breed zijn -
+  worden die ook per teamlid, of blijven die gedeeld terwijl alleen het
+  afzenderadres verschuift naar per-teamlid?
+
 ## Fase 3 (nog niet gescoped) — AI-gedreven intake & optimalisatie
 
 **Update 9 sept. 2026**: de kern hiervan is gebouwd, zie "Fase 3b"

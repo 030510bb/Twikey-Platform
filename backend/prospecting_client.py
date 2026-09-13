@@ -66,15 +66,27 @@ def match_businesses(api_key: str, businesses: list) -> list:
     return data.get("matched_businesses") or data.get("data") or []
 
 
-def search_lookalike_businesses(api_key: str, business_id: str, size: int = 20) -> list:
-    """Lookalikes (crm-roadmap.md punt 3) - a business-search filtered to
-    companies similar to an already-matched one."""
+def search_businesses(api_key: str, filters: dict, size: int = 20) -> list:
+    """Generieke filter-based business search (v2/businesses/search) -
+    filters is een Explorium filter-dict, bv. {"linkedin_category": [...]}
+    voor sector-zoeken (dagelijkse prospecting-cron) of
+    {"linkedin_similar_companies": [id]} voor lookalikes (zie
+    search_lookalike_businesses). linkedin_category/naics_category zijn
+    reële, actuele Explorium filter-velden (bevestigd via het Vibe
+    Prospecting MCP-tool schema, niet geraden) - wel nog een sanity-check
+    waard tegen een live klant-key, zie de module-docstring hierboven."""
     data = _request(api_key, "POST", "/v2/businesses/search", {
         "mode": "full",
         "size": size,
-        "filters": {"linkedin_similar_companies": [business_id]},
+        "filters": filters,
     })
     return data.get("data") or []
+
+
+def search_lookalike_businesses(api_key: str, business_id: str, size: int = 20) -> list:
+    """Lookalikes (crm-roadmap.md punt 3) - ongewijzigd gedrag t.o.v. voor
+    de refactor naar search_businesses hierboven."""
+    return search_businesses(api_key, {"linkedin_similar_companies": [business_id]}, size)
 
 
 def match_prospects(api_key: str, prospects: list) -> list:

@@ -969,6 +969,13 @@
                         Kies een persona om deze ronde alleen naar contacten met die persona te sturen.
                     </p>
                 </div>
+                <div class="input-group">
+                    <label>Sector (optioneel)</label>
+                    <input type="text" id="abtest-sector" placeholder="bijv. Horeca Groothandel">
+                    <p style="color:#999; font-size:12px; margin-top:4px;">
+                        Puur een label voor later - vergelijk in het campagne-overzicht welke sector/persona-combinatie het beste presteert.
+                    </p>
+                </div>
                 <div class="metric-row">
                     <span class="metric-label">Contacten die meedoen</span>
                     <span class="metric-value" id="abtest-contact-count-2">-</span>
@@ -1139,10 +1146,10 @@
                 <div style="overflow-x:auto;">
                 <table>
                     <thead>
-                        <tr><th>Campagne</th><th>Status</th><th>Verstuurd</th><th>Opens</th><th>Clicks</th><th>Replies</th><th>Conversie</th></tr>
+                        <tr><th>Campagne</th><th>Status</th><th>Sector</th><th>Persona</th><th>Verstuurd</th><th>Opens</th><th>Clicks</th><th>Replies</th><th>Conversie</th><th></th></tr>
                     </thead>
                     <tbody id="campaigns-overview-body">
-                        <tr><td colspan="7" style="color:#666;">Laden...</td></tr>
+                        <tr><td colspan="10" style="color:#666;">Laden...</td></tr>
                     </tbody>
                 </table>
                 </div>
@@ -1257,16 +1264,22 @@
                         <input type="checkbox" id="contacts-filter-exclude-excluded" style="width:auto;" onchange="loadContacts()"> Verberg uitgesloten
                     </label>
                 </div>
+                <div id="contacts-bulk-bar" style="display:none; align-items:center; gap:10px; margin-bottom:10px; padding:10px; background:#f9fafb; border-radius:8px;">
+                    <span id="contacts-bulk-count"></span>
+                    <select id="contacts-bulk-campaign-select" style="max-width:280px;"></select>
+                    <button class="button button-primary" onclick="addSelectedContactsToCampaign()">Toevoegen aan campagne</button>
+                </div>
                 <div style="overflow-x:auto;">
                 <table>
                     <thead>
                         <tr>
+                            <th><input type="checkbox" id="contacts-select-all" style="width:auto;" onchange="toggleSelectAllVisibleContacts(this.checked)"></th>
                             <th>Naam</th><th>Bedrijf</th><th>Functie / sector / omzet</th><th>Tags</th><th>Buyer persona</th>
                             <th>Toegewezen</th><th>Status</th><th></th>
                         </tr>
                     </thead>
                     <tbody id="contacts-body">
-                        <tr><td colspan="8" style="color:#666;">Laden...</td></tr>
+                        <tr><td colspan="9" style="color:#666;">Laden...</td></tr>
                     </tbody>
                 </table>
                 </div>
@@ -1444,6 +1457,11 @@
                     </label>
                 </div>
 
+                <div class="input-group" style="margin-bottom: 14px;">
+                    <label>E-mailhandtekening (optioneel, onder campagne- en opvolgmails)</label>
+                    <textarea id="sendingsettings-signature" rows="4" placeholder="Bijv.:&#10;Met vriendelijke groet,&#10;Benjamin&#10;Twikey"></textarea>
+                </div>
+
                 <button class="button button-primary" onclick="saveSendingSettings()">Opslaan</button>
             </div>
 
@@ -1461,6 +1479,23 @@
                     <label>Explorium API-key</label>
                     <input type="password" id="prospecting-api-key" placeholder="Laat leeg om de huidige key te behouden">
                 </div>
+
+                <h3 style="margin:25px 0 10px;">Dagelijkse automatische prospecting</h3>
+                <div class="input-group">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="prospecting-daily-enabled" style="width:auto;">
+                        Elke dag automatisch nieuwe contacten importeren
+                    </label>
+                    <p style="color:#999; font-size:12px; margin-top:4px;">
+                        Importeert alleen als contact (bron: Vibe Prospecting) - nooit automatisch benaderd.
+                        Selecteer ze later handmatig op het Contacten-tabblad en voeg ze toe aan een campagne.
+                    </p>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 2fr; gap:10px;">
+                    <div class="input-group" style="margin:0;"><label>Aantal per dag</label><input type="number" id="prospecting-daily-count" value="10" min="1"></div>
+                    <div class="input-group" style="margin:0;"><label>Sector</label><input type="text" id="prospecting-daily-sector" placeholder="bijv. Horeca Groothandel"></div>
+                </div>
+
                 <div style="margin-top: 10px;">
                     <button class="button button-primary" onclick="saveProspectingSettings()">Opslaan</button>
                     <button class="button button-secondary" id="prospecting-disconnect" style="color:#b91c1c; display:none;" onclick="disconnectProspecting()">Koppeling verwijderen</button>
@@ -2365,6 +2400,7 @@
                 document.getElementById('sendingsettings-limit-enabled').checked = data.daily_send_limit_enabled;
                 document.getElementById('sendingsettings-limit-value').value = data.daily_send_limit;
                 document.getElementById('sendingsettings-unsub').checked = data.unsubscribe_link_enabled;
+                document.getElementById('sendingsettings-signature').value = data.email_signature || '';
                 onSendingLimitToggle();
             } catch (err) {
                 sendingSettingsAlert(`Kon instellingen niet laden: ${err.message}`, 'warning');
@@ -2384,6 +2420,7 @@
                     daily_send_limit_enabled: limitEnabled,
                     daily_send_limit: limitValue || 50,
                     unsubscribe_link_enabled: document.getElementById('sendingsettings-unsub').checked,
+                    email_signature: document.getElementById('sendingsettings-signature').value,
                 });
                 sendingSettingsAlert('✓ Verzendinstellingen opgeslagen.', 'success');
             } catch (err) {
@@ -2408,6 +2445,9 @@
                     statusEl.innerHTML = '<div class="alert alert-success">✓ Gekoppeld.</div>';
                     document.getElementById('prospecting-api-key').placeholder = 'Laat leeg om de huidige key te behouden';
                     disconnectBtn.style.display = 'inline-block';
+                    document.getElementById('prospecting-daily-enabled').checked = !!data.daily_import_enabled;
+                    document.getElementById('prospecting-daily-count').value = data.daily_import_count || 10;
+                    document.getElementById('prospecting-daily-sector').value = data.daily_import_sector || '';
                 } else {
                     statusEl.innerHTML = '<div class="alert alert-warning">Nog niet gekoppeld - zoeken/lookalikes via Vibe Prospecting werkt nog niet.</div>';
                     disconnectBtn.style.display = 'none';
@@ -2419,9 +2459,14 @@
 
         async function saveProspectingSettings() {
             const apiKey = document.getElementById('prospecting-api-key').value.trim();
-            if (!apiKey) { prospectingAlert('Vul een API-key in.', 'warning'); return; }
+            const payload = {
+                daily_import_enabled: document.getElementById('prospecting-daily-enabled').checked,
+                daily_import_count: parseInt(document.getElementById('prospecting-daily-count').value, 10) || 10,
+                daily_import_sector: document.getElementById('prospecting-daily-sector').value.trim(),
+            };
+            if (apiKey) { payload.api_key = apiKey; }
             try {
-                await apiPost('/api/integrations/prospecting', { api_key: apiKey });
+                await apiPost('/api/integrations/prospecting', payload);
                 prospectingAlert('✓ Opgeslagen.', 'success');
                 document.getElementById('prospecting-api-key').value = '';
                 loadProspectingSettings();
@@ -3195,9 +3240,14 @@
             return chips + `<a href="#" onclick="promptAddTag(${contact.id}); return false;" style="font-size:12px;">+ tag</a>`;
         }
 
+        // Losstaand van de DOM omdat loadContacts() de hele tbody herbouwt
+        // bij elke filter-wijziging of flag-toggle - checkbox-status alleen
+        // op .checked vertrouwen zou de selectie dus steeds wissen.
+        let selectedContactIds = new Set();
+
         async function loadContacts() {
             const tbody = document.getElementById('contacts-body');
-            tbody.innerHTML = '<tr><td colspan="8" style="color:#666;">Laden...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" style="color:#666;">Laden...</td></tr>';
             const params = new URLSearchParams();
             const q = document.getElementById('contacts-search').value.trim();
             const tag = document.getElementById('contacts-filter-tag').value;
@@ -3212,11 +3262,13 @@
             try {
                 const data = await apiGet(`/api/contacts?${params.toString()}`);
                 if (!data.contacts.length) {
-                    tbody.innerHTML = '<tr><td colspan="8" style="color:#666;">Geen contacten gevonden.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="9" style="color:#666;">Geen contacten gevonden.</td></tr>';
+                    updateContactsBulkBar();
                     return;
                 }
                 tbody.innerHTML = data.contacts.map(c => `
                     <tr>
+                        <td><input type="checkbox" class="contact-select-checkbox" data-contact-id="${c.id}" style="width:auto;" onchange="toggleContactSelection(${c.id}, this.checked)"></td>
                         <td><a href="#" onclick="toggleContactTimeline(${c.id}); return false;">${c.first_name} ${c.last_name} <span id="timeline-arrow-${c.id}" style="font-size:10px; color:#999;">▸ tijdlijn</span></a><br><span style="color:#666; font-size:12px;">${c.email}</span></td>
                         <td>${c.company || ''}</td>
                         <td>${c.job_title || ''}${c.sector ? ' · ' + c.sector : ''}${c.revenue_range ? ' · ' + c.revenue_range : ''}</td>
@@ -3233,12 +3285,71 @@
                         </td>
                     </tr>
                     <tr class="timeline-expand-row" id="timeline-row-${c.id}" style="display:none;">
-                        <td colspan="8" id="timeline-container-${c.id}" style="background:#f9fafb; padding:10px 14px; border-bottom:1px solid #e5e7eb;"></td>
+                        <td colspan="9" id="timeline-container-${c.id}" style="background:#f9fafb; padding:10px 14px; border-bottom:1px solid #e5e7eb;"></td>
                     </tr>
                 `).join('');
+                document.querySelectorAll('.contact-select-checkbox').forEach(cb => {
+                    cb.checked = selectedContactIds.has(parseInt(cb.dataset.contactId, 10));
+                });
+                document.getElementById('contacts-select-all').checked =
+                    data.contacts.length > 0 && data.contacts.every(c => selectedContactIds.has(c.id));
+                updateContactsBulkBar();
             } catch (err) {
                 contactsAlert('contacts-list-alert', `Kon contacten niet laden: ${err.message}`, 'warning');
-                tbody.innerHTML = '<tr><td colspan="8" style="color:#666;">-</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" style="color:#666;">-</td></tr>';
+            }
+        }
+
+        function toggleContactSelection(contactId, checked) {
+            if (checked) { selectedContactIds.add(contactId); } else { selectedContactIds.delete(contactId); }
+            updateContactsBulkBar();
+        }
+
+        function toggleSelectAllVisibleContacts(checked) {
+            document.querySelectorAll('.contact-select-checkbox').forEach(cb => {
+                const id = parseInt(cb.dataset.contactId, 10);
+                cb.checked = checked;
+                if (checked) { selectedContactIds.add(id); } else { selectedContactIds.delete(id); }
+            });
+            updateContactsBulkBar();
+        }
+
+        function updateContactsBulkBar() {
+            const bar = document.getElementById('contacts-bulk-bar');
+            const count = selectedContactIds.size;
+            bar.style.display = count > 0 ? 'flex' : 'none';
+            if (count > 0) {
+                document.getElementById('contacts-bulk-count').textContent = `${count} geselecteerd`;
+                loadContactsBulkCampaignSelect();
+            }
+        }
+
+        async function loadContactsBulkCampaignSelect() {
+            const select = document.getElementById('contacts-bulk-campaign-select');
+            if (select.dataset.loaded) return;
+            try {
+                const data = await apiGet('/api/campaigns');
+                select.innerHTML = (data.campaigns || []).map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${c.status})</option>`).join('');
+                select.dataset.loaded = '1';
+            } catch (err) {
+                select.innerHTML = '<option value="">Kon campagnes niet laden</option>';
+            }
+        }
+
+        async function addSelectedContactsToCampaign() {
+            const campaignId = document.getElementById('contacts-bulk-campaign-select').value;
+            if (!campaignId) {
+                contactsAlert('contacts-list-alert', 'Kies eerst een campagne.', 'warning');
+                return;
+            }
+            try {
+                const result = await apiPost(`/api/campaigns/${campaignId}/add-contacts`, { contact_ids: Array.from(selectedContactIds) });
+                contactsAlert('contacts-list-alert', `✓ ${result.added} contact(en) toegevoegd aan de campagne (${result.skipped} overgeslagen: al in de campagne of niet-benaderbaar).`, 'success');
+                selectedContactIds.clear();
+                document.getElementById('contacts-bulk-campaign-select').removeAttribute('data-loaded');
+                loadContacts();
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Toevoegen mislukt: ${err.message}`, 'warning');
             }
         }
 
@@ -3911,7 +4022,8 @@
             statusBadge.textContent = 'Campagne aanmaken...';
             const personaValue = document.getElementById('abtest-persona').value;
             const personaId = personaValue ? parseInt(personaValue, 10) : null;
-            const payload = { name, persona_id: personaId };
+            const sector = document.getElementById('abtest-sector').value.trim();
+            const payload = { name, persona_id: personaId, sector };
             if (ABTEST_VARIANTS.length) {
                 const incomplete = ABTEST_VARIANTS.some(v => !v.offer_name?.trim() || !v.subject_template?.trim() || !v.body_template?.trim());
                 if (incomplete) {
@@ -3974,28 +4086,88 @@
 
         // --- Campagne-overzicht (Fase 3c) ---------------------------------
 
+        let CAMPAIGNS_OVERVIEW = [];
+
+        function campaignPersonaOptionsHtml(selectedId) {
+            const options = ['<option value="">(geen)</option>'];
+            BUYER_PERSONAS.forEach(p => {
+                options.push(`<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`);
+            });
+            return options.join('');
+        }
+
         async function loadCampaignsOverview() {
             const tbody = document.getElementById('campaigns-overview-body');
-            tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">Laden...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="color:#666;">Laden...</td></tr>';
             try {
                 const data = await apiGet('/api/campaigns/overview');
+                CAMPAIGNS_OVERVIEW = data.campaigns;
                 if (!data.campaigns.length) {
-                    tbody.innerHTML = '<tr><td colspan="7" style="color:#666;">Nog geen campagnes.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="10" style="color:#666;">Nog geen campagnes.</td></tr>';
                     return;
                 }
                 tbody.innerHTML = data.campaigns.map(c => `
                     <tr>
                         <td>${escapeHtml(c.name)}</td>
                         <td>${c.status === 'launched' ? '✓ Verstuurd' : 'Concept'}${c.pending ? ` (${c.pending} in wachtrij)` : ''}</td>
+                        <td>
+                            <span id="campaign-sector-view-${c.id}">${escapeHtml(c.sector || '-')}</span>
+                            <input id="campaign-sector-edit-${c.id}" style="display:none; width:120px;" value="${escapeHtml(c.sector || '')}">
+                        </td>
+                        <td>
+                            <span id="campaign-persona-view-${c.id}">${escapeHtml(c.persona_name || '-')}</span>
+                            <select id="campaign-persona-edit-${c.id}" style="display:none;">${campaignPersonaOptionsHtml(c.persona_id)}</select>
+                        </td>
                         <td>${c.sent || 0}</td>
                         <td>${c.opens || 0}</td>
                         <td>${c.clicks || 0}</td>
                         <td>${c.replies || 0}</td>
                         <td>${pct(c.conversion_rate)}</td>
+                        <td>
+                            <span id="campaign-edit-actions-view-${c.id}">
+                                <button class="button button-secondary" style="font-size:12px; padding:2px 8px;" onclick="editCampaignTags(${c.id})">Bewerken</button>
+                            </span>
+                            <span id="campaign-edit-actions-edit-${c.id}" style="display:none;">
+                                <button class="button button-primary" style="font-size:12px; padding:2px 8px;" onclick="saveCampaignTags(${c.id})">Opslaan</button>
+                                <button class="button button-secondary" style="font-size:12px; padding:2px 8px;" onclick="cancelCampaignTagsEdit(${c.id})">Annuleren</button>
+                            </span>
+                        </td>
                     </tr>
                 `).join('');
             } catch (err) {
-                tbody.innerHTML = `<tr><td colspan="7" style="color:#666;">Kon campagne-overzicht niet laden: ${escapeHtml(err.message)}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="10" style="color:#666;">Kon campagne-overzicht niet laden: ${escapeHtml(err.message)}</td></tr>`;
+            }
+        }
+
+        function editCampaignTags(id) {
+            document.getElementById(`campaign-sector-view-${id}`).style.display = 'none';
+            document.getElementById(`campaign-sector-edit-${id}`).style.display = 'inline-block';
+            document.getElementById(`campaign-persona-view-${id}`).style.display = 'none';
+            document.getElementById(`campaign-persona-edit-${id}`).style.display = 'inline-block';
+            document.getElementById(`campaign-edit-actions-view-${id}`).style.display = 'none';
+            document.getElementById(`campaign-edit-actions-edit-${id}`).style.display = 'inline';
+        }
+
+        function cancelCampaignTagsEdit(id) {
+            document.getElementById(`campaign-sector-view-${id}`).style.display = 'inline';
+            document.getElementById(`campaign-sector-edit-${id}`).style.display = 'none';
+            document.getElementById(`campaign-persona-view-${id}`).style.display = 'inline';
+            document.getElementById(`campaign-persona-edit-${id}`).style.display = 'none';
+            document.getElementById(`campaign-edit-actions-view-${id}`).style.display = 'inline';
+            document.getElementById(`campaign-edit-actions-edit-${id}`).style.display = 'none';
+        }
+
+        async function saveCampaignTags(id) {
+            const sector = document.getElementById(`campaign-sector-edit-${id}`).value.trim();
+            const personaValue = document.getElementById(`campaign-persona-edit-${id}`).value;
+            const payload = { sector };
+            if (personaValue) { payload.persona_id = parseInt(personaValue, 10); }
+            else { payload.clear_persona = true; }
+            try {
+                await apiPut(`/api/campaigns/${id}`, payload);
+                loadCampaignsOverview();
+            } catch (err) {
+                alert(`Opslaan mislukt: ${err.message}`);
             }
         }
 

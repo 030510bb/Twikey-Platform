@@ -471,6 +471,24 @@ CREATE TABLE IF NOT EXISTS sequence_sends (
     sent_at TEXT,
     send_error TEXT
 );
+
+-- Email Generator: opgeslagen AI-gegenereerde cold-outreach e-mails per
+-- account, aangemaakt via een handmatige "Opslaan" klik in de Email
+-- Generator-tab. Puur een persoonlijke bibliotheek, zelfde
+-- niet-automatische aanpak als objection_templates.
+CREATE TABLE IF NOT EXISTS email_generator_templates (
+    id SERIAL PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    sector TEXT NOT NULL DEFAULT 'horeca',
+    persona TEXT NOT NULL DEFAULT '',
+    goal TEXT NOT NULL DEFAULT '',
+    stage TEXT NOT NULL DEFAULT '',
+    tone TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    angle TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 """
 
 # Columns added to tables that already existed in production before the
@@ -1929,6 +1947,33 @@ def delete_objection_template(template_id: int, account_id: int) -> bool:
             return False
         conn.execute("DELETE FROM objection_templates WHERE id = ? AND account_id = ?", (template_id, account_id))
         return True
+
+
+# ---------------------------------------------------------------------------
+# Email Generator: opgeslagen AI-gegenereerde cold-outreach e-mails
+# (email_generator_templates).
+# ---------------------------------------------------------------------------
+
+def list_email_generator_templates(account_id: int) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM email_generator_templates WHERE account_id = ? ORDER BY id DESC", (account_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def create_email_generator_template(account_id: int, sector: str, persona: str, goal: str, stage: str,
+                                     tone: str, subject: str, body: str, angle: str) -> dict:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO email_generator_templates "
+            "(account_id, sector, persona, goal, stage, tone, subject, body, angle, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            (account_id, sector, persona, goal, stage, tone, subject, body, angle, now_iso()),
+        )
+        template_id = cur.fetchone()["id"]
+        row = conn.execute("SELECT * FROM email_generator_templates WHERE id = ?", (template_id,)).fetchone()
+        return dict(row)
 
 
 # ---------------------------------------------------------------------------

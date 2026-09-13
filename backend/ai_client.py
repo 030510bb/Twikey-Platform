@@ -245,3 +245,95 @@ def suggest_csv_mapping(headers: list, sample_rows: list, canonical_fields: dict
         else:
             cleaned[header] = None
     return cleaned
+
+
+# ---------------------------------------------------------------------------
+# Email Generator: AI-gegenereerde cold-outreach e-mails voor Horeca
+# Groothandel, o.b.v. geselecteerde pijnpunten/waardeproposities uit de
+# statische Horeca-KB (zie _HORECA_KB in app.py) en de gekozen
+# persona/doel/fase/toon. Zelfde verantwoordelijkheidsverdeling als
+# generate_variant_suggestions: raist op elke fout, app.py vangt af en valt
+# terug op een statische voorbeeld-set.
+# ---------------------------------------------------------------------------
+
+_PERSONA_LABELS = {
+    "owner": "Eigenaar / Directeur", "manager": "Operations Manager",
+    "admin": "Administratief Medewerker", "it": "IT / Technisch",
+}
+_GOAL_LABELS = {
+    "appointment": "een afspraak maken", "webinar": "inschrijven voor een webinar",
+    "analysis": "een (gratis) analyse laten invullen", "contact": "contactgegevens verkrijgen",
+}
+_STAGE_LABELS = {
+    "1": "Introductie (eerste kennismaking)", "2": "Probleem herkenning",
+    "3": "Oplossing interesse", "4": "Engagement / call-to-action", "5": "Urgentie / laatste duw",
+}
+_TONE_LABELS = {
+    "friendly": "vriendelijk, begripvol", "formal": "formeel, professioneel",
+    "urgent": "urgent, dwingend", "empathetic": "empathisch, snapt de situatie van de lezer",
+}
+
+
+def generate_outreach_emails(persona: str, goal: str, stage: str, tone: str,
+                              pains: list, values: list, objections: list,
+                              sector: str = "horeca", count: int = 3) -> list:
+    """Genereert `count` Nederlandse cold-outreach e-mails voor Twikey,
+    gericht op de opgegeven persona/doel/fase/toon en de geselecteerde
+    pijnpunten/waardeproposities/bezwaren. Geeft een lijst van
+    {"subject", "body", "angle"} terug; raist als Claude geen bruikbare
+    JSON teruggeeft."""
+    import json
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    system = (
+        "Je schrijft korte, Nederlandse eerste-contact cold-outreach e-mails "
+        "voor Twikey (automatische incasso en betalingsherinneringen), "
+        "gericht aan horeca-groothandelbedrijven. Gebruik de meegegeven "
+        "pijnpunten en waardeproposities als inhoudelijke basis, en speel "
+        "eventuele bezwaren subtiel voor - noem ze niet letterlijk. Gebruik "
+        "de merge-velden {{firstName}}, {{lastName}} en {{company}} waar "
+        "relevant - laat ze letterlijk staan, vul ze niet in. Subject: kort "
+        "en persoonlijk, max 8 woorden. Body: max 100 woorden, mag <br><br> "
+        "gebruiken voor alinea's, geen aanhef ('Beste ...') en geen "
+        "afsluiting met naam. Schrijf in het Nederlands, informeel-zakelijk "
+        "(je-vorm). Geef het antwoord ALLEEN als geldige JSON: een array "
+        'van objecten met de sleutels "subject", "body" en "angle" (angle = '
+        "één korte Nederlandse zin die de invalshoek samenvat, bijv. 'Focus "
+        "op cashflow-risico'). Geen uitleg, geen markdown-codeblok, alleen "
+        "de JSON-array."
+    )
+    parts = [
+        f"Doelgroep-sector: {sector}",
+        f"Persona van de ontvanger: {_PERSONA_LABELS.get(persona, persona)}",
+        f"Doel van deze mail: {_GOAL_LABELS.get(goal, goal)}",
+        f"Fase in het traject: {_STAGE_LABELS.get(stage, stage)}",
+        f"Gewenste toon: {_TONE_LABELS.get(tone, tone)}",
+    ]
+    if pains:
+        parts.append("Pijnpunten om op in te spelen:\n" + "\n".join(f"- {p}" for p in pains))
+    if values:
+        parts.append("Waardeproposities om te noemen:\n" + "\n".join(f"- {v}" for v in values))
+    if objections:
+        parts.append("Bezwaren om subtiel voor te zijn:\n" + "\n".join(f"- {o}" for o in objections))
+    parts.append(f"Genereer precies {count} verschillende variant(en).")
+
+    message = client.messages.create(
+        model=_MODEL, max_tokens=1200, system=system,
+        messages=[{"role": "user", "content": "\n\n".join(parts)}],
+    )
+    raw = _text_of(message)
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+    emails = json.loads(raw)
+    if not isinstance(emails, list) or not emails:
+        raise ValueError("Claude gaf geen bruikbare e-maillijst terug")
+    cleaned_emails = [
+        {"subject": e["subject"], "body": e["body"], "angle": e["angle"]}
+        for e in emails[:count] if all(k in e for k in ("subject", "body", "angle"))
+    ]
+    if not cleaned_emails:
+        raise ValueError("Claude gaf geen e-mail terug met de verwachte velden")
+    return cleaned_emails

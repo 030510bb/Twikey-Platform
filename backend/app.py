@@ -1410,6 +1410,144 @@ def api_suggest_campaign_variants(payload: SuggestVariantsIn, account: dict = De
 
 
 # ---------------------------------------------------------------------------
+# Email Generator: statische Horeca-KB + AI-gegenereerde cold-outreach
+# e-mails + opgeslagen templates-bibliotheek.
+# ---------------------------------------------------------------------------
+
+_HORECA_KB = {
+    "pains": [
+        "Klanten betalen veel te laat - we moeten weken wachten op betaling terwijl wij zelf al hebben betaald",
+        "Cashflow problemen - we kunnen onze eigen vaste kosten niet betalen door openstaande facturen",
+        "Steeds vaker totale wanbetalers - klanten die hun schuld nooit betalen",
+        "Veel tijd kwijt aan herinneren en mahningen sturen",
+        "Te veel risico op klantfaillissementen - we zitten voor grote bedragen vast",
+        "Admin werk voor incasso is groot en kost kostbare uren van het team",
+        "Klanten kunnen niet betalen omdat zij zelf geen cashflow hebben",
+        "Voorraden voorschieten aan klanten die misschien niet betalen - groot risico",
+        "Geen inzicht in welke klanten betalingsproblemen krijgen - we merken het te laat",
+    ],
+    "values": [
+        "Automatische herinneringen - bespaar uren handwerk",
+        "Betere cashflow - sneller geld in = sneller betalen aan leveranciers",
+        "Vroeger zien wie niet kan betalen - voorkomen van grote schrijfverlies",
+        "Incasso wordt geautomatiseerd - minder ingewikkeld administratief werk",
+        "Betalingsopties voor klanten - maak betalen makkelijker, krijg sneller je geld",
+        "Dashboard met klantenstatus - weet exact wie risico is",
+        "Minder faillissementen omdat klanten betaalmogelijkheden krijgen",
+        "Schaal je bedrijf op zonder meer admin werk",
+        "Focus op verkopen, niet op incasso - dat doet het systeem",
+    ],
+    "objections": [
+        "We hebben al weinig marge - dit maakt het nog ingewikkelder",
+        "Onze klanten zijn klein, veel cash betaalmiddel",
+        "Dit voelt als extra werk erbij, geen besparing",
+        "Te technisch - wij zijn geen IT-bedrijf",
+        "Hoeveel gaat dit kosten? We zien niet direct voordeel",
+        "Onze klanten willen niet in een systeem, zij willen bellen/direct regelen",
+        "Dit verandert onze manier van werken - risico",
+        "Kleine klanten betalen toch gewoon, grote klanten die betalen laat hebben we al in de gaten",
+    ],
+}
+
+_FALLBACK_OUTREACH_EMAILS = [
+    {
+        "subject": "{{firstName}}, betalingsproblemen opgelost?",
+        "body": (
+            "Hoi {{firstName}},<br><br>Merken jullie bij {{company}} ook dat betalingen steeds langer "
+            "duren? Veel horecazaken hebben hier last van.<br><br>Benieuwd of dit ook bij jullie speelt?"
+        ),
+        "angle": "Algemene opener over late betalingen",
+    },
+    {
+        "subject": "Sneller cashflow bij {{company}}?",
+        "body": (
+            "Hoi {{firstName}},<br><br>We helpen horeca-groothandels hun cashflow met 10-15 dagen te "
+            "verbeteren door betalingsherinneringen te automatiseren.<br><br>Interesse in een korte demo?"
+        ),
+        "angle": "Concreet cashflow-voordeel",
+    },
+    {
+        "subject": "Korte vraag over betaaltermijnen",
+        "body": (
+            "Hoi {{firstName}},<br><br>Gemiddeld hoeveel dagen wachten jullie bij {{company}} op betaling "
+            "van klanten? We doen onderzoek en horen graag jullie ervaring.<br><br>Twee minuten van je tijd?"
+        ),
+        "angle": "Laagdrempelige onderzoeksvraag",
+    },
+]
+
+
+class EmailGeneratorKbIn(BaseModel):
+    sector: str = "horeca"
+
+
+@app.post("/api/email-generator/kb")
+def api_email_generator_kb(payload: EmailGeneratorKbIn, account: dict = Depends(get_current_account)):
+    """Geeft de statische Horeca-knowledge-base terug - geen AI-aanroep,
+    vaste referentiedata, zie _HORECA_KB."""
+    if payload.sector != "horeca":
+        raise HTTPException(status_code=400, detail="Deze sector wordt nog niet ondersteund.")
+    return {"success": True, "sector": payload.sector, "kb": _HORECA_KB}
+
+
+class EmailGeneratorEmailsIn(BaseModel):
+    sector: str = "horeca"
+    persona: str
+    goal: str
+    stage: str
+    tone: str
+    pains: list[str] = []
+    values: list[str] = []
+    objections: list[str] = []
+    count: int = 3
+
+
+@app.post("/api/email-generator/emails")
+def api_generate_outreach_emails(payload: EmailGeneratorEmailsIn, account: dict = Depends(get_current_account)):
+    count = max(1, min(payload.count, 5))
+    source = "template"
+    emails = None
+    if ai_client.is_configured():
+        try:
+            emails = ai_client.generate_outreach_emails(
+                payload.persona, payload.goal, payload.stage, payload.tone,
+                payload.pains, payload.values, payload.objections,
+                sector=payload.sector, count=count,
+            )
+            source = "ai"
+        except Exception as exc:  # noqa: BLE001 - fall back to the static examples below
+            logger.warning("AI-outreach-mails genereren mislukt voor account %s: %s", account["id"], exc)
+    if not emails:
+        emails = _FALLBACK_OUTREACH_EMAILS[:count]
+    return {"success": True, "source": source, "emails": emails}
+
+
+class EmailGeneratorTemplateIn(BaseModel):
+    sector: str = "horeca"
+    persona: str = ""
+    goal: str = ""
+    stage: str = ""
+    tone: str = ""
+    subject: str
+    body: str
+    angle: str = ""
+
+
+@app.post("/api/email-generator/templates")
+def api_save_email_generator_template(payload: EmailGeneratorTemplateIn, account: dict = Depends(get_current_account)):
+    template = database.create_email_generator_template(
+        account["id"], payload.sector, payload.persona, payload.goal, payload.stage,
+        payload.tone, payload.subject, payload.body, payload.angle,
+    )
+    return {"success": True, "template": template}
+
+
+@app.get("/api/email-generator/templates")
+def api_list_email_generator_templates(account: dict = Depends(get_current_account)):
+    return {"templates": database.list_email_generator_templates(account["id"])}
+
+
+# ---------------------------------------------------------------------------
 # Toewijzen aan een teamlid
 # ---------------------------------------------------------------------------
 

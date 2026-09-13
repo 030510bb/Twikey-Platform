@@ -5,42 +5,559 @@
     <title>Email Generator</title>
     <style>
         * { box-sizing: border-box; }
-        body {
+        html, body {
+            height: 100%;
             margin: 0;
-            padding: 32px;
+        }
+        body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #F5F6F9;
             color: #1f2937;
         }
+        .container {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+        }
         h1 {
-            margin: 0 0 8px;
+            margin: 0 0 4px;
             color: #18407D;
             font-size: 20px;
         }
-        p {
-            margin: 0 0 24px;
+        .intro {
+            margin: 0 0 16px;
             color: #6b7280;
+            font-size: 13px;
         }
-        .placeholder {
-            border: 1px dashed #d1d5db;
+        .content {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 260px 1fr 240px 380px;
+            border: 1px solid #e5e7eb;
             border-radius: 8px;
-            padding: 48px 24px;
-            text-align: center;
+            overflow: hidden;
             background: #fff;
         }
-        .placeholder span {
-            font-size: 32px;
+        .panel {
+            padding: 18px;
+            overflow-y: auto;
+            border-right: 1px solid #e5e7eb;
+        }
+        .panel.right { border-right: none; }
+        .panel-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #18407D;
+            margin: 0 0 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #F18700;
+        }
+        .form-section { margin-bottom: 14px; }
+        .form-label {
             display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 4px;
+        }
+        select, input[type=text] {
+            width: 100%;
+            padding: 7px 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: inherit;
+            background: #fff;
+        }
+        select:focus, input[type=text]:focus {
+            outline: none;
+            border-color: #18407D;
+            box-shadow: 0 0 0 2px rgba(24, 64, 125, 0.15);
+        }
+        .btn {
+            width: 100%;
+            padding: 9px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 6px;
+        }
+        .btn-primary {
+            background: #18407D;
+            color: #fff;
+        }
+        .btn-primary:hover { background: #123162; }
+        .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+        .btn-accent { background: #F18700; color: #fff; }
+        .btn-accent:hover { background: #B46500; }
+        .btn-accent:disabled { background: #9ca3af; cursor: not-allowed; }
+        .btn-small {
+            width: auto;
+            padding: 5px 10px;
+            font-size: 12px;
+            margin-top: 0;
+        }
+        .kb-group { margin-bottom: 16px; }
+        .kb-group-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 6px;
+        }
+        .kb-checkbox {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            padding: 5px 0;
+            font-size: 12px;
+            line-height: 1.4;
+            color: #374151;
+        }
+        .kb-checkbox input { margin-top: 2px; }
+        .stats-box {
+            background: #F5F6F9;
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 12px;
+            color: #374151;
+            margin-bottom: 16px;
+        }
+        .stats-box div { margin-bottom: 4px; }
+        .help-text {
+            font-size: 12px;
+            color: #6b7280;
+            line-height: 1.5;
+        }
+        .message {
+            font-size: 12px;
+            padding: 8px 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        .message.success { background: #d1fae5; color: #065f46; }
+        .message.error { background: #fef3c7; color: #92400e; }
+        .email-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
             margin-bottom: 12px;
+        }
+        .email-angle {
+            font-size: 11px;
+            font-weight: 600;
+            color: #F18700;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .email-subject {
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 6px;
+            color: #18407D;
+        }
+        .email-body {
+            font-size: 13px;
+            color: #374151;
+            line-height: 1.5;
+            margin-bottom: 10px;
+            white-space: normal;
+        }
+        .email-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .empty-state {
+            color: #9ca3af;
+            font-size: 13px;
+            text-align: center;
+            padding: 24px 8px;
+        }
+        .saved-template-item {
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 8px 10px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        .saved-template-subject {
+            font-weight: 600;
+            color: #18407D;
+            margin-bottom: 3px;
+        }
+        .saved-template-body {
+            color: #6b7280;
+            margin-bottom: 6px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .auth-warning {
+            padding: 40px 24px;
+            text-align: center;
+            color: #92400e;
+            background: #fef3c7;
+            border-radius: 8px;
         }
     </style>
 </head>
 <body>
-    <h1>Email Generator</h1>
-    <p>Deze tool is nog in opbouw.</p>
-    <div class="placeholder">
-        <span>✉️</span>
-        Nog geen functionaliteit beschikbaar.
+    <div class="container">
+        <h1>Email Generator</h1>
+        <p class="intro">Genereer AI-gedreven cold-outreach e-mails voor de Horeca Groothandel-sector.</p>
+        <div id="authGate"></div>
+        <div class="content" id="mainContent">
+            <div class="panel">
+                <div class="panel-title">1. Setup</div>
+                <div class="form-section">
+                    <label class="form-label">Sector</label>
+                    <select id="sectorSelect">
+                        <option value="horeca">Horeca Groothandel</option>
+                    </select>
+                </div>
+                <div class="form-section">
+                    <label class="form-label">Persona</label>
+                    <select id="personaSelect">
+                        <option value="">Selecteer...</option>
+                        <option value="owner">Eigenaar/Directeur</option>
+                        <option value="manager">Operations Manager</option>
+                        <option value="admin">Administratief Medewerker</option>
+                        <option value="it">IT/Technisch</option>
+                    </select>
+                </div>
+                <div class="form-section">
+                    <label class="form-label">Doel</label>
+                    <select id="goalSelect">
+                        <option value="appointment" selected>Afspraak maken</option>
+                        <option value="webinar">Inschrijven webinar</option>
+                        <option value="analysis">Analyse invullen</option>
+                        <option value="contact">Contactgegevens verkrijgen</option>
+                    </select>
+                </div>
+                <div class="form-section">
+                    <label class="form-label">Fase</label>
+                    <select id="stageSelect">
+                        <option value="1">Stage 1: Introductie</option>
+                        <option value="2">Stage 2: Probleem herkenning</option>
+                        <option value="3">Stage 3: Oplossing interesse</option>
+                        <option value="4">Stage 4: Engagement</option>
+                        <option value="5">Stage 5: Urgentie/Final Push</option>
+                    </select>
+                </div>
+                <div class="form-section">
+                    <label class="form-label">Toon</label>
+                    <select id="toneSelect">
+                        <option value="friendly">Vriendelijk</option>
+                        <option value="formal">Formeel</option>
+                        <option value="urgent">Urgent</option>
+                        <option value="empathetic">Empathisch</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" id="generateBtn" onclick="generateKb()">Genereer Knowledge Base</button>
+                <div id="kbMessage"></div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">2. Knowledge Base</div>
+                <div id="kbEmptyState" class="empty-state">Genereer eerst de Knowledge Base via het setup-paneel.</div>
+                <div id="painsSection" class="kb-group" style="display:none;">
+                    <div class="kb-group-title">Pijnpunten</div>
+                    <div id="painsList"></div>
+                </div>
+                <div id="valuesSection" class="kb-group" style="display:none;">
+                    <div class="kb-group-title">Waardeproposities</div>
+                    <div id="valuesList"></div>
+                </div>
+                <div id="objectionsSection" class="kb-group" style="display:none;">
+                    <div class="kb-group-title">Bezwaren (altijd meegenomen)</div>
+                    <div id="objectionsList"></div>
+                </div>
+                <button class="btn btn-accent" id="emailBtn" onclick="generateEmails()" style="display:none;">Genereer e-mails</button>
+                <div id="emailsMessage"></div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">Status</div>
+                <div class="stats-box" id="statsBox">
+                    <div>Pijnpunten: <strong id="statPains">-</strong></div>
+                    <div>Waardes: <strong id="statValues">-</strong></div>
+                    <div>Bezwaren: <strong id="statObjections">-</strong></div>
+                    <div>Gegenereerde e-mails: <strong id="statEmails">-</strong></div>
+                </div>
+                <div class="panel-title" style="margin-top: 4px;">Mijn templates</div>
+                <div id="savedTemplatesList">
+                    <div class="empty-state">Nog geen opgeslagen templates.</div>
+                </div>
+            </div>
+
+            <div class="panel right">
+                <div class="panel-title">Gegenereerde e-mails</div>
+                <div id="resultsArea">
+                    <div class="empty-state">Nog geen e-mails gegenereerd. Doorloop eerst stap 1 en 2.</div>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <script>
+        // --- API base / auth (same pattern as frontend/dashboard.html) -----
+        const PRODUCTION_API_BASE = 'https://twikey-platform-backend.onrender.com';
+        const isLocal = location.protocol === 'file:' ||
+            location.hostname === 'localhost' ||
+            location.hostname === '127.0.0.1';
+        const API_BASE = isLocal ? 'http://localhost:8000' : PRODUCTION_API_BASE;
+
+        const AUTH_TOKEN_KEY = 'twikey_token';
+
+        function getToken() {
+            return localStorage.getItem(AUTH_TOKEN_KEY);
+        }
+
+        function authHeaders(extra) {
+            return Object.assign({ Authorization: 'Bearer ' + getToken() }, extra || {});
+        }
+
+        async function apiGet(path) {
+            const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+            return data;
+        }
+
+        async function apiPost(path, body) {
+            const res = await fetch(`${API_BASE}${path}`, {
+                method: 'POST',
+                headers: authHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify(body || {}),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+            return data;
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str ?? '';
+            return div.innerHTML;
+        }
+
+        // This page only ever runs inside dashboard.html's iframe, which
+        // already guarantees a valid session before it's shown - so unlike
+        // dashboard.html itself, a missing token here just means the parent
+        // page's own auth guard hasn't run yet (or storage got cleared) and
+        // there's nothing useful to redirect *within* the iframe to.
+        if (!getToken()) {
+            document.getElementById('authGate').innerHTML =
+                '<div class="auth-warning">Log opnieuw in vanuit het dashboard.</div>';
+            document.getElementById('mainContent').style.display = 'none';
+        }
+
+        // --- State -----------------------------------------------------------
+        let kbData = null;
+        let generatedEmails = [];
+
+        function currentSelection() {
+            return {
+                sector: document.getElementById('sectorSelect').value,
+                persona: document.getElementById('personaSelect').value,
+                goal: document.getElementById('goalSelect').value,
+                stage: document.getElementById('stageSelect').value,
+                tone: document.getElementById('toneSelect').value,
+            };
+        }
+
+        async function generateKb() {
+            const sel = currentSelection();
+            const msgEl = document.getElementById('kbMessage');
+            msgEl.innerHTML = '';
+            if (!sel.persona || !sel.goal || !sel.stage || !sel.tone) {
+                msgEl.innerHTML = '<div class="message error">Vul eerst persona, doel, fase en toon in.</div>';
+                return;
+            }
+            const btn = document.getElementById('generateBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Bezig...';
+            try {
+                const data = await apiPost('/api/email-generator/kb', { sector: sel.sector });
+                kbData = data.kb;
+                renderKb();
+                document.getElementById('emailBtn').style.display = 'block';
+                msgEl.innerHTML = '<div class="message success">Knowledge Base geladen.</div>';
+            } catch (err) {
+                msgEl.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Genereer Knowledge Base';
+            }
+        }
+
+        function renderKb() {
+            document.getElementById('kbEmptyState').style.display = 'none';
+
+            const painsList = document.getElementById('painsList');
+            painsList.innerHTML = kbData.pains.map((p, i) => `
+                <label class="kb-checkbox">
+                    <input type="checkbox" class="pain-checkbox" value="${i}">
+                    <span>${escapeHtml(p)}</span>
+                </label>
+            `).join('');
+            document.getElementById('painsSection').style.display = 'block';
+
+            const valuesList = document.getElementById('valuesList');
+            valuesList.innerHTML = kbData.values.map((v, i) => `
+                <label class="kb-checkbox">
+                    <input type="checkbox" class="value-checkbox" value="${i}">
+                    <span>${escapeHtml(v)}</span>
+                </label>
+            `).join('');
+            document.getElementById('valuesSection').style.display = 'block';
+
+            const objectionsList = document.getElementById('objectionsList');
+            objectionsList.innerHTML = kbData.objections.map(o => `
+                <label class="kb-checkbox">
+                    <input type="checkbox" checked disabled>
+                    <span>${escapeHtml(o)}</span>
+                </label>
+            `).join('');
+            document.getElementById('objectionsSection').style.display = 'block';
+
+            document.getElementById('statPains').textContent = kbData.pains.length;
+            document.getElementById('statValues').textContent = kbData.values.length;
+            document.getElementById('statObjections').textContent = kbData.objections.length;
+        }
+
+        // Selecteer alle geselecteerde items, of - als er niets is
+        // aangevinkt - alles (zodat "Genereer e-mails" ook zonder eerst te
+        // selecteren bruikbare resultaten geeft).
+        function getSelectedItems() {
+            const painChecks = Array.from(document.querySelectorAll('.pain-checkbox'));
+            const selectedPains = painChecks.filter(c => c.checked).map(c => kbData.pains[c.value]);
+            const valueChecks = Array.from(document.querySelectorAll('.value-checkbox'));
+            const selectedValues = valueChecks.filter(c => c.checked).map(c => kbData.values[c.value]);
+            return {
+                pains: selectedPains.length ? selectedPains : kbData.pains,
+                values: selectedValues.length ? selectedValues : kbData.values,
+                objections: kbData.objections,
+            };
+        }
+
+        async function generateEmails() {
+            const msgEl = document.getElementById('emailsMessage');
+            msgEl.innerHTML = '';
+            if (!kbData) {
+                msgEl.innerHTML = '<div class="message error">Genereer eerst de Knowledge Base.</div>';
+                return;
+            }
+            const sel = currentSelection();
+            const selected = getSelectedItems();
+            const btn = document.getElementById('emailBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Bezig...';
+            try {
+                const data = await apiPost('/api/email-generator/emails', {
+                    sector: sel.sector, persona: sel.persona, goal: sel.goal, stage: sel.stage, tone: sel.tone,
+                    pains: selected.pains, values: selected.values, objections: selected.objections, count: 3,
+                });
+                generatedEmails = data.emails;
+                renderEmails();
+                document.getElementById('statEmails').textContent = generatedEmails.length;
+                const bron = data.source === 'ai' ? 'AI' : 'sjabloon, want geen AI-koppeling geconfigureerd';
+                msgEl.innerHTML = `<div class="message success">✅ Emails gegenereerd (bron: ${bron}).</div>`;
+            } catch (err) {
+                msgEl.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Genereer e-mails';
+            }
+        }
+
+        function renderEmails() {
+            const area = document.getElementById('resultsArea');
+            area.innerHTML = generatedEmails.map((e, i) => `
+                <div class="email-card">
+                    <div class="email-angle">${escapeHtml(e.angle)}</div>
+                    <div class="email-subject">${escapeHtml(e.subject)}</div>
+                    <div class="email-body">${escapeHtml(e.body)}</div>
+                    <div class="email-actions">
+                        <button class="btn btn-primary btn-small" onclick="copyEmail(${i})">Kopieer</button>
+                        <button class="btn btn-accent btn-small" onclick="saveTemplate(${i})">Opslaan</button>
+                    </div>
+                    <div id="emailAction${i}"></div>
+                </div>
+            `).join('');
+        }
+
+        function copyEmail(idx) {
+            const e = generatedEmails[idx];
+            const text = `Subject: ${e.subject}\n\n${e.body}`;
+            navigator.clipboard.writeText(text).then(() => {
+                document.getElementById(`emailAction${idx}`).innerHTML =
+                    '<div class="message success">Gekopieerd naar klembord.</div>';
+            });
+        }
+
+        async function saveTemplate(idx) {
+            const e = generatedEmails[idx];
+            const sel = currentSelection();
+            const actionEl = document.getElementById(`emailAction${idx}`);
+            try {
+                await apiPost('/api/email-generator/templates', {
+                    sector: sel.sector, persona: sel.persona, goal: sel.goal, stage: sel.stage, tone: sel.tone,
+                    subject: e.subject, body: e.body, angle: e.angle,
+                });
+                actionEl.innerHTML = '<div class="message success">Opgeslagen als template.</div>';
+                loadSavedTemplates();
+            } catch (err) {
+                actionEl.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        let savedTemplates = [];
+
+        function copySavedTemplate(idx) {
+            const t = savedTemplates[idx];
+            navigator.clipboard.writeText(`Subject: ${t.subject}\n\n${t.body}`);
+        }
+
+        async function loadSavedTemplates() {
+            if (!getToken()) return;
+            const listEl = document.getElementById('savedTemplatesList');
+            try {
+                const data = await apiGet('/api/email-generator/templates');
+                savedTemplates = data.templates || [];
+                if (!savedTemplates.length) {
+                    listEl.innerHTML = '<div class="empty-state">Nog geen opgeslagen templates.</div>';
+                    return;
+                }
+                listEl.innerHTML = savedTemplates.map((t, i) => `
+                    <div class="saved-template-item">
+                        <div class="saved-template-subject">${escapeHtml(t.subject)}</div>
+                        <div class="saved-template-body">${escapeHtml(t.body)}</div>
+                        <button class="btn btn-primary btn-small" onclick="copySavedTemplate(${i})">Kopieer</button>
+                    </div>
+                `).join('');
+            } catch (err) {
+                listEl.innerHTML = `<div class="message error">${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        window.addEventListener('load', loadSavedTemplates);
+    </script>
 </body>
 </html>

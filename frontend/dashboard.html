@@ -1291,6 +1291,8 @@
                     <span id="contacts-bulk-count"></span>
                     <select id="contacts-bulk-campaign-select" style="max-width:280px;"></select>
                     <button class="button button-primary" onclick="addSelectedContactsToCampaign()">Toevoegen aan campagne</button>
+                    <select id="contacts-bulk-sequence-select" style="max-width:280px;"></select>
+                    <button class="button button-primary" onclick="addSelectedContactsToSequence()">Inschrijven op sequence</button>
                     <button class="button button-secondary" onclick="bulkSetDoNotContact()">Niet benaderen</button>
                     <button class="button button-secondary" style="color:#b91c1c;" onclick="bulkDeleteContacts()">Verwijderen</button>
                 </div>
@@ -3434,6 +3436,7 @@
             if (count > 0) {
                 document.getElementById('contacts-bulk-count').textContent = `${count} geselecteerd`;
                 loadContactsBulkCampaignSelect();
+                loadContactsBulkSequenceSelect();
             }
         }
 
@@ -3467,6 +3470,39 @@
                 loadContacts();
             } catch (err) {
                 contactsAlert('contacts-list-alert', `Toevoegen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function loadContactsBulkSequenceSelect() {
+            const select = document.getElementById('contacts-bulk-sequence-select');
+            if (select.dataset.loaded) return;
+            try {
+                const data = await apiGet('/api/sequences');
+                const sequences = data.sequences || [];
+                select.innerHTML = sequences.length
+                    ? '<option value="">Kies een sequence...</option>' +
+                      sequences.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${s.status})</option>`).join('')
+                    : '<option value="">Geen sequences gevonden - maak er eerst een aan</option>';
+                select.dataset.loaded = '1';
+            } catch (err) {
+                select.innerHTML = '<option value="">Kon sequences niet laden</option>';
+            }
+        }
+
+        async function addSelectedContactsToSequence() {
+            const sequenceId = document.getElementById('contacts-bulk-sequence-select').value;
+            if (!sequenceId) {
+                contactsAlert('contacts-list-alert', 'Kies eerst een sequence.', 'warning');
+                return;
+            }
+            try {
+                const result = await apiPost(`/api/sequences/${sequenceId}/enroll`, { contact_ids: Array.from(selectedContactIds) });
+                contactsAlert('contacts-list-alert', `✓ ${result.enrolled} contact(en) ingeschreven op de sequence.`, 'success');
+                selectedContactIds.clear();
+                document.getElementById('contacts-bulk-sequence-select').removeAttribute('data-loaded');
+                loadContacts();
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Inschrijven mislukt: ${err.message}`, 'warning');
             }
         }
 

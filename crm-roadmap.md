@@ -528,6 +528,26 @@ Bewust niet meegenomen - nog te bepalen:
   en het uitgesloten-dagen-idee - toont het bijvoorbeeld "morgen
   08:00-09:30" i.p.v. alleen een kale datum?
 
+## Toekomstig idee (nog niet gescoped): dagelijkse prospecting-imports automatisch inschrijven op een sequence
+
+Door Benjamin geopperd: nieuw geïmporteerde contacten uit de dagelijkse
+prospecting-cron (source='vibe_prospecting_daily') automatisch inschrijven
+op een sequence, in plaats van de huidige bewust handmatige stap (filter
+op bron in de Contacten-tab, bulk-selecteren, "Inschrijven op sequence").
+Expliciet NIET nu gebouwd - de huidige handmatige gate blijft staan totdat
+dit is opgepakt. Nog te bepalen:
+- Losse instelling (aan/uit + welke sequence), naast de bestaande
+  daily_import_enabled/count/sector/country-instellingen bij Integraties -
+  niet stiekem aan de bestaande import vastgeplakt.
+- Eén vaste sequence per account, of instelbaar per sector (zodat
+  bijvoorbeeld een horeca-import op een andere sequence terechtkomt dan
+  een retail-import)?
+- Hoe verhoudt dit zich tot de flow-monitor (auto-pause bij lage
+  reply-rate, zie hierboven) - een sequence die veel verse, ongefilterde
+  prospects krijgt heeft waarschijnlijk een andere "normale" reply-rate
+  dan een handmatig samengestelde lijst, wat de vaste drempel minder
+  betrouwbaar kan maken voor die specifieke sequence.
+
 ## Fase 3 (nog niet gescoped) — AI-gedreven intake & optimalisatie
 
 **Update 9 sept. 2026**: de kern hiervan is gebouwd, zie "Fase 3b"

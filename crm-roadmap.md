@@ -440,36 +440,59 @@ Contacten, A/B Test, Analytics, Integraties) tegen een echt draaiende
 backend + echte login-flow, plus een syntax-check van het uitgepakte
 `<script>`-blok — geen consolefouten, geen regressies.
 
-## Deels gescoped (14 sept. 2026): leads uit Instagram/LinkedIn-advertenties
+## Code gebouwd, wacht op API-toegang (14 sept. 2026): leads uit Instagram/LinkedIn-advertenties
 
 Door Benjamin geopperd tijdens de Fase 3c-sessie: naast koud e-mailen ook
-advertenties draaien op Instagram/LinkedIn, en de resulterende leaddata (of
-berichten die prospects achterlaten) rechtstreeks importeren in de CRM voor
-directe opvolging. Nog niet gebouwd — dit is een nieuw, apart stuk werk,
-geen kleine uitbreiding. Twee ontwerpkeuzes zijn inmiddels wel gemaakt:
+advertenties draaien op Instagram/LinkedIn, en de resulterende leaddata
+rechtstreeks importeren in de CRM voor directe opvolging. Op Benjamins
+uitdrukkelijke verzoek ("bouw ze allebei maar in de volgorde die je zelf
+kiest") zijn BEIDE koppelingen nu volledig gebouwd - LinkedIn eerst, Meta
+erna. **Belangrijk voorbehoud: geen van beide is getest tegen een echt
+account**, omdat daar goedgekeurde API-toegang voor nodig is die er nog
+niet is (zie hieronder). Beschouw dit als een stevige eerste opzet, geen
+geverifieerde koppeling.
 
-- **Platform: LinkedIn eerst, niet Meta/Instagram.** Sluit beter aan bij
-  deze B2B-tool (er is al een LinkedIn-outreach-tracker) en LinkedIn's
-  API-goedkeuringsproces is voorspelbaarder. Instagram/Meta Lead Ads kan
-  later als losse uitbreiding op dezelfde manier erbij.
-- **Ophaalmethode: polling, geen webhooks.** Geen publiek
-  verificatie-endpoint nodig om te bouwen, en het past op dezelfde
-  cron-architectuur die de dagelijkse Vibe Prospecting-import al gebruikt
-  (zie hierboven, "dagelijkse prospecting-imports automatisch inschrijven
-  op een sequence") - nieuwe leads worden op dezelfde manier als contact
-  geïmporteerd (`source='linkedin_ads'`), met dezelfde reeds gebouwde
-  auto-enroll-naar-sequence-instelling herbruikbaar.
+**Gemaakte ontwerpkeuzes (gelden voor beide platforms):**
+- **Ophaalmethode: polling, geen webhooks.** Past op dezelfde
+  cron-architectuur als de dagelijkse Vibe Prospecting-import. Voor Meta
+  is dit een bewuste afwijking van hun eigen voorkeursmanier (webhook) -
+  geen nieuw publiek verificatie-endpoint nodig, ten koste van iets
+  minder realtime (leads komen pas binnen bij de eerstvolgende cron-run).
+- **Geen interactieve OAuth-consent-flow.** Zelfde "plak je eigen
+  credential"-patroon als HubSpot/Explorium al gebruiken (Integraties-
+  tabblad, per account) - geen nieuwe OAuth-callback-infrastructuur
+  nodig. Nadeel: LinkedIn-tokens verlopen (~60 dagen) en moeten dan
+  handmatig opnieuw geplakt worden; bij Meta wordt daarom een System
+  User-token aangeraden (verloopt niet). Een refresh-token-flow kan later
+  alsnog als dit in de praktijk te veel handwerk blijkt.
+- Nieuwe contacten krijgen `source='linkedin_ads'` resp. `source='meta_ads'`
+  en kunnen optioneel automatisch worden ingeschreven op een sequence -
+  zelfde reeds gebouwde auto-enroll-instelling als bij de dagelijkse
+  prospecting-import.
 
-**Concrete eerstvolgende stap, niet iets dat ik kan doen**: een LinkedIn
-Developer App registreren en toegang tot de Lead Gen Forms API aanvragen
-bij LinkedIn zelf - vereist een LinkedIn Company Page-beheerdersaccount
-van Benjamin/Twikey, en het goedkeuringsproces kan weken duren. Pas
-zinvol om de daadwerkelijke koppeling te bouwen zodra die toegang er is.
+**Gebouwd:**
+- `backend/linkedin_ads_client.py` / `backend/meta_ads_client.py` -
+  API-clients, endpoint-vormen geverifieerd tegen de actuele officiële
+  documentatie (LinkedIn: Microsoft Learn Lead Sync API; Meta: Graph API
+  Lead Ads-guide), niet tegen een echte API-aanroep.
+  `linkedin_ads_settings`/`meta_ads_settings`-tabellen (database.py, per
+  account: credential, enabled, auto_enroll_sequence_id, last_synced_at).
+- `POST /api/cron/process-linkedin-ads` / `POST /api/cron/process-meta-ads`
+  (app.py) - zelfde beveiliging/foutisolatie-patroon als de bestaande
+  cron-endpoints, zie DEPLOY.md voor de Render Cron Job-opzet.
+- Twee nieuwe kaarten bij Integraties (`frontend/dashboard.html`) om de
+  credential/formulier-ID's/auto-enroll-sequence per account in te
+  stellen, met een zichtbare "nog niet getest"-waarschuwing in de UI.
 
-Nog te bepalen zodra die toegang er is: hoe accountauthenticatie werkt
-(elk account koppelt vermoedelijk zijn eigen LinkedIn-advertentie-account,
-zoals nu ook al met SMTP/HubSpot/Explorium gebeurt) en de precieze
-cron-frequentie.
+**Concrete eerstvolgende stap, niet iets dat ik kan doen**: bij beide
+platforms een Developer App registreren en de benodigde API-toegang
+aanvragen - LinkedIn Lead Sync API (LinkedIn Company Page-beheerder
+nodig) en Meta `leads_retrieval` (Meta Business Manager + meestal
+Business Verification nodig). Beide goedkeuringsprocessen kunnen weken
+duren en lopen buiten dit platform om. Zodra die toegang en een eerste
+token er zijn: koppeling testen tegen een echt account, en de nog
+onbevestigde aannames (exacte veldnamen/paginering/foutafhandeling)
+corrigeren op basis van wat er echt terugkomt.
 
 Staat als "nog te plannen" in de "coming soon"-lijst op het
 Support-tabblad, zodat klanten weten dat dit eraan zit te komen.

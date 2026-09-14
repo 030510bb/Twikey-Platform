@@ -301,6 +301,50 @@ meetellen) of vaker als je liever sneller ingrijpt, met dezelfde
 `ADMIN_SECRET` bij **Environment**. Voor accounts zonder
 `flow_monitor_enabled` aan is dit endpoint een no-op.
 
+## Cron: LinkedIn-advertentieleads
+
+**Let op — nog niet tegen een echt account getest.** Vereist een
+goedgekeurde LinkedIn Developer App met Lead Sync API-toegang (App
+Review bij LinkedIn zelf); zie crm-roadmap.md, "leads uit
+Instagram/LinkedIn-advertenties" en `backend/linkedin_ads_client.py`.
+Importeert nieuwe LinkedIn Lead Gen Form-inzendingen (betaalde
+advertenties) als contact, alleen voor accounts die dit expliciet
+aanzetten (Integraties-tabblad, standaard uit).
+
+```bash
+curl -X POST https://api.justmeet.tech/api/cron/process-linkedin-ads \
+  -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
+```
+
+Zelfde opzet als de andere cron-endpoints hierboven: één aanroep verwerkt
+alle accounts met `enabled` aan bij hun LinkedIn-advertentieleads-
+instelling, en een fout bij één account (bv. een verlopen access token)
+stopt de rest van de run niet. Richt in als een Render Cron Job, met dit
+endpoint als **Command**, bijvoorbeeld elk uur, met dezelfde
+`ADMIN_SECRET` bij **Environment**. Voor accounts zonder deze koppeling
+is dit endpoint een no-op.
+
+## Cron: Instagram/Meta-advertentieleads
+
+**Let op — nog niet tegen een echt account getest.** Vereist een
+goedgekeurde Meta-app met `leads_retrieval`-toegang (App Review +
+meestal Business Verification bij Meta zelf); zie crm-roadmap.md, "leads
+uit Instagram/LinkedIn-advertenties" en `backend/meta_ads_client.py`.
+Meta bewaart leaddata maar 90 dagen, dus dit endpoint moet minstens zo
+vaak draaien om nooit een lead te missen.
+
+```bash
+curl -X POST https://api.justmeet.tech/api/cron/process-meta-ads \
+  -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
+```
+
+Zelfde opzet als hierboven: één aanroep verwerkt alle accounts met
+`enabled` aan bij hun Meta-advertentieleads-instelling, en een fout bij
+één account stopt de rest van de run niet. Richt in als een Render Cron
+Job, met dit endpoint als **Command**, bijvoorbeeld elk uur, met dezelfde
+`ADMIN_SECRET` bij **Environment**. Voor accounts zonder deze koppeling
+is dit endpoint een no-op.
+
 ## Stap 5 — Eigen domein koppelen (justmeet.tech)
 
 Dit platform draait op zichzelf prima op de Render-URLs

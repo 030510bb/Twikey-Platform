@@ -326,6 +326,35 @@ CREATE TABLE IF NOT EXISTS hubspot_settings (
     updated_at TEXT NOT NULL
 );
 
+-- Leads uit LinkedIn-advertenties (crm-roadmap.md, "leads uit
+-- Instagram/LinkedIn-advertenties") - zelfde bring-your-own-credential
+-- patroon als hubspot_settings hierboven: geen interactieve OAuth-flow,
+-- de klant plakt zelf een access token + Sponsored Account URN (zie
+-- linkedin_ads_client.py voor wat daarvoor nodig is bij LinkedIn zelf).
+-- auto_enroll_sequence_id komt pas via MIGRATIONS (verwijst naar
+-- sequences, dat pas verderop in dit schema wordt aangemaakt).
+CREATE TABLE IF NOT EXISTS linkedin_ads_settings (
+    account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
+    access_token_encrypted TEXT NOT NULL,
+    sponsored_account_urn TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    last_synced_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
+-- Leads uit Meta (Facebook/Instagram)-advertenties - zelfde idee als
+-- linkedin_ads_settings hierboven, maar dan met een of meer Lead Gen
+-- Form-ID's (comma-gescheiden) i.p.v. een sponsored-account-URN, zie
+-- meta_ads_client.py.
+CREATE TABLE IF NOT EXISTS meta_ads_settings (
+    account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
+    access_token_encrypted TEXT NOT NULL,
+    form_ids TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 0,
+    last_synced_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
 -- Self-service knowledge base for the support page. Global (not per
 -- account) - every customer sees the same FAQ/how-to articles.
 CREATE TABLE IF NOT EXISTS kb_articles (
@@ -675,6 +704,14 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS enrollment_cooldown_months INTEGER
 -- uitgesloten.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS send_days TEXT NOT NULL DEFAULT '1,2,3,4,5';
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS send_exclude_holidays_nl INTEGER NOT NULL DEFAULT 1;
+
+-- Optioneel: automatisch elke nieuw geïmporteerde LinkedIn/Meta-ad-lead
+-- inschrijven op deze sequence (NULL = uit, blijft de bewuste handmatige
+-- stap). Zelfde idee als prospecting_settings.daily_import_auto_enroll_
+-- sequence_id hierboven - komt via MIGRATIONS omdat linkedin_ads_settings/
+-- meta_ads_settings eerder in dit schema staan dan sequences.
+ALTER TABLE linkedin_ads_settings ADD COLUMN IF NOT EXISTS auto_enroll_sequence_id INTEGER REFERENCES sequences(id);
+ALTER TABLE meta_ads_settings ADD COLUMN IF NOT EXISTS auto_enroll_sequence_id INTEGER REFERENCES sequences(id);
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -2123,6 +2160,107 @@ def delete_hubspot_settings(account_id: int) -> bool:
             return False
         conn.execute("DELETE FROM hubspot_settings WHERE account_id = ?", (account_id,))
         return True
+
+
+def get_linkedin_ads_settings(account_id: int):
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM linkedin_ads_settings WHERE account_id = ?", (account_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def save_linkedin_ads_settings(account_id: int, access_token_encrypted: str, sponsored_account_urn: str,
+                                enabled: bool = False, auto_enroll_sequence_id: int = None) -> dict:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO linkedin_ads_settings
+                (account_id, access_token_encrypted, sponsored_account_urn, enabled, auto_enroll_sequence_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (account_id) DO UPDATE SET
+                access_token_encrypted = excluded.access_token_encrypted,
+                sponsored_account_urn = excluded.sponsored_account_urn,
+                enabled = excluded.enabled,
+                auto_enroll_sequence_id = excluded.auto_enroll_sequence_id,
+                updated_at = excluded.updated_at
+            """,
+            (account_id, access_token_encrypted, sponsored_account_urn, 1 if enabled else 0,
+             auto_enroll_sequence_id, now_iso()),
+        )
+        row = conn.execute("SELECT * FROM linkedin_ads_settings WHERE account_id = ?", (account_id,)).fetchone()
+        return dict(row)
+
+
+def delete_linkedin_ads_settings(account_id: int) -> bool:
+    with get_conn() as conn:
+        existing = conn.execute("SELECT 1 FROM linkedin_ads_settings WHERE account_id = ?", (account_id,)).fetchone()
+        if not existing:
+            return False
+        conn.execute("DELETE FROM linkedin_ads_settings WHERE account_id = ?", (account_id,))
+        return True
+
+
+def accounts_with_linkedin_ads_enabled() -> list:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM linkedin_ads_settings WHERE enabled = 1").fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_linkedin_ads_last_synced_at(account_id: int, when: str = None):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE linkedin_ads_settings SET last_synced_at = ? WHERE account_id = ?",
+            (when or now_iso(), account_id),
+        )
+
+
+def get_meta_ads_settings(account_id: int):
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM meta_ads_settings WHERE account_id = ?", (account_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def save_meta_ads_settings(account_id: int, access_token_encrypted: str, form_ids: str,
+                            enabled: bool = False, auto_enroll_sequence_id: int = None) -> dict:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO meta_ads_settings
+                (account_id, access_token_encrypted, form_ids, enabled, auto_enroll_sequence_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (account_id) DO UPDATE SET
+                access_token_encrypted = excluded.access_token_encrypted,
+                form_ids = excluded.form_ids,
+                enabled = excluded.enabled,
+                auto_enroll_sequence_id = excluded.auto_enroll_sequence_id,
+                updated_at = excluded.updated_at
+            """,
+            (account_id, access_token_encrypted, form_ids, 1 if enabled else 0, auto_enroll_sequence_id, now_iso()),
+        )
+        row = conn.execute("SELECT * FROM meta_ads_settings WHERE account_id = ?", (account_id,)).fetchone()
+        return dict(row)
+
+
+def delete_meta_ads_settings(account_id: int) -> bool:
+    with get_conn() as conn:
+        existing = conn.execute("SELECT 1 FROM meta_ads_settings WHERE account_id = ?", (account_id,)).fetchone()
+        if not existing:
+            return False
+        conn.execute("DELETE FROM meta_ads_settings WHERE account_id = ?", (account_id,))
+        return True
+
+
+def accounts_with_meta_ads_enabled() -> list:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM meta_ads_settings WHERE enabled = 1").fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_meta_ads_last_synced_at(account_id: int, when: str = None):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE meta_ads_settings SET last_synced_at = ? WHERE account_id = ?",
+            (when or now_iso(), account_id),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -1750,6 +1750,78 @@
             </div>
 
             <div class="card">
+                <h2><span class="icon">💼</span>LinkedIn-advertentieleads</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Importeert automatisch nieuwe inzendingen van je LinkedIn Lead Gen Forms (betaalde advertenties)
+                    als contact. <strong>Let op:</strong> dit vereist een goedgekeurde LinkedIn Developer App met
+                    Lead Sync API-toegang (App Review bij LinkedIn zelf, kan weken duren) - zie crm-roadmap.md.
+                    Deze koppeling is nog niet tegen een echt LinkedIn-account getest.
+                </p>
+                <div id="linkedinads-status"></div>
+                <div id="linkedinads-alert"></div>
+                <div class="input-group">
+                    <label>Access token</label>
+                    <input type="password" id="linkedinads-token" placeholder="Laat leeg om het huidige token te behouden">
+                </div>
+                <div class="input-group">
+                    <label>Sponsored Account URN</label>
+                    <input type="text" id="linkedinads-urn" placeholder="urn:li:sponsoredAccount:123456789">
+                </div>
+                <div class="input-group" style="margin-top: 6px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="linkedinads-enabled" style="width:auto;">
+                        Automatisch importeren aan
+                    </label>
+                </div>
+                <div class="input-group">
+                    <label>Automatisch inschrijven op sequence</label>
+                    <select id="linkedinads-auto-enroll-sequence">
+                        <option value="">Niet automatisch inschrijven (handmatig via Contacten-tabblad)</option>
+                    </select>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button class="button button-primary" onclick="saveLinkedinAdsSettings()">Opslaan</button>
+                    <button class="button button-secondary" id="linkedinads-disconnect" style="color:#b91c1c; display:none;" onclick="disconnectLinkedinAds()">Koppeling verwijderen</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">📸</span>Instagram/Meta-advertentieleads</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Importeert automatisch nieuwe inzendingen van je Meta (Facebook/Instagram) Lead Ads-formulieren
+                    als contact. <strong>Let op:</strong> dit vereist een goedgekeurde Meta-app met
+                    <code>leads_retrieval</code>-toegang (App Review + meestal Business Verification bij Meta zelf,
+                    kan weken duren) - zie crm-roadmap.md. Deze koppeling is nog niet tegen een echt account getest.
+                </p>
+                <div id="metaads-status"></div>
+                <div id="metaads-alert"></div>
+                <div class="input-group">
+                    <label>Access token (bij voorkeur een System User-token, verloopt niet)</label>
+                    <input type="password" id="metaads-token" placeholder="Laat leeg om het huidige token te behouden">
+                </div>
+                <div class="input-group">
+                    <label>Lead Gen Form-ID's (komma-gescheiden)</label>
+                    <input type="text" id="metaads-form-ids" placeholder="123456789012345, 987654321098765">
+                </div>
+                <div class="input-group" style="margin-top: 6px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="metaads-enabled" style="width:auto;">
+                        Automatisch importeren aan
+                    </label>
+                </div>
+                <div class="input-group">
+                    <label>Automatisch inschrijven op sequence</label>
+                    <select id="metaads-auto-enroll-sequence">
+                        <option value="">Niet automatisch inschrijven (handmatig via Contacten-tabblad)</option>
+                    </select>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button class="button button-primary" onclick="saveMetaAdsSettings()">Opslaan</button>
+                    <button class="button button-secondary" id="metaads-disconnect" style="color:#b91c1c; display:none;" onclick="disconnectMetaAds()">Koppeling verwijderen</button>
+                </div>
+            </div>
+
+            <div class="card">
                 <h2><span class="icon">📂</span>Contacten importeren / exporteren</h2>
                 <p style="color:#666; margin-bottom: 15px;">
                     Upload een CSV - het platform herkent zelf welke kolom bij welk veld
@@ -2172,6 +2244,8 @@
                 loadEmailSettings();
                 loadProspectingSettings();
                 loadHubspotSettings();
+                loadLinkedinAdsSettings();
+                loadMetaAdsSettings();
                 loadSendingSettings();
                 loadFlowMonitorSettings();
                 loadEnrollmentCooldownSettings();
@@ -2963,6 +3037,152 @@
                     : `<div class="alert alert-success">${escapeHtml(r.company_name)}: geen reden tot uitsluiting.</div>`;
             } catch (err) {
                 resultEl.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+            }
+        }
+
+        // --- Integraties: LinkedIn-advertentieleads --------------------------
+
+        function linkedinAdsAlert(message, kind) {
+            const el = document.getElementById('linkedinads-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        async function loadLinkedinAdsAutoEnrollSequenceSelect() {
+            const select = document.getElementById('linkedinads-auto-enroll-sequence');
+            try {
+                const data = await apiGet('/api/sequences');
+                const sequences = data.sequences || [];
+                select.innerHTML = '<option value="">Niet automatisch inschrijven (handmatig via Contacten-tabblad)</option>' +
+                    sequences.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${s.status})</option>`).join('');
+            } catch (err) {
+                select.innerHTML = '<option value="">Kon sequences niet laden</option>';
+            }
+        }
+
+        async function loadLinkedinAdsSettings() {
+            const statusEl = document.getElementById('linkedinads-status');
+            const disconnectBtn = document.getElementById('linkedinads-disconnect');
+            try {
+                const data = await apiGet('/api/integrations/linkedin-ads');
+                await loadLinkedinAdsAutoEnrollSequenceSelect();
+                if (data.configured) {
+                    const syncNote = data.last_synced_at ? ` Laatst gesynchroniseerd: ${new Date(data.last_synced_at).toLocaleString('nl-NL')}.` : ' Nog niet gesynchroniseerd.';
+                    statusEl.innerHTML = `<div class="alert alert-success">✓ Gekoppeld.${syncNote}</div>`;
+                    document.getElementById('linkedinads-token').placeholder = 'Laat leeg om het huidige token te behouden';
+                    document.getElementById('linkedinads-urn').value = data.sponsored_account_urn || '';
+                    document.getElementById('linkedinads-enabled').checked = !!data.enabled;
+                    document.getElementById('linkedinads-auto-enroll-sequence').value = data.auto_enroll_sequence_id || '';
+                    disconnectBtn.style.display = 'inline-block';
+                } else {
+                    statusEl.innerHTML = '<div class="alert alert-warning">Nog niet gekoppeld.</div>';
+                    disconnectBtn.style.display = 'none';
+                }
+            } catch (err) {
+                statusEl.innerHTML = `<div class="alert alert-warning">Kon status niet laden: ${err.message}</div>`;
+            }
+        }
+
+        async function saveLinkedinAdsSettings() {
+            const urn = document.getElementById('linkedinads-urn').value.trim();
+            if (!urn) { linkedinAdsAlert('Vul de Sponsored Account URN in.', 'warning'); return; }
+            const sequenceId = document.getElementById('linkedinads-auto-enroll-sequence').value;
+            try {
+                await apiPost('/api/integrations/linkedin-ads', {
+                    access_token: document.getElementById('linkedinads-token').value.trim(),
+                    sponsored_account_urn: urn,
+                    enabled: document.getElementById('linkedinads-enabled').checked,
+                    auto_enroll_sequence_id: sequenceId ? parseInt(sequenceId, 10) : null,
+                });
+                linkedinAdsAlert('✓ Opgeslagen.', 'success');
+                document.getElementById('linkedinads-token').value = '';
+                loadLinkedinAdsSettings();
+            } catch (err) {
+                linkedinAdsAlert(`Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function disconnectLinkedinAds() {
+            if (!confirm('Koppeling met LinkedIn-advertentieleads verwijderen?')) return;
+            try {
+                await apiDelete('/api/integrations/linkedin-ads');
+                linkedinAdsAlert('Koppeling verwijderd.', 'success');
+                loadLinkedinAdsSettings();
+            } catch (err) {
+                linkedinAdsAlert(`Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Integraties: Instagram/Meta-advertentieleads --------------------
+
+        function metaAdsAlert(message, kind) {
+            const el = document.getElementById('metaads-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        async function loadMetaAdsAutoEnrollSequenceSelect() {
+            const select = document.getElementById('metaads-auto-enroll-sequence');
+            try {
+                const data = await apiGet('/api/sequences');
+                const sequences = data.sequences || [];
+                select.innerHTML = '<option value="">Niet automatisch inschrijven (handmatig via Contacten-tabblad)</option>' +
+                    sequences.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${s.status})</option>`).join('');
+            } catch (err) {
+                select.innerHTML = '<option value="">Kon sequences niet laden</option>';
+            }
+        }
+
+        async function loadMetaAdsSettings() {
+            const statusEl = document.getElementById('metaads-status');
+            const disconnectBtn = document.getElementById('metaads-disconnect');
+            try {
+                const data = await apiGet('/api/integrations/meta-ads');
+                await loadMetaAdsAutoEnrollSequenceSelect();
+                if (data.configured) {
+                    const syncNote = data.last_synced_at ? ` Laatst gesynchroniseerd: ${new Date(data.last_synced_at).toLocaleString('nl-NL')}.` : ' Nog niet gesynchroniseerd.';
+                    statusEl.innerHTML = `<div class="alert alert-success">✓ Gekoppeld.${syncNote}</div>`;
+                    document.getElementById('metaads-token').placeholder = 'Laat leeg om het huidige token te behouden';
+                    document.getElementById('metaads-form-ids').value = data.form_ids || '';
+                    document.getElementById('metaads-enabled').checked = !!data.enabled;
+                    document.getElementById('metaads-auto-enroll-sequence').value = data.auto_enroll_sequence_id || '';
+                    disconnectBtn.style.display = 'inline-block';
+                } else {
+                    statusEl.innerHTML = '<div class="alert alert-warning">Nog niet gekoppeld.</div>';
+                    disconnectBtn.style.display = 'none';
+                }
+            } catch (err) {
+                statusEl.innerHTML = `<div class="alert alert-warning">Kon status niet laden: ${err.message}</div>`;
+            }
+        }
+
+        async function saveMetaAdsSettings() {
+            const formIds = document.getElementById('metaads-form-ids').value.trim();
+            if (!formIds) { metaAdsAlert('Vul minstens 1 Lead Gen Form-ID in.', 'warning'); return; }
+            const sequenceId = document.getElementById('metaads-auto-enroll-sequence').value;
+            try {
+                await apiPost('/api/integrations/meta-ads', {
+                    access_token: document.getElementById('metaads-token').value.trim(),
+                    form_ids: formIds,
+                    enabled: document.getElementById('metaads-enabled').checked,
+                    auto_enroll_sequence_id: sequenceId ? parseInt(sequenceId, 10) : null,
+                });
+                metaAdsAlert('✓ Opgeslagen.', 'success');
+                document.getElementById('metaads-token').value = '';
+                loadMetaAdsSettings();
+            } catch (err) {
+                metaAdsAlert(`Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function disconnectMetaAds() {
+            if (!confirm('Koppeling met Instagram/Meta-advertentieleads verwijderen?')) return;
+            try {
+                await apiDelete('/api/integrations/meta-ads');
+                metaAdsAlert('Koppeling verwijderd.', 'success');
+                loadMetaAdsSettings();
+            } catch (err) {
+                metaAdsAlert(`Mislukt: ${err.message}`, 'warning');
             }
         }
 

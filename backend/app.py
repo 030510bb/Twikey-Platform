@@ -62,6 +62,8 @@ import crypto
 import database
 import hubspot_client
 import imap_client
+import linkedin_ads_client
+import meta_ads_client
 import prospecting_client
 import smtp_client
 from auth import get_current_account, get_current_admin, require_admin_secret
@@ -2280,6 +2282,96 @@ def api_delete_hubspot_settings(account: dict = Depends(get_current_account)):
     return {"success": True}
 
 
+class LinkedinAdsSettingsIn(BaseModel):
+    access_token: str = ""  # leeg = huidige token behouden
+    sponsored_account_urn: str
+    enabled: bool = False
+    auto_enroll_sequence_id: int | None = None
+
+
+@app.get("/api/integrations/linkedin-ads")
+def api_get_linkedin_ads_settings(account: dict = Depends(get_current_account)):
+    row = database.get_linkedin_ads_settings(account["id"])
+    if not row:
+        return {"configured": False}
+    return {
+        "configured": True,
+        "sponsored_account_urn": row["sponsored_account_urn"],
+        "enabled": bool(row["enabled"]),
+        "auto_enroll_sequence_id": row["auto_enroll_sequence_id"],
+        "last_synced_at": row["last_synced_at"],
+    }
+
+
+@app.post("/api/integrations/linkedin-ads")
+def api_save_linkedin_ads_settings(payload: LinkedinAdsSettingsIn, account: dict = Depends(get_current_account)):
+    existing = database.get_linkedin_ads_settings(account["id"])
+    if payload.access_token.strip():
+        access_token_encrypted = crypto.encrypt(payload.access_token.strip())
+    elif existing:
+        access_token_encrypted = existing["access_token_encrypted"]
+    else:
+        raise HTTPException(status_code=400, detail="Access token is verplicht bij het voor het eerst instellen.")
+    if not payload.sponsored_account_urn.strip():
+        raise HTTPException(status_code=400, detail="Sponsored Account URN mag niet leeg zijn.")
+    database.save_linkedin_ads_settings(
+        account["id"], access_token_encrypted, payload.sponsored_account_urn.strip(),
+        payload.enabled, payload.auto_enroll_sequence_id,
+    )
+    return {"success": True}
+
+
+@app.delete("/api/integrations/linkedin-ads")
+def api_delete_linkedin_ads_settings(account: dict = Depends(get_current_account)):
+    database.delete_linkedin_ads_settings(account["id"])
+    return {"success": True}
+
+
+class MetaAdsSettingsIn(BaseModel):
+    access_token: str = ""  # leeg = huidige token behouden
+    form_ids: str  # comma-gescheiden Lead Gen Form-ID's
+    enabled: bool = False
+    auto_enroll_sequence_id: int | None = None
+
+
+@app.get("/api/integrations/meta-ads")
+def api_get_meta_ads_settings(account: dict = Depends(get_current_account)):
+    row = database.get_meta_ads_settings(account["id"])
+    if not row:
+        return {"configured": False}
+    return {
+        "configured": True,
+        "form_ids": row["form_ids"],
+        "enabled": bool(row["enabled"]),
+        "auto_enroll_sequence_id": row["auto_enroll_sequence_id"],
+        "last_synced_at": row["last_synced_at"],
+    }
+
+
+@app.post("/api/integrations/meta-ads")
+def api_save_meta_ads_settings(payload: MetaAdsSettingsIn, account: dict = Depends(get_current_account)):
+    existing = database.get_meta_ads_settings(account["id"])
+    if payload.access_token.strip():
+        access_token_encrypted = crypto.encrypt(payload.access_token.strip())
+    elif existing:
+        access_token_encrypted = existing["access_token_encrypted"]
+    else:
+        raise HTTPException(status_code=400, detail="Access token is verplicht bij het voor het eerst instellen.")
+    form_ids = ",".join(f.strip() for f in payload.form_ids.split(",") if f.strip())
+    if not form_ids:
+        raise HTTPException(status_code=400, detail="Vul minstens 1 Lead Gen Form-ID in.")
+    database.save_meta_ads_settings(
+        account["id"], access_token_encrypted, form_ids, payload.enabled, payload.auto_enroll_sequence_id,
+    )
+    return {"success": True}
+
+
+@app.delete("/api/integrations/meta-ads")
+def api_delete_meta_ads_settings(account: dict = Depends(get_current_account)):
+    database.delete_meta_ads_settings(account["id"])
+    return {"success": True}
+
+
 def _apply_hubspot_exclusion(account_id: int, contact: dict):
     """Best-effort live HubSpot check - the third uitsluitlijst-mechanisme
     from crm-roadmap.md, running automatically on top of the manual+CSV
@@ -2551,6 +2643,109 @@ def api_process_prospecting():
             accounts_processed += 1
         except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
             logger.warning("Dagelijkse prospecting mislukt voor account %s: %s", account_id, exc)
+            errors += 1
+    return {
+        "success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported,
+        "errors": errors, "sequence_enrolled": sequence_enrolled, "sequence_skipped_cooldown": sequence_skipped_cooldown,
+    }
+
+
+@app.post("/api/cron/process-linkedin-ads", dependencies=[Depends(require_admin_secret)])
+def api_process_linkedin_ads():
+    """Periodieke import van nieuwe LinkedIn Lead Gen Form-inzendingen
+    (crm-roadmap.md, "leads uit Instagram/LinkedIn-advertenties") - zelfde
+    beveiliging/aanroeppatroon en per-account foutisolatie als
+    /api/cron/process-prospecting hierboven. Nog niet getest tegen een
+    echt account (zie linkedin_ads_client.py) - dit is een eerste,
+    syntactisch correcte opzet die pas echt gevalideerd kan worden zodra
+    er LinkedIn Lead Sync API-toegang is."""
+    accounts_processed, contacts_imported, errors = 0, 0, 0
+    sequence_enrolled, sequence_skipped_cooldown = 0, 0
+    for settings_row in database.accounts_with_linkedin_ads_enabled():
+        account_id = settings_row["account_id"]
+        auto_enroll_sequence_id = settings_row["auto_enroll_sequence_id"]
+        try:
+            access_token = crypto.decrypt(settings_row["access_token_encrypted"])
+            since_ms = None
+            if settings_row["last_synced_at"]:
+                since_ms = int(datetime.fromisoformat(settings_row["last_synced_at"]).timestamp() * 1000)
+            leads = linkedin_ads_client.fetch_new_leads(access_token, settings_row["sponsored_account_urn"], since_ms)
+            for lead in leads:
+                email = (lead.get("email") or "").strip()
+                if not email:
+                    continue
+                if database.get_contact_by_email(account_id, email):
+                    continue  # al bekend - niet als nieuw tellen (add_contact zou 'm alsnog upserten, maar niet dubbel meetellen)
+                contact = database.add_contact(
+                    account_id=account_id,
+                    first_name=lead.get("first_name") or "Onbekend",
+                    last_name=lead.get("last_name") or "",
+                    job_title=lead.get("job_title") or "",
+                    email=email, company=lead.get("company") or "",
+                    source="linkedin_ads",
+                )
+                _apply_hubspot_exclusion(account_id, contact)
+                contacts_imported += 1
+                if auto_enroll_sequence_id:
+                    result = database.enroll_contact(auto_enroll_sequence_id, account_id, contact["id"])
+                    if result["enrollment"]:
+                        sequence_enrolled += 1
+                    elif result["skipped_reason"] == "cooldown":
+                        sequence_skipped_cooldown += 1
+            database.update_linkedin_ads_last_synced_at(account_id)
+            accounts_processed += 1
+        except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
+            logger.warning("LinkedIn-ads-import mislukt voor account %s: %s", account_id, exc)
+            errors += 1
+    return {
+        "success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported,
+        "errors": errors, "sequence_enrolled": sequence_enrolled, "sequence_skipped_cooldown": sequence_skipped_cooldown,
+    }
+
+
+@app.post("/api/cron/process-meta-ads", dependencies=[Depends(require_admin_secret)])
+def api_process_meta_ads():
+    """Zelfde als /api/cron/process-linkedin-ads hierboven, maar voor Meta
+    (Facebook/Instagram) Lead Ads - zie meta_ads_client.py. Meta bewaart
+    leaddata maar 90 dagen, dus deze cron moet minstens zo vaak draaien om
+    nooit een lead te missen. Ook hier: nog niet getest tegen een echt
+    account, pas mogelijk zodra er leads_retrieval-toegang via Meta App
+    Review is."""
+    accounts_processed, contacts_imported, errors = 0, 0, 0
+    sequence_enrolled, sequence_skipped_cooldown = 0, 0
+    for settings_row in database.accounts_with_meta_ads_enabled():
+        account_id = settings_row["account_id"]
+        auto_enroll_sequence_id = settings_row["auto_enroll_sequence_id"]
+        try:
+            access_token = crypto.decrypt(settings_row["access_token_encrypted"])
+            form_ids = [f for f in (settings_row["form_ids"] or "").split(",") if f]
+            leads = meta_ads_client.fetch_new_leads(access_token, form_ids, settings_row["last_synced_at"])
+            for lead in leads:
+                email = (lead.get("email") or "").strip()
+                if not email:
+                    continue
+                if database.get_contact_by_email(account_id, email):
+                    continue
+                contact = database.add_contact(
+                    account_id=account_id,
+                    first_name=lead.get("first_name") or "Onbekend",
+                    last_name=lead.get("last_name") or "",
+                    job_title=lead.get("job_title") or "",
+                    email=email, company=lead.get("company") or "",
+                    source="meta_ads",
+                )
+                _apply_hubspot_exclusion(account_id, contact)
+                contacts_imported += 1
+                if auto_enroll_sequence_id:
+                    result = database.enroll_contact(auto_enroll_sequence_id, account_id, contact["id"])
+                    if result["enrollment"]:
+                        sequence_enrolled += 1
+                    elif result["skipped_reason"] == "cooldown":
+                        sequence_skipped_cooldown += 1
+            database.update_meta_ads_last_synced_at(account_id)
+            accounts_processed += 1
+        except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
+            logger.warning("Meta-ads-import mislukt voor account %s: %s", account_id, exc)
             errors += 1
     return {
         "success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported,

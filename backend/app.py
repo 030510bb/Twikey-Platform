@@ -2534,6 +2534,7 @@ def api_prospecting_match_businesses(payload: ProspectingBusinessMatchIn, accoun
 class ProspectingLookalikeIn(BaseModel):
     business_id: str
     size: int = 20
+    country: str | None = None  # 2-letter code, bv. 'nl' - filtert lookalikes op hetzelfde land
 
 
 @app.post("/api/prospecting/businesses/lookalikes")
@@ -2542,7 +2543,9 @@ def api_prospecting_lookalikes(payload: ProspectingLookalikeIn, account: dict = 
     gematchte business_id."""
     api_key = _decrypted_prospecting_key(account["id"])
     try:
-        results = prospecting_client.search_lookalike_businesses(api_key, payload.business_id, payload.size)
+        results = prospecting_client.search_lookalike_businesses(
+            api_key, payload.business_id, payload.size, country=payload.country
+        )
     except prospecting_client.ExploriumError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"businesses": results}

@@ -735,3 +735,14 @@ frontend) dit ongewijzigd als een gewoon business-record kan behandelen.
 Reguliere bedrijf-zoekopdrachten (`/v1/businesses/match`,
 `/v1/businesses`) bleken bij dezelfde test wél meteen correct te werken -
 alleen het lookalikes-pad was fout.
+
+**Vervolg, zelfde dag**: lookalikes-zoeken filtert nu optioneel op land.
+De `/v1/businesses/lookalikes/enrich`-aanroep zelf heeft geen
+filterparameters (alleen `business_id`), dus het land-filter gebeurt
+server-side ná de Explorium-aanroep op het `lookalike_country_location`-
+veld dat elk resultaat al meekrijgt. Nieuw veld "Land voor lookalikes
+(2-letter code, optioneel)" bij Integraties → Vibe Prospecting → Bedrijf
+zoeken. Bij dezelfde gelegenheid ook een kleine frontend-bug gefixt:
+herhaald op "Lookalikes zoeken" klikken stapelde resultatenblokken
+oneindig op elkaar (`resultsEl.appendChild` zonder de vorige eerst op te
+ruimen) - vervangen door eerst het vorige lookalikes-blok te verwijderen.

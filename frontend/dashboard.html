@@ -1765,6 +1765,11 @@
                     <div class="input-group" style="margin:0;"><label>Domein (optioneel)</label><input type="text" id="prospecting-search-domain" placeholder="acme.nl"></div>
                     <button class="button button-primary" onclick="prospectingSearchBusiness()">Zoeken</button>
                 </div>
+                <div class="input-group" style="max-width:220px; margin-top:10px;">
+                    <label>Land voor lookalikes (2-letter code, optioneel)</label>
+                    <input type="text" id="prospecting-lookalike-country" maxlength="2" placeholder="nl">
+                    <p style="color:#999; font-size:12px; margin-top:4px;">Leeg = alle landen. Beperkt "Lookalikes zoeken" hieronder tot dit land.</p>
+                </div>
                 <div id="prospecting-search-alert" style="margin-top:10px;"></div>
                 <div id="prospecting-search-results"></div>
             </div>
@@ -3395,11 +3400,16 @@
 
         async function prospectingFindLookalikes(businessId) {
             const resultsEl = document.getElementById('prospecting-search-results');
+            resultsEl.querySelectorAll('.lookalikes-box').forEach(el => el.remove());
             const box = document.createElement('div');
+            box.className = 'lookalikes-box';
             box.innerHTML = '<p style="color:#666;">Lookalikes zoeken...</p>';
             resultsEl.appendChild(box);
+            const country = document.getElementById('prospecting-lookalike-country').value.trim();
             try {
-                const data = await apiPost('/api/prospecting/businesses/lookalikes', { business_id: businessId });
+                const data = await apiPost('/api/prospecting/businesses/lookalikes', {
+                    business_id: businessId, country: country || null,
+                });
                 const businesses = data.businesses || [];
                 box.innerHTML = businesses.length
                     ? '<h4 style="margin-top:10px;">Lookalikes</h4>' + businesses.map(b => `
@@ -3410,7 +3420,7 @@
                             </div>
                         </div>
                     `).join('')
-                    : '<p style="color:#666;">Geen lookalikes gevonden.</p>';
+                    : `<p style="color:#666;">Geen lookalikes gevonden${country ? ` in land "${escapeHtml(country)}"` : ''}.</p>`;
             } catch (err) {
                 box.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
             }

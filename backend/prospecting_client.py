@@ -92,18 +92,26 @@ def search_businesses(api_key: str, filters: dict, size: int = 20) -> list:
     return data.get("data") or []
 
 
-def search_lookalike_businesses(api_key: str, business_id: str, size: int = 20) -> list:
+def search_lookalike_businesses(api_key: str, business_id: str, size: int = 20, country: str = None) -> list:
     """Lookalikes (crm-roadmap.md punt 3) - POST /v1/businesses/lookalikes/enrich,
     een losse enrichment-call per business_id (geen `size`/paginering op
     Explorium's kant; levert doorgaans een handvol resultaten per aanroep).
-    `size` knipt het resultaat aan onze kant af zodat de caller niet meer
-    terugkrijgt dan gevraagd. Explorium's respons gebruikt lookalike_*-
-    voorvoegsels (lookalike_business_id/lookalike_business_name/
-    lookalike_website) - genormaliseerd naar business_id/name/domain zodat
-    de rest van de codebase (en de frontend) dit als een gewoon
-    business-record kan behandelen, net als search_businesses()."""
+    Deze enrichment-call heeft zelf GEEN filterparameters (alleen
+    business_id in de request) - een land-filter is dus alleen mogelijk
+    door achteraf te filteren op het land dat elk resultaat al meekrijgt
+    (`lookalike_country_location`, een lowercase 2-letter code zoals "nl").
+    `country` (optioneel, zelfde 2-letter-code-conventie als elders in dit
+    bestand) filtert dus NA de Explorium-aanroep, vóór het aan `size`
+    afknippen - zodat `size` slaat op het aantal resultaten ná filtering,
+    niet ervoor. Explorium's respons gebruikt lookalike_*-voorvoegsels
+    (lookalike_business_id/lookalike_business_name/lookalike_website) -
+    genormaliseerd naar business_id/name/domain zodat de rest van de
+    codebase (en de frontend) dit als een gewoon business-record kan
+    behandelen, net als search_businesses()."""
     data = _request(api_key, "POST", "/v1/businesses/lookalikes/enrich", {"business_id": business_id})
     results = data.get("data") or []
+    if country:
+        results = [r for r in results if (r.get("lookalike_country_location") or "").lower() == country.lower()]
     businesses = []
     for r in results[:size]:
         website = r.get("lookalike_website") or ""

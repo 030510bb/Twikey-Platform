@@ -746,3 +746,15 @@ zoeken. Bij dezelfde gelegenheid ook een kleine frontend-bug gefixt:
 herhaald op "Lookalikes zoeken" klikken stapelde resultatenblokken
 oneindig op elkaar (`resultsEl.appendChild` zonder de vorige eerst op te
 ruimen) - vervangen door eerst het vorige lookalikes-blok te verwijderen.
+
+**Afgerond, zelfde dag**: `_request()` gaf bij elke 401/403 altijd
+dezelfde vaste tekst ("Ongeldige of verlopen Explorium API-key"), ongeacht
+wat Explorium daadwerkelijk terugstuurde - aangepast om Explorium's eigen
+responsebody mee te sturen. Direct nuttig gebleken: de volgende live test
+gaf een 403 met `"You have insufficient credits to perform this
+operation."` - géén bug, gewoon het Explorium-tegoed op. Daarmee is de
+Explorium-koppeling verder als geverifieerd te beschouwen (business
+search, lookalikes en foutafhandeling werken allemaal correct tegen een
+echte key) - "Contactpersonen zoeken" (fetch_prospects) kon niet meer
+getest worden bij gebrek aan tegoed, dat staat open tot er weer
+Explorium-credits zijn.

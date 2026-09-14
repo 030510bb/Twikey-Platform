@@ -170,6 +170,16 @@ klant zelf, na inloggen, via het tabblad **Mail-instellingen** in het
 dashboard — daar hoef jij in Render niets voor aan te passen. Zie "Eigen
 mailaccount / domein instellen (per account SMTP)" in `README.md`.
 
+## Cron-endpoints: welke URL gebruik je?
+
+Alle voorbeelden hieronder gebruiken `https://twikey-platform-backend.onrender.com`
+— de kale Render-URL van de backend-service (te vinden bovenaan die service
+in het Render-dashboard). Er is (nog) géén eigen domein gekoppeld: `api.justmeet.tech`
+bestaat op dit moment niet (zie "Stap 5 — Eigen domein koppelen" verderop) —
+gebruik die naam dus nog niet, dan krijg je alleen een verbindingsfout. Zodra
+dat domein wél is ingericht, vervang je `twikey-platform-backend.onrender.com`
+door `api.justmeet.tech` in elk commando hieronder.
+
 ## Cron: opvolgsequenties laten versturen
 
 Opvolgsequenties (tabblad Sequenties, zie README.md) plannen zelf wanneer de
@@ -179,7 +189,7 @@ dat moet periodiek (bijv. elk uur, of elke 15 minuten voor kortere
 wachttijden tussen stappen) van buitenaf getriggerd worden via:
 
 ```bash
-curl -X POST https://api.justmeet.tech/api/cron/process-sequences \
+curl -X POST https://twikey-platform-backend.onrender.com/api/cron/process-sequences \
   -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
 ```
 
@@ -201,7 +211,7 @@ starten:
 4. **Build Command**: `pip install requests`.
 5. **Command**:
    ```bash
-   python3 -c "import os, requests; r = requests.post('https://api.justmeet.tech/api/cron/process-sequences', headers={'X-Admin-Secret': os.environ['ADMIN_SECRET']}); print(r.status_code, r.text)"
+   python3 -c "import os, requests; r = requests.post('https://twikey-platform-backend.onrender.com/api/cron/process-sequences', headers={'X-Admin-Secret': os.environ['ADMIN_SECRET']}); print(r.status_code, r.text)"
    ```
 6. Zet **Schedule** op bijvoorbeeld `*/15 * * * *` (elke 15 minuten) of
    `0 * * * *` (elk uur) — kies een interval dat past bij de kortste
@@ -236,7 +246,7 @@ niet verstuurd" staan; dit endpoint werkt die wachtrij periodiek verder af
 zodra er weer ruimte is:
 
 ```bash
-curl -X POST https://api.justmeet.tech/api/cron/process-campaign-queue \
+curl -X POST https://twikey-platform-backend.onrender.com/api/cron/process-campaign-queue \
   -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
 ```
 
@@ -256,7 +266,7 @@ Instellingen) 's ochtends een mail met de activiteiten/resultaten van de
 afgelopen dag. Dat vereist één dagelijkse trigger:
 
 ```bash
-curl -X POST https://api.justmeet.tech/api/cron/process-digests \
+curl -X POST https://twikey-platform-backend.onrender.com/api/cron/process-digests \
   -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
 ```
 
@@ -277,7 +287,7 @@ gewoon in de contactenlijst, klaar om handmatig (bulk-selecteren + "toevoegen
 aan campagne") aan een bestaande campagne toe te voegen.
 
 ```bash
-curl -X POST https://api.justmeet.tech/api/cron/process-prospecting \
+curl -X POST https://twikey-platform-backend.onrender.com/api/cron/process-prospecting \
   -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
 ```
 
@@ -300,7 +310,7 @@ Gepauzeerde flows verschijnen op het Dashboard-tabblad en zijn met één
 klik te hervatten.
 
 ```bash
-curl -X POST https://api.justmeet.tech/api/cron/process-flow-monitor \
+curl -X POST https://twikey-platform-backend.onrender.com/api/cron/process-flow-monitor \
   -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
 ```
 
@@ -324,7 +334,7 @@ advertenties) als contact, alleen voor accounts die dit expliciet
 aanzetten (Integraties-tabblad, standaard uit).
 
 ```bash
-curl -X POST https://api.justmeet.tech/api/cron/process-linkedin-ads \
+curl -X POST https://twikey-platform-backend.onrender.com/api/cron/process-linkedin-ads \
   -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
 ```
 
@@ -346,7 +356,7 @@ Meta bewaart leaddata maar 90 dagen, dus dit endpoint moet minstens zo
 vaak draaien om nooit een lead te missen.
 
 ```bash
-curl -X POST https://api.justmeet.tech/api/cron/process-meta-ads \
+curl -X POST https://twikey-platform-backend.onrender.com/api/cron/process-meta-ads \
   -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
 ```
 

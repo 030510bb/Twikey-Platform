@@ -641,6 +641,17 @@ ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS paused_reason TEXT NOT NULL DEFAU
 -- voorkwam de bestaande UNIQUE(sequence_id, contact_id) al).
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS enrollment_cooldown_enabled INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS enrollment_cooldown_months INTEGER NOT NULL DEFAULT 3;
+
+-- Verzenddagen (crm-roadmap.md, "verzenddagen en verzendtijdstip
+-- instellen"): op welke ISO-weekdagen (1=maandag..7=zondag,
+-- komma-gescheiden) de automatische verzending vanuit de cron-endpoints
+-- (sequence-stappen/campagne-wachtrij) mag versturen, en of NL-nationale
+-- feestdagen daar automatisch ook van worden uitgesloten. Geldt niet voor
+-- een handmatige verzending (bv. "Campagne lanceren"), alleen voor de
+-- periodieke cron. Default = doordeweeks (ma-vr), feestdagen standaard
+-- uitgesloten.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS send_days TEXT NOT NULL DEFAULT '1,2,3,4,5';
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS send_exclude_holidays_nl INTEGER NOT NULL DEFAULT 1;
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -3721,6 +3732,34 @@ def update_flow_monitor_settings(account_id: int, flow_monitor_enabled: bool = N
         with get_conn() as conn:
             conn.execute(f"UPDATE accounts SET {', '.join(fields)} WHERE id = ?", params)
     return get_flow_monitor_settings(account_id)
+
+
+def get_send_schedule_settings(account_id: int) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT send_days, send_exclude_holidays_nl FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+        return {
+            "send_days": row["send_days"],
+            "send_exclude_holidays_nl": bool(row["send_exclude_holidays_nl"]),
+        }
+
+
+def update_send_schedule_settings(account_id: int, send_days: str = None,
+                                   send_exclude_holidays_nl: bool = None) -> dict:
+    fields, params = [], []
+    if send_days is not None:
+        fields.append("send_days = ?")
+        params.append(send_days)
+    if send_exclude_holidays_nl is not None:
+        fields.append("send_exclude_holidays_nl = ?")
+        params.append(1 if send_exclude_holidays_nl else 0)
+    if fields:
+        params.append(account_id)
+        with get_conn() as conn:
+            conn.execute(f"UPDATE accounts SET {', '.join(fields)} WHERE id = ?", params)
+    return get_send_schedule_settings(account_id)
 
 
 def account_ids_with_flow_monitor_enabled() -> list:

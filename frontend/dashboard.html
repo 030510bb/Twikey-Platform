@@ -1493,6 +1493,36 @@
             </div>
 
             <div class="card">
+                <h2><span class="icon">📅</span>Verzenddagen</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Op welke dagen de automatische verzending (sequence-stappen en de campagne-wachtrij, binnen het
+                    vaste tijdvenster van 08:00-09:30) mail mag versturen. Geldt niet voor een handmatige "Campagne
+                    lanceren"-klik. Een dag die net is uitgesloten laat een al geplande verzending gewoon staan tot
+                    de eerstvolgende toegestane dag - er gaat niets verloren.
+                </p>
+                <div id="sendschedule-alert"></div>
+                <div class="input-group" style="margin-bottom: 14px;">
+                    <label style="font-weight:normal;">Toegestane dagen</label>
+                    <div style="display:flex; flex-wrap:wrap; gap:14px; margin-top:4px;">
+                        <label style="display:flex; align-items:center; gap:6px; font-weight:normal;"><input type="checkbox" class="sendschedule-day" value="1" style="width:auto;">Ma</label>
+                        <label style="display:flex; align-items:center; gap:6px; font-weight:normal;"><input type="checkbox" class="sendschedule-day" value="2" style="width:auto;">Di</label>
+                        <label style="display:flex; align-items:center; gap:6px; font-weight:normal;"><input type="checkbox" class="sendschedule-day" value="3" style="width:auto;">Wo</label>
+                        <label style="display:flex; align-items:center; gap:6px; font-weight:normal;"><input type="checkbox" class="sendschedule-day" value="4" style="width:auto;">Do</label>
+                        <label style="display:flex; align-items:center; gap:6px; font-weight:normal;"><input type="checkbox" class="sendschedule-day" value="5" style="width:auto;">Vr</label>
+                        <label style="display:flex; align-items:center; gap:6px; font-weight:normal;"><input type="checkbox" class="sendschedule-day" value="6" style="width:auto;">Za</label>
+                        <label style="display:flex; align-items:center; gap:6px; font-weight:normal;"><input type="checkbox" class="sendschedule-day" value="7" style="width:auto;">Zo</label>
+                    </div>
+                </div>
+                <div class="input-group" style="margin-bottom: 14px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="sendschedule-holidays" style="width:auto;" checked>
+                        Nederlandse feestdagen ook uitsluiten (automatisch berekend, geen onderhoud nodig)
+                    </label>
+                </div>
+                <button class="button button-primary" onclick="saveSendScheduleSettings()">Opslaan</button>
+            </div>
+
+            <div class="card">
                 <h2><span class="icon">🚨</span>Flow-monitoring</h2>
                 <p style="color:#666; margin-bottom: 15px;">
                     Bewaakt actieve opvolgsequenties en gelanceerde campagnes met een openstaande verzendwachtrij.
@@ -2068,6 +2098,7 @@
                 loadSendingSettings();
                 loadFlowMonitorSettings();
                 loadEnrollmentCooldownSettings();
+                loadSendScheduleSettings();
             }
             if (tabName === 'contacts') {
                 loadTeammatesForAssignDropdown();
@@ -2551,6 +2582,35 @@
                 contactsAlert('flowmonitor-alert', '✓ Opgeslagen.', 'success');
             } catch (err) {
                 contactsAlert('flowmonitor-alert', `Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function loadSendScheduleSettings() {
+            try {
+                const data = await apiGet('/api/account/send-schedule-settings');
+                const days = new Set((data.send_days || []).map(String));
+                document.querySelectorAll('.sendschedule-day').forEach(cb => { cb.checked = days.has(cb.value); });
+                document.getElementById('sendschedule-holidays').checked = !!data.send_exclude_holidays_nl;
+            } catch (err) {
+                contactsAlert('sendschedule-alert', `Kon instellingen niet laden: ${err.message}`, 'warning');
+            }
+        }
+
+        async function saveSendScheduleSettings() {
+            const sendDays = Array.from(document.querySelectorAll('.sendschedule-day'))
+                .filter(cb => cb.checked).map(cb => parseInt(cb.value, 10));
+            if (!sendDays.length) {
+                contactsAlert('sendschedule-alert', 'Kies minstens 1 toegestane verzenddag.', 'warning');
+                return;
+            }
+            try {
+                await apiPut('/api/account/send-schedule-settings', {
+                    send_days: sendDays,
+                    send_exclude_holidays_nl: document.getElementById('sendschedule-holidays').checked,
+                });
+                contactsAlert('sendschedule-alert', '✓ Opgeslagen.', 'success');
+            } catch (err) {
+                contactsAlert('sendschedule-alert', `Opslaan mislukt: ${err.message}`, 'warning');
             }
         }
 

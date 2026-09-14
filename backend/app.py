@@ -27,6 +27,7 @@ See README.md for full setup and DEPLOY.md for cloud hosting.
 
 import csv
 import difflib
+import functools
 import hashlib
 import hmac
 import html
@@ -37,7 +38,7 @@ import os
 import random
 import secrets
 import urllib.parse
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -849,6 +850,30 @@ def api_update_enrollment_cooldown_settings(payload: EnrollmentCooldownSettingsI
         enrollment_cooldown_months=payload.enrollment_cooldown_months,
     )
     return {"success": True, **settings}
+
+
+class SendScheduleSettingsIn(BaseModel):
+    send_days: list[int] | None = None
+    send_exclude_holidays_nl: bool | None = None
+
+
+@app.get("/api/account/send-schedule-settings")
+def api_get_send_schedule_settings(account: dict = Depends(get_current_account)):
+    settings = database.get_send_schedule_settings(account["id"])
+    return {**settings, "send_days": [int(d) for d in settings["send_days"].split(",") if d]}
+
+
+@app.put("/api/account/send-schedule-settings")
+def api_update_send_schedule_settings(payload: SendScheduleSettingsIn, account: dict = Depends(get_current_account)):
+    send_days_str = None
+    if payload.send_days is not None:
+        if not payload.send_days or any(not (1 <= d <= 7) for d in payload.send_days):
+            raise HTTPException(status_code=400, detail="Kies minstens 1 geldige verzenddag (1=maandag..7=zondag).")
+        send_days_str = ",".join(str(d) for d in sorted(set(payload.send_days)))
+    settings = database.update_send_schedule_settings(
+        account["id"], send_days=send_days_str, send_exclude_holidays_nl=payload.send_exclude_holidays_nl,
+    )
+    return {"success": True, **settings, "send_days": [int(d) for d in settings["send_days"].split(",") if d]}
 
 
 @app.get("/api/dashboard/attention")
@@ -2715,15 +2740,65 @@ SEND_WINDOW_START_MINUTE = 8 * 60       # 08:00
 SEND_WINDOW_END_MINUTE = 9 * 60 + 30    # 09:30
 
 
-def _in_send_window(item_key) -> bool:
+@functools.lru_cache(maxsize=None)
+def _nl_holidays(year: int) -> frozenset:
+    """Nederlandse nationale feestdagen (de dagen die de Algemene
+    termijnenwet erkent) voor een gegeven jaar. Paasgebonden dagen via de
+    Anonieme Gregoriaanse paasformule (Meeus/Jones/Butcher) - geen externe
+    dependency nodig voor zo'n kleine, jaarlijks terugkerende berekening.
+    Eerste Paas-/Pinksterdag vallen altijd op zondag (al een uitgesloten
+    dag via send_days) en staan er voor de volledigheid toch in."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month, day = divmod(h + l - 7 * m + 114, 31)
+    easter = date(year, month, day + 1)
+    koningsdag = date(year, 4, 27)
+    if koningsdag.isoweekday() == 7:  # zondag -> een dag eerder
+        koningsdag = date(year, 4, 26)
+    return frozenset({
+        date(year, 1, 1),                       # Nieuwjaarsdag
+        easter - timedelta(days=2),              # Goede Vrijdag
+        easter,                                   # Eerste Paasdag
+        easter + timedelta(days=1),               # Tweede Paasdag
+        koningsdag,                               # Koningsdag
+        date(year, 5, 5),                         # Bevrijdingsdag
+        easter + timedelta(days=39),              # Hemelvaartsdag
+        easter + timedelta(days=49),              # Eerste Pinksterdag
+        easter + timedelta(days=50),              # Tweede Pinksterdag
+        date(year, 12, 25),                       # Eerste Kerstdag
+        date(year, 12, 26),                       # Tweede Kerstdag
+    })
+
+
+def _in_send_window(item_key, account_id, schedule_cache: dict) -> bool:
     """Elk item (sequence-enrollment/campaign-recipient) krijgt een
     stabiel, deterministisch moment binnen het venster (afgeleid van zijn
     eigen id, dus hetzelfde resultaat bij elke cron-aanroep) en wordt pas
     verstuurd zodra de huidige tijd dat moment is gepasseerd. Buiten
-    08:00-09:30 wordt nooit verstuurd - het item blijft gewoon 'due' en
-    wordt bij de eerstvolgende cron-run binnen het venster alsnog
-    opgepakt."""
+    08:00-09:30 wordt nooit verstuurd, en ook niet op een dag die het
+    account heeft uitgesloten (weekend/feestdag, zie send-schedule-
+    settings) - het item blijft gewoon 'due' en wordt bij de eerstvolgende
+    toegestane cron-run alsnog opgepakt (dezelfde 'blijft due totdat het
+    kan'-aanpak als hieronder al voor het tijdvenster gold, nu ook voor
+    dagen). schedule_cache is een dict die de caller per cron-run
+    initialiseert, zodat de instellingen niet per item opnieuw uit de
+    database hoeven te worden gehaald."""
+    if account_id not in schedule_cache:
+        schedule_cache[account_id] = database.get_send_schedule_settings(account_id)
+    settings = schedule_cache[account_id]
     now = datetime.now(AMSTERDAM_TZ)
+    allowed_days = {int(d) for d in settings["send_days"].split(",") if d}
+    if now.isoweekday() not in allowed_days:
+        return False
+    if settings["send_exclude_holidays_nl"] and now.date() in _nl_holidays(now.year):
+        return False
     minute_of_day = now.hour * 60 + now.minute
     if not (SEND_WINDOW_START_MINUTE <= minute_of_day <= SEND_WINDOW_END_MINUTE):
         return False
@@ -2740,13 +2815,14 @@ def api_process_sequences():
     aangeroepen te worden (bv. een uur-cron op Render of een externe
     scheduler) - zie DEPLOY.md."""
     processed, skipped, errors, throttled, waiting_for_window = 0, 0, 0, 0, 0
+    schedule_cache: dict = {}
     for enrollment in database.due_enrollments():
         account_id = enrollment["seq_account_id"]
         if enrollment["do_not_contact"] or enrollment["excluded_reason"]:
             database.skip_enrollment(enrollment["id"], "Contact is niet meer te benaderen of uitgesloten.")
             skipped += 1
             continue
-        if not _in_send_window(f"seq:{enrollment['id']}"):
+        if not _in_send_window(f"seq:{enrollment['id']}", account_id, schedule_cache):
             waiting_for_window += 1
             continue
         remaining_budget = database.remaining_daily_budget(account_id)
@@ -2800,6 +2876,7 @@ def api_process_campaign_queue():
     POST /api/cron/process-sequences: bedoeld om periodiek (bv. elk uur)
     van buitenaf getriggerd te worden, zie DEPLOY.md."""
     sent, failed, throttled_accounts, waiting_for_window = 0, 0, 0, 0
+    schedule_cache: dict = {}
     for account_id in database.account_ids_with_pending_campaign_sends():
         remaining_budget = database.remaining_daily_budget(account_id)
         if remaining_budget is not None and remaining_budget <= 0:
@@ -2807,7 +2884,7 @@ def api_process_campaign_queue():
             continue
         take = remaining_budget if remaining_budget is not None else 1000
         for r in database.pending_campaign_recipients_for_account(account_id, take):
-            if not _in_send_window(f"camp:{r['id']}"):
+            if not _in_send_window(f"camp:{r['id']}", account_id, schedule_cache):
                 waiting_for_window += 1
                 continue
             if _attempt_send_campaign_recipient(account_id, r):

@@ -462,28 +462,27 @@ nieuw, apart te scopen stuk werk, geen kleine uitbreiding:
 Staat als "nog te plannen" in de "coming soon"-lijst op het
 Support-tabblad, zodat klanten weten dat dit eraan zit te komen.
 
-## Toekomstig idee (nog niet gescoped): verzenddagen en verzendtijdstip instellen
+## Gebouwd (14 sept. 2026): verzenddagen instellen (incl. NL-feestdagen)
 
-Door Benjamin geopperd: naast de bestaande dagelijkse verzendlimiet (zie
-Fase 3c, "domain warm-up") ook kunnen instellen op welke dagen mails
-wel/niet verstuurd mogen worden (bijv. geen weekend, of specifieke dagen
-uitsluiten), én op welk tijdstip (of tijdsvenster) de cron-verzending
-daadwerkelijk mails de deur uit doet.
+Per account instelbaar bij Integraties → "Verzenddagen": op welke
+weekdagen automatische verzending (sequence-stappen + campagne-wachtrij,
+binnen het bestaande vaste 08:00-09:30-venster) mag versturen, plus een
+aparte toggle om Nederlandse nationale feestdagen (automatisch berekend
+per jaar, incl. paasgebonden dagen als Hemelvaart/Pinksteren - geen
+jaarlijks onderhoud nodig) ook uit te sluiten. Standaard doordeweeks
+(ma-vr) met feestdagen uitgesloten. Geldt niet voor een handmatige
+"Campagne lanceren"-klik, alleen voor de periodieke cron.
 
-**Tussenoplossing al gebouwd**: `process-sequences`/`process-campaign-queue`
-in `backend/app.py` versturen nu alleen nog tussen 08:00-09:30
-Amsterdam-tijd, met een per-item random moment binnen dat venster (zie
-`_in_send_window()`) zodat het niet als één blast tegelijk aankomt. Vast
-ingebakken, nog niet instelbaar. Nog te bepalen voor de volwaardige versie:
-- Per account instelbaar (venster + dagen, naast de bestaande
-  verzendlimiet-instelling) of platform-breed?
-- Geldt een uitgesloten dag alleen voor nieuwe verzendingen vanaf het
-  moment van instellen, of moet een al geplande/wachtende verzending (bv.
-  in de campagne-wachtrij, of een sequence-stap die net due is) ook
-  wachten tot het eerstvolgende toegestane moment?
-- Hoe verhoudt een uitgesloten dag zich tot de `wait_days`-logica van
-  sequence-stappen - telt zo'n dag mee in de wachttijd, of schuift de
-  verzending gewoon door naar de eerstvolgende toegestane dag?
+Gekozen aanpak voor de twee open vragen die hier stonden: een item dat
+"due" wordt op een uitgesloten dag/feestdag blijft gewoon staan (net als
+nu al gold voor het tijdvenster zelf) en wordt vanzelf bij de
+eerstvolgende toegestane cron-run opgepakt - geen aparte
+wait_days-aanpassing nodig, en een net aangepaste instelling werkt meteen
+door op alles wat nog klaarstaat, niet alleen op nieuwe verzendingen.
+
+Het vaste 08:00-09:30-tijdvenster zelf is bewust nog NIET instelbaar
+gemaakt (losse scope-keuze) - dat kan later alsnog als daar behoefte aan
+is.
 
 ## Toekomstig idee (nog niet gescoped): eigen afzenderadres per teamlid
 

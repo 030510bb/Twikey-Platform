@@ -291,6 +291,15 @@
             gap: 20px;
         }
 
+        /* Teamrollen: een teamlid met rol 'user' ziet alle resultaten maar
+           mag geen flows (sequences/campagnes) aanpassen - zie
+           require_admin_role in app.py, de backend is de bron van waarheid,
+           dit verbergt alleen de bijbehorende knoppen zodat een Gebruiker
+           niet tegen een 403 aanloopt. */
+        body.role-user .admin-only {
+            display: none !important;
+        }
+
         .button {
             padding: 12px 20px;
             border: none;
@@ -1039,7 +1048,7 @@
                     <span class="metric-label">Status</span>
                     <span class="status-badge status-pending" id="abtest-launch-status">Ready to Launch</span>
                 </div>
-                <button class="button button-primary" id="abtest-launch-button" onclick="launchTest()">🚀 Launch A/B Test</button>
+                <button class="button button-primary admin-only" id="abtest-launch-button" onclick="launchTest()">🚀 Launch A/B Test</button>
             </div>
 
             <div class="card">
@@ -1290,7 +1299,7 @@
                 </div>
             </div>
 
-            <div class="card">
+            <div class="card admin-only">
                 <h2><span class="icon">➕</span>Teamlid uitnodigen</h2>
                 <p style="color:#666; margin-bottom: 15px;">
                     Een teamlid krijgt een eigen inlog (e-mail + wachtwoord), maar
@@ -1298,6 +1307,18 @@
                     als jij — er is geen aparte data per teamlid, alleen per account.
                 </p>
                 <div id="team-invite-alert"></div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="input-group"><label>Voornaam</label><input type="text" id="team-invite-first-name"></div>
+                    <div class="input-group"><label>Achternaam</label><input type="text" id="team-invite-last-name"></div>
+                    <div class="input-group"><label>Functie</label><input type="text" id="team-invite-job-title" placeholder="bijv. Accountmanager"></div>
+                    <div class="input-group">
+                        <label>Rol</label>
+                        <select id="team-invite-role">
+                            <option value="user">Gebruiker - ziet alle resultaten, mag geen flows aanpassen</option>
+                            <option value="admin">Beheerder - mag alles aanpassen</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="input-group">
                     <label>E-mailadres</label>
                     <input type="email" id="team-invite-email" placeholder="collega@bedrijf.nl">
@@ -1311,13 +1332,16 @@
                 <table>
                     <thead>
                         <tr>
+                            <th>Naam</th>
+                            <th>Functie</th>
+                            <th>Rol</th>
                             <th>E-mailadres</th>
                             <th>Lid sinds</th>
                             <th></th>
                         </tr>
                     </thead>
                     <tbody id="team-users-body">
-                        <tr><td colspan="3" style="color:#666;">Laden...</td></tr>
+                        <tr><td colspan="6" style="color:#666;">Laden...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1987,7 +2011,7 @@
                 <div id="sequence-steps-editor"></div>
                 <button class="button button-secondary" style="margin-top:8px;" onclick="addSequenceStepRow()">+ Stap toevoegen</button>
                 <div style="margin-top:15px;">
-                    <button class="button button-primary" onclick="createSequence()">Sequence aanmaken</button>
+                    <button class="button button-primary admin-only" onclick="createSequence()">Sequence aanmaken</button>
                 </div>
             </div>
 
@@ -2017,6 +2041,10 @@
                 <div class="input-group">
                     <label>USP's (één per regel)</label>
                     <textarea id="profile-usps" placeholder="30% snellere betalingen&#10;Geen implementatietijd&#10;..." style="min-height:80px;"></textarea>
+                </div>
+                <div class="input-group">
+                    <label>Grootste problemen die je oplost voor klanten (één per regel)</label>
+                    <textarea id="profile-pain-points" placeholder="Te late betalingen door handmatige incasso&#10;Geen zicht op openstaande facturen&#10;..." style="min-height:80px;"></textarea>
                 </div>
                 <button class="button button-primary" onclick="saveAccountProfile()">Profiel opslaan</button>
                 <span id="profile-updated-at" style="color:#999; font-size:12px; margin-left:10px;"></span>
@@ -2191,6 +2219,7 @@
                 const data = await apiGet('/api/auth/me');
                 el.textContent = data.account.company_name;
                 localStorage.setItem(AUTH_ACCOUNT_KEY, JSON.stringify(data.account));
+                document.body.classList.toggle('role-user', data.account.role !== 'admin');
             } catch (err) {
                 // Invalid/expired token - bounce to login rather than leaving
                 // a broken dashboard on screen.
@@ -2517,27 +2546,103 @@
             el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
         }
 
+        const TEAM_ROLE_LABELS = { admin: 'Beheerder', user: 'Gebruiker' };
+        let TEAM_USERS_CACHE = [];
+
+        function currentAccountInfo() {
+            return JSON.parse(localStorage.getItem(AUTH_ACCOUNT_KEY) || '{}');
+        }
+
+        function isCurrentUserAdmin() {
+            return currentAccountInfo().role === 'admin';
+        }
+
         async function loadTeamUsers() {
             const tbody = document.getElementById('team-users-body');
-            tbody.innerHTML = '<tr><td colspan="3" style="color:#666;">Laden...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" style="color:#666;">Laden...</td></tr>';
             try {
-                const account = JSON.parse(localStorage.getItem(AUTH_ACCOUNT_KEY) || '{}');
+                const account = currentAccountInfo();
                 const data = await apiGet('/api/team/users');
+                TEAM_USERS_CACHE = data.users;
                 if (!data.users.length) {
-                    tbody.innerHTML = '<tr><td colspan="3" style="color:#666;">Nog geen teamleden.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" style="color:#666;">Nog geen teamleden.</td></tr>';
                     return;
                 }
-                tbody.innerHTML = data.users.map(u => {
-                    const since = new Date(u.created_at).toLocaleDateString('nl-NL');
-                    const isSelf = account.user_id === u.id;
-                    const removeBtn = isSelf
-                        ? '<span style="color:#999;">(jij)</span>'
-                        : `<button class="button button-secondary" style="margin-top:0; color:#b91c1c;" onclick="removeTeammate(${u.id}, '${u.email.replace(/'/g, "\\'")}')">Verwijderen</button>`;
-                    return `<tr><td>${u.email}</td><td>${since}</td><td>${removeBtn}</td></tr>`;
-                }).join('');
+                tbody.innerHTML = data.users.map(u => teamUserRowHtml(u, account)).join('');
             } catch (err) {
                 teamAlert('team-list-alert', `Kon teamleden niet laden: ${err.message}`, 'warning');
-                tbody.innerHTML = '<tr><td colspan="3" style="color:#666;">-</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" style="color:#666;">-</td></tr>';
+            }
+        }
+
+        function teamUserRowHtml(u, account) {
+            const since = new Date(u.created_at).toLocaleDateString('nl-NL');
+            const isSelf = account.user_id === u.id;
+            const canEdit = account.role === 'admin' || isSelf;
+            const name = `${u.first_name || ''} ${u.last_name || ''}`.trim() || '<span style="color:#999;">-</span>';
+            const actions = [];
+            if (canEdit) {
+                actions.push(`<button class="button button-secondary" style="margin:0; font-size:12px; padding:4px 8px;" onclick="editTeammate(${u.id})">Bewerken</button>`);
+            }
+            if (account.role === 'admin' && !isSelf) {
+                actions.push(`<button class="button button-secondary" style="margin:0; font-size:12px; padding:4px 8px; color:#b91c1c;" onclick="removeTeammate(${u.id}, '${u.email.replace(/'/g, "\\'")}')">Verwijderen</button>`);
+            }
+            if (isSelf && !actions.length) {
+                actions.push('<span style="color:#999;">(jij)</span>');
+            }
+            return `
+                <tr id="team-user-row-${u.id}">
+                    <td>${name}${isSelf ? ' <span style="color:#999; font-size:12px;">(jij)</span>' : ''}</td>
+                    <td>${u.job_title ? escapeHtml(u.job_title) : '<span style="color:#999;">-</span>'}</td>
+                    <td>${TEAM_ROLE_LABELS[u.role] || u.role}</td>
+                    <td>${escapeHtml(u.email)}</td>
+                    <td>${since}</td>
+                    <td style="display:flex; gap:6px;">${actions.join('')}</td>
+                </tr>
+            `;
+        }
+
+        function editTeammate(userId) {
+            const u = TEAM_USERS_CACHE.find(x => x.id === userId);
+            if (!u) return;
+            const account = currentAccountInfo();
+            const isAdmin = account.role === 'admin';
+            const roleField = isAdmin
+                ? `<select id="team-edit-role-${u.id}">
+                        <option value="user" ${u.role === 'user' ? 'selected' : ''}>Gebruiker</option>
+                        <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Beheerder</option>
+                   </select>`
+                : (TEAM_ROLE_LABELS[u.role] || u.role);
+            const row = document.getElementById(`team-user-row-${u.id}`);
+            row.innerHTML = `
+                <td><input type="text" id="team-edit-first-name-${u.id}" value="${escapeHtml(u.first_name || '')}" placeholder="Voornaam" style="margin-bottom:4px;"><input type="text" id="team-edit-last-name-${u.id}" value="${escapeHtml(u.last_name || '')}" placeholder="Achternaam"></td>
+                <td><input type="text" id="team-edit-job-title-${u.id}" value="${escapeHtml(u.job_title || '')}"></td>
+                <td>${roleField}</td>
+                <td>${escapeHtml(u.email)}</td>
+                <td>${new Date(u.created_at).toLocaleDateString('nl-NL')}</td>
+                <td style="display:flex; gap:6px;">
+                    <button class="button button-primary" style="margin:0; font-size:12px; padding:4px 8px;" onclick="saveTeammate(${u.id})">Opslaan</button>
+                    <button class="button button-secondary" style="margin:0; font-size:12px; padding:4px 8px;" onclick="loadTeamUsers()">Annuleren</button>
+                </td>
+            `;
+        }
+
+        async function saveTeammate(userId) {
+            const isAdmin = isCurrentUserAdmin();
+            const payload = {
+                first_name: document.getElementById(`team-edit-first-name-${userId}`).value.trim(),
+                last_name: document.getElementById(`team-edit-last-name-${userId}`).value.trim(),
+                job_title: document.getElementById(`team-edit-job-title-${userId}`).value.trim(),
+            };
+            if (isAdmin) {
+                payload.role = document.getElementById(`team-edit-role-${userId}`).value;
+            }
+            try {
+                await apiPut(`/api/team/users/${userId}`, payload);
+                teamAlert('team-list-alert', '✓ Opgeslagen.', 'success');
+                loadTeamUsers();
+            } catch (err) {
+                teamAlert('team-list-alert', `Opslaan mislukt: ${err.message}`, 'warning');
             }
         }
 
@@ -2550,9 +2655,19 @@
                 return;
             }
             try {
-                await apiPost('/api/team/invite', { email });
+                await apiPost('/api/team/invite', {
+                    email,
+                    first_name: document.getElementById('team-invite-first-name').value.trim(),
+                    last_name: document.getElementById('team-invite-last-name').value.trim(),
+                    job_title: document.getElementById('team-invite-job-title').value.trim(),
+                    role: document.getElementById('team-invite-role').value,
+                });
                 teamAlert('team-invite-alert', `Uitnodiging verstuurd naar ${email} - ze ontvangen een e-mail om hun eigen wachtwoord in te stellen.`, 'success');
                 emailEl.value = '';
+                document.getElementById('team-invite-first-name').value = '';
+                document.getElementById('team-invite-last-name').value = '';
+                document.getElementById('team-invite-job-title').value = '';
+                document.getElementById('team-invite-role').value = 'user';
                 loadTeamUsers();
             } catch (err) {
                 teamAlert('team-invite-alert', `Uitnodigen mislukt: ${err.message}`, 'warning');
@@ -3597,7 +3712,7 @@
                                 </div>
                             </div>
                             <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                                <button class="button button-secondary" onclick="toggleSequenceStatus(${s.id}, '${s.status === 'active' ? 'paused' : 'active'}')">${s.status === 'active' ? 'Pauzeren' : 'Activeren'}</button>
+                                <button class="button button-secondary admin-only" onclick="toggleSequenceStatus(${s.id}, '${s.status === 'active' ? 'paused' : 'active'}')">${s.status === 'active' ? 'Pauzeren' : 'Activeren'}</button>
                                 <button class="button button-secondary" onclick="toggleEnrollPanel(${s.id})">+ Contacten inschrijven</button>
                                 <button class="button button-secondary" onclick="viewEnrollments(${s.id})">Inschrijvingen bekijken</button>
                             </div>
@@ -3825,6 +3940,7 @@
                 const data = await apiGet('/api/account-profile');
                 document.getElementById('profile-value-proposition').value = data.profile.value_proposition || '';
                 document.getElementById('profile-usps').value = (data.profile.usps || []).join('\n');
+                document.getElementById('profile-pain-points').value = (data.profile.pain_points || []).join('\n');
                 document.getElementById('profile-updated-at').textContent = data.profile.updated_at
                     ? `Laatst opgeslagen: ${new Date(data.profile.updated_at).toLocaleString('nl-NL')}` : '';
                 renderProfileQuestions(data.questions || []);
@@ -3836,8 +3952,9 @@
         async function saveAccountProfile() {
             const value_proposition = document.getElementById('profile-value-proposition').value.trim();
             const usps = document.getElementById('profile-usps').value.split('\n').map(s => s.trim()).filter(Boolean);
+            const pain_points = document.getElementById('profile-pain-points').value.split('\n').map(s => s.trim()).filter(Boolean);
             try {
-                const data = await apiPut('/api/account-profile', { value_proposition, usps });
+                const data = await apiPut('/api/account-profile', { value_proposition, usps, pain_points });
                 contactsAlert('profile-save-alert', '✓ Profiel opgeslagen.', 'success');
                 document.getElementById('profile-updated-at').textContent =
                     `Laatst opgeslagen: ${new Date(data.profile.updated_at).toLocaleString('nl-NL')}`;
@@ -4680,13 +4797,13 @@
                     ...sequences.map(s => `
                         <div class="metric-row">
                             <span class="metric-label">🔁 Sequence: ${escapeHtml(s.name)} - lage reply-rate</span>
-                            <button class="button button-secondary" style="font-size:12px; padding:4px 10px;" onclick="reactivateFlowSequence(${s.id})">Hervatten</button>
+                            <button class="button button-secondary admin-only" style="font-size:12px; padding:4px 10px;" onclick="reactivateFlowSequence(${s.id})">Hervatten</button>
                         </div>
                     `),
                     ...campaigns.map(c => `
                         <div class="metric-row">
                             <span class="metric-label">📧 Campagne: ${escapeHtml(c.name)} - lage reply-rate</span>
-                            <button class="button button-secondary" style="font-size:12px; padding:4px 10px;" onclick="reactivateFlowCampaign(${c.id})">Hervatten</button>
+                            <button class="button button-secondary admin-only" style="font-size:12px; padding:4px 10px;" onclick="reactivateFlowCampaign(${c.id})">Hervatten</button>
                         </div>
                     `),
                 ].join('');
@@ -5006,7 +5123,7 @@
                         <td>${pct(c.conversion_rate)}</td>
                         <td>
                             <span id="campaign-edit-actions-view-${c.id}">
-                                <button class="button button-secondary" style="font-size:12px; padding:2px 8px;" onclick="editCampaignTags(${c.id})">Bewerken</button>
+                                <button class="button button-secondary admin-only" style="font-size:12px; padding:2px 8px;" onclick="editCampaignTags(${c.id})">Bewerken</button>
                             </span>
                             <span id="campaign-edit-actions-edit-${c.id}" style="display:none;">
                                 <button class="button button-primary" style="font-size:12px; padding:2px 8px;" onclick="saveCampaignTags(${c.id})">Opslaan</button>

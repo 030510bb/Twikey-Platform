@@ -654,3 +654,37 @@ toegelicht.
   niveau (`ANTHROPIC_API_KEY` in Render/`.env`, niet per account). Bevestigd
   bij implementatie: het gaat om een klein aantal generaties per
   binnenkomende reply, geen zware kosten zoals bij Explorium-zoekopdrachten.
+
+## Gebouwd (14 sept. 2026): teamleden - naam, functie en rollen
+
+Teamleden (`users`) hebben nu een voornaam/achternaam/functie, en een rol:
+**Beheerder** (`admin`, mag alles) of **Gebruiker** (`user`, ziet en
+gebruikt alle resultaten - contacten, sequence-inschrijving, campagne-
+ontvangers toevoegen - maar mag geen flows aanmaken/bewerken/pauzeren/
+hervatten/lanceren). Backend-gate: `require_admin_role` in app.py, toegepast
+op sequence-aanmaak + status-toggle, campagne-aanmaak/bewerken/lanceren/
+hervatten, en teambeheer zelf (uitnodigen/verwijderen/rol wijzigen - zonder
+die laatste gate zou een Gebruiker zichzelf via de teamledenlijst kunnen
+promoveren). Naam/functie mag elk teamlid voor zichzelf aanpassen zonder
+Beheerder te zijn (persoonlijk profiel, geen flow-permissie). Frontend
+verbergt de bijbehorende knoppen voor een Gebruiker (`body.role-user
+.admin-only`-CSS-regel) zodat niemand tegen een dode-eind-403 aanloopt, maar
+de backend-gate is de bron van waarheid.
+
+Migratiekeuzes (Benjamins expliciete antwoorden): bestaande teamleden
+worden allemaal Beheerder (niemand verliest bij de overgang toegang die hij
+al had - de kolom-DEFAULT 'admin' regelt dit automatisch), een nieuw
+uitgenodigd teamlid krijgt voortaan standaard de rol Gebruiker. Een account
+kan niet zonder Beheerder komen te zitten: de laatste Beheerder degraderen
+of verwijderen wordt geweigerd (zelfde soort check als de bestaande "een
+account moet minstens 1 gebruiker hebben").
+
+## Gebouwd (14 sept. 2026): bedrijfsprofiel - grootste problemen die je oplost voor klanten
+
+Naast waardepropositie en USP's kan het bedrijfsprofiel nu ook de grootste
+problemen bevatten die het bedrijf voor klanten oplost (`pain_points`,
+zelfde opslagvorm als USP's: één per regel). Wordt op dezelfde manier
+meegegeven aan Claude bij zowel de AI-verdiepingsvragen als de AI-
+mailvariant-suggesties (`ai_client._profile_context`), zodat gegenereerde
+outreach-copy pijnpunt-gedreven kan openen i.p.v. alleen op waardepropositie/
+USP's te leunen.

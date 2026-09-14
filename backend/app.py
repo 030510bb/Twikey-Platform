@@ -320,12 +320,29 @@ def api_reset_password(payload: ResetPasswordIn):
 # another, same as e.g. a shared Slack workspace. It's unrelated to
 # POST /api/admin/accounts above, which creates a brand new tenant.
 
+def require_admin_role(account: dict = Depends(get_current_account)) -> dict:
+    """Gate voor flow-architectuur-acties (sequences/campagnes aanmaken,
+    bewerken, pauzeren/hervatten, lanceren) en teambeheer - crm-roadmap.md,
+    "teamleden: naam, functie en rollen". Een teamlid met rol 'user' ziet
+    en gebruikt alle resultaten (contacten, sequence-inschrijving,
+    campagne-ontvangers toevoegen, etc.) maar mag flows niet aanpassen.
+    Teambeheer zit hier ook achter - zonder die gate zou een 'user' zichzelf
+    via de teamledenlijst tot 'admin' kunnen promoveren."""
+    if account.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Alleen een Beheerder mag dit aanpassen.")
+    return account
+
+
 class InviteTeammateIn(BaseModel):
     email: EmailStr
+    first_name: str = ""
+    last_name: str = ""
+    job_title: str = ""
+    role: str = "user"
 
 
 @app.post("/api/team/invite")
-def api_invite_teammate(payload: InviteTeammateIn, account: dict = Depends(get_current_account)):
+def api_invite_teammate(payload: InviteTeammateIn, account: dict = Depends(require_admin_role)):
     """
     Add a teammate (another login) to the caller's own account. The new
     login gets a random, unknown throwaway password and is immediately
@@ -334,11 +351,17 @@ def api_invite_teammate(payload: InviteTeammateIn, account: dict = Depends(get_c
     in - nobody, including the person who invited them, ever knows a
     password for someone else's login.
     """
+    if payload.role not in ("admin", "user"):
+        raise HTTPException(status_code=400, detail="role moet 'admin' of 'user' zijn.")
     existing = database.get_user_by_email(payload.email)
     if existing:
         raise HTTPException(status_code=409, detail="Er bestaat al een gebruiker met dit e-mailadres.")
     throwaway_password = secrets.token_urlsafe(24)
-    user = database.create_user(account["id"], payload.email, throwaway_password)
+    user = database.create_user(
+        account["id"], payload.email, throwaway_password, role=payload.role,
+        first_name=payload.first_name.strip(), last_name=payload.last_name.strip(),
+        job_title=payload.job_title.strip(),
+    )
     token = database.create_password_reset_token(user["id"])
     setup_link = f"{FRONTEND_PUBLIC_URL}/reset-password.html?token={token}"
     body = (
@@ -358,17 +381,49 @@ def api_invite_teammate(payload: InviteTeammateIn, account: dict = Depends(get_c
         # do log it, otherwise a broken Gmail connection here silently
         # leaves someone unable to ever set a password for their new login.
         logger.exception("team invite: failed to send welcome e-mail to %s", payload.email)
-    return {"success": True, "user": {"id": user["id"], "email": user["email"], "created_at": user["created_at"]}}
+    return {"success": True, "user": user}
 
 
 @app.get("/api/team/users")
 def api_list_teammates(account: dict = Depends(get_current_account)):
-    """All teammates (logins) on the caller's own account."""
+    """All teammates (logins) on the caller's own account - visible to
+    every role, only editing is gated (require_admin_role)."""
     return {"users": database.list_users(account["id"])}
 
 
+class UpdateTeammateIn(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    job_title: str | None = None
+    role: str | None = None
+
+
+@app.put("/api/team/users/{user_id}")
+def api_update_teammate(user_id: int, payload: UpdateTeammateIn, account: dict = Depends(get_current_account)):
+    """Naam/functie mag iedereen voor zichzelf aanpassen (persoonlijk
+    profiel, geen flow-permissie); een rolwijziging, of het aanpassen van
+    iemand anders, vereist Beheerder."""
+    editing_self = user_id == account["user_id"]
+    if payload.role is not None and account.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Alleen een Beheerder mag een rol wijzigen.")
+    if not editing_self and account.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Alleen een Beheerder mag andermans gegevens aanpassen.")
+    if payload.role is not None and payload.role not in ("admin", "user"):
+        raise HTTPException(status_code=400, detail="role moet 'admin' of 'user' zijn.")
+    try:
+        user = database.update_user(
+            account["id"], user_id, first_name=payload.first_name, last_name=payload.last_name,
+            job_title=payload.job_title, role=payload.role,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not user:
+        raise HTTPException(status_code=404, detail="Geen teamlid gevonden met dit id op jouw account.")
+    return {"success": True, "user": user}
+
+
 @app.delete("/api/team/users/{user_id}")
-def api_remove_teammate(user_id: int, account: dict = Depends(get_current_account)):
+def api_remove_teammate(user_id: int, account: dict = Depends(require_admin_role)):
     """
     Remove a teammate's login from the caller's own account. Refuses to
     remove your own login this way (use a settings page for that, not a
@@ -1030,7 +1085,7 @@ def api_dashboard_scheduled_sends(account: dict = Depends(get_current_account)):
 
 
 @app.post("/api/campaigns/{campaign_id}/resume")
-def api_resume_campaign(campaign_id: int, account: dict = Depends(get_current_account)):
+def api_resume_campaign(campaign_id: int, account: dict = Depends(require_admin_role)):
     if not database.resume_campaign(campaign_id, account["id"]):
         raise HTTPException(status_code=404, detail="Campagne niet gevonden.")
     return {"success": True}
@@ -1595,11 +1650,12 @@ def api_get_account_profile(account: dict = Depends(get_current_account)):
 class AccountProfileIn(BaseModel):
     value_proposition: str = ""
     usps: list[str] = []
+    pain_points: list[str] = []
 
 
 @app.put("/api/account-profile")
 def api_update_account_profile(payload: AccountProfileIn, account: dict = Depends(get_current_account)):
-    profile = database.upsert_account_profile(account["id"], payload.value_proposition, payload.usps)
+    profile = database.upsert_account_profile(account["id"], payload.value_proposition, payload.usps, payload.pain_points)
     return {"success": True, "profile": profile}
 
 
@@ -1610,7 +1666,9 @@ def api_generate_profile_questions(account: dict = Depends(get_current_account))
     questions, source = _FALLBACK_PROFILE_QUESTIONS, "template"
     if ai_client.is_configured():
         try:
-            questions = ai_client.generate_profile_questions(profile["value_proposition"], profile["usps"], personas)
+            questions = ai_client.generate_profile_questions(
+                profile["value_proposition"], profile["usps"], personas, profile["pain_points"]
+            )
             source = "ai"
         except Exception as exc:  # noqa: BLE001 - fall back to the static question set
             logger.warning("AI-verdiepingsvragen genereren mislukt voor account %s: %s", account["id"], exc)
@@ -1660,7 +1718,7 @@ def api_suggest_campaign_variants(payload: SuggestVariantsIn, account: dict = De
     if ai_client.is_configured():
         try:
             variants = ai_client.generate_variant_suggestions(
-                profile["value_proposition"], profile["usps"], persona, count
+                profile["value_proposition"], profile["usps"], persona, count, pain_points=profile["pain_points"]
             )
             source = "ai"
         except Exception as exc:  # noqa: BLE001 - fall back to the profile-based template below
@@ -2989,7 +3047,7 @@ def api_list_sequences(account: dict = Depends(get_current_account)):
 
 
 @app.post("/api/sequences")
-def api_create_sequence(payload: SequenceIn, account: dict = Depends(get_current_account)):
+def api_create_sequence(payload: SequenceIn, account: dict = Depends(require_admin_role)):
     if not payload.steps:
         raise HTTPException(status_code=400, detail="Een sequence heeft minstens 1 stap nodig.")
     steps = [s.model_dump() for s in payload.steps]
@@ -3010,7 +3068,7 @@ class SequenceStatusIn(BaseModel):
 
 
 @app.post("/api/sequences/{sequence_id}/status")
-def api_set_sequence_status(sequence_id: int, payload: SequenceStatusIn, account: dict = Depends(get_current_account)):
+def api_set_sequence_status(sequence_id: int, payload: SequenceStatusIn, account: dict = Depends(require_admin_role)):
     if payload.status not in ("active", "paused"):
         raise HTTPException(status_code=400, detail="Status moet 'active' of 'paused' zijn.")
     if not database.set_sequence_status(sequence_id, account["id"], payload.status):
@@ -3437,7 +3495,7 @@ def api_list_campaigns(account: dict = Depends(get_current_account)):
 
 
 @app.post("/api/campaigns")
-def api_create_campaign(payload: CampaignIn, account: dict = Depends(get_current_account)):
+def api_create_campaign(payload: CampaignIn, account: dict = Depends(require_admin_role)):
     aid = account["id"]
     if database.count_contacts(aid) == 0:
         raise HTTPException(
@@ -3459,7 +3517,7 @@ class CampaignUpdateIn(BaseModel):
 
 
 @app.put("/api/campaigns/{campaign_id}")
-def api_update_campaign(campaign_id: int, payload: CampaignUpdateIn, account: dict = Depends(get_current_account)):
+def api_update_campaign(campaign_id: int, payload: CampaignUpdateIn, account: dict = Depends(require_admin_role)):
     """Sector/persona op een al aangemaakte campagne bijwerken - ook voor
     campagnes die al 'launched' zijn (retroactief taggen zodat sector/
     persona-analyse ze kan meenemen), zie database.update_campaign."""
@@ -3536,7 +3594,7 @@ def _attempt_send_campaign_recipient(aid: int, r: dict) -> bool:
 
 
 @app.post("/api/campaigns/{campaign_id}/launch")
-def api_launch_campaign(campaign_id: int, account: dict = Depends(get_current_account)):
+def api_launch_campaign(campaign_id: int, account: dict = Depends(require_admin_role)):
     aid = account["id"]
     campaign = database.get_campaign(campaign_id, aid)
     if not campaign:

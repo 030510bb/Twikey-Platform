@@ -727,6 +727,30 @@ ALTER TABLE reminders ADD COLUMN IF NOT EXISTS contact_name TEXT NOT NULL DEFAUL
 -- standaard aan, na 2 dagen, beide instelbaar.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS linkedin_followup_reminder_enabled INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS linkedin_followup_reminder_days INTEGER NOT NULL DEFAULT 2;
+
+-- Teamrollen (crm-roadmap.md, "teamleden: naam, functie en rollen"):
+-- naam/functie zijn nieuw voor elk teamlid, en role bepaalt wat een
+-- teamlid mag - 'admin' (Beheerder) mag alles, 'user' (Gebruiker) mag
+-- geen flows (sequences/campagnes) aanmaken/bewerken/pauzeren/hervatten/
+-- lanceren, maar ziet en gebruikt alle resultaten (contacten, sequence-
+-- inschrijving, campagne-ontvangers toevoegen, etc. blijven voor
+-- iedereen beschikbaar - zie require_admin_role in app.py voor de exacte
+-- grens). DEFAULT 'admin' is bewust: elk teamlid dat al bestond vóór deze
+-- migratie kon toen al alles, dus die verliezen geen toegang. Een NIEUW
+-- uitgenodigd teamlid krijgt voortaan expliciet role='user' vanuit
+-- create_user() - de kolom-default geldt alleen als terugvaloptie voor
+-- bestaande rijen.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'admin';
+
+-- Bedrijfsprofiel: de grootste problemen die het bedrijf voor klanten
+-- oplost (pijnpunten), naast de bestaande waardepropositie/USP's - zelfde
+-- eenvoudige opslag (één per regel) en wordt op dezelfde manier meegegeven
+-- aan Claude bij AI-mailsuggesties/verdiepingsvragen (zie
+-- ai_client._profile_context).
+ALTER TABLE account_profiles ADD COLUMN IF NOT EXISTS pain_points TEXT NOT NULL DEFAULT '';
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -934,18 +958,28 @@ def create_account(company_name: str, admin_email: str, admin_password: str) -> 
         return result
 
 
-def create_user(account_id: int, email: str, password: str) -> dict:
+def create_user(account_id: int, email: str, password: str, role: str = "user",
+                 first_name: str = "", last_name: str = "", job_title: str = "") -> dict:
     """Add another login (teammate) to an existing account. They share every
     bit of that account's data - contacts, campaigns, LinkedIn log - there is
-    no per-user isolation within an account, only between accounts."""
+    no per-user isolation within an account, only between accounts. role:
+    'admin' (mag alles) of 'user' (geen flows aanpassen, zie
+    require_admin_role in app.py) - default 'user', de aanmaker/uitnodiger
+    kent 'admin' expliciet toe als dat nodig is."""
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO users (account_id, email, password_hash, created_at) VALUES (?, ?, ?, ?) RETURNING id",
-            (account_id, email.lower(), password_hash, now_iso()),
+            """
+            INSERT INTO users (account_id, email, password_hash, first_name, last_name, job_title, role, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+            """,
+            (account_id, email.lower(), password_hash, first_name, last_name, job_title, role, now_iso()),
         )
         user_id = cur.fetchone()["id"]
-        row = conn.execute("SELECT id, account_id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, account_id, email, first_name, last_name, job_title, role, created_at FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
         return dict(row)
 
 
@@ -953,10 +987,55 @@ def list_users(account_id: int):
     """All teammates (users) on one account, oldest first. No password hashes."""
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, email, created_at FROM users WHERE account_id = ? ORDER BY created_at ASC",
+            "SELECT id, email, first_name, last_name, job_title, role, created_at FROM users WHERE account_id = ? ORDER BY created_at ASC",
             (account_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def count_admins(account_id: int) -> int:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE account_id = ? AND role = 'admin'", (account_id,)
+        ).fetchone()
+        return row["n"]
+
+
+def update_user(account_id: int, user_id: int, first_name: str = None, last_name: str = None,
+                 job_title: str = None, role: str = None) -> dict:
+    """Partial update van naam/functie/rol. Retourneert None als dit
+    teamlid niet bij dit account hoort. Weigert (ValueError) een wijziging
+    die de laatste Beheerder zou degraderen naar Gebruiker - een account
+    zonder Beheerder kan niemand meer promoveren, dus dat zou het account
+    permanent op het Gebruiker-niveau vastzetten."""
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT * FROM users WHERE id = ? AND account_id = ?", (user_id, account_id)
+        ).fetchone()
+        if not existing:
+            return None
+        if role is not None and role != "admin" and existing["role"] == "admin" and count_admins(account_id) <= 1:
+            raise ValueError("Kan de laatste Beheerder niet degraderen - wijs eerst een andere Beheerder aan.")
+        fields, params = [], []
+        if first_name is not None:
+            fields.append("first_name = ?")
+            params.append(first_name)
+        if last_name is not None:
+            fields.append("last_name = ?")
+            params.append(last_name)
+        if job_title is not None:
+            fields.append("job_title = ?")
+            params.append(job_title)
+        if role is not None:
+            fields.append("role = ?")
+            params.append(role)
+        if fields:
+            params.extend([user_id, account_id])
+            conn.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ? AND account_id = ?", params)
+        row = conn.execute(
+            "SELECT id, email, first_name, last_name, job_title, role, created_at FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        return dict(row)
 
 
 def count_users(account_id: int) -> int:
@@ -1024,7 +1103,7 @@ def get_user_by_email(email: str):
         row = conn.execute(
             """
             SELECT u.id AS user_id, u.email, u.password_hash, u.account_id, u.created_at,
-                   a.company_name
+                   u.first_name, u.last_name, u.job_title, u.role, a.company_name
             FROM users u
             JOIN accounts a ON a.id = u.account_id
             WHERE u.email = ?
@@ -1068,6 +1147,10 @@ def verify_password(email: str, password: str):
         "created_at": user["created_at"],
         "user_id": user["user_id"],
         "email": user["email"],
+        "role": user["role"],
+        "first_name": user["first_name"],
+        "last_name": user["last_name"],
+        "job_title": user["job_title"],
     }
 
 
@@ -1091,7 +1174,7 @@ def get_account_by_token(token: str):
         row = conn.execute(
             """
             SELECT a.id AS id, a.company_name, a.created_at, s.expires_at,
-                   u.id AS user_id, u.email
+                   u.id AS user_id, u.email, u.role, u.first_name, u.last_name, u.job_title
             FROM sessions s
             JOIN users u ON u.id = s.user_id
             JOIN accounts a ON a.id = s.account_id
@@ -1705,32 +1788,38 @@ def update_buyer_persona(persona_id: int, account_id: int, name: str = None, des
 # ---------------------------------------------------------------------------
 
 def get_account_profile(account_id: int) -> dict:
-    """Returns {"value_proposition", "usps" (list), "updated_at"} - or a row
-    of empty defaults if the account never saved a profile, so callers never
-    have to special-case "no profile yet"."""
+    """Returns {"value_proposition", "usps" (list), "pain_points" (list),
+    "updated_at"} - or a row of empty defaults if the account never saved a
+    profile, so callers never have to special-case "no profile yet"."""
     with get_conn() as conn:
         row = conn.execute(
             "SELECT * FROM account_profiles WHERE account_id = ?", (account_id,)
         ).fetchone()
         if not row:
-            return {"account_id": account_id, "value_proposition": "", "usps": [], "updated_at": None}
+            return {"account_id": account_id, "value_proposition": "", "usps": [], "pain_points": [], "updated_at": None}
         usps = [line.strip() for line in (row["usps"] or "").split("\n") if line.strip()]
-        return {"account_id": account_id, "value_proposition": row["value_proposition"], "usps": usps, "updated_at": row["updated_at"]}
+        pain_points = [line.strip() for line in (row["pain_points"] or "").split("\n") if line.strip()]
+        return {
+            "account_id": account_id, "value_proposition": row["value_proposition"],
+            "usps": usps, "pain_points": pain_points, "updated_at": row["updated_at"],
+        }
 
 
-def upsert_account_profile(account_id: int, value_proposition: str, usps: list) -> dict:
+def upsert_account_profile(account_id: int, value_proposition: str, usps: list, pain_points: list = None) -> dict:
     usps_text = "\n".join(u.strip() for u in (usps or []) if u.strip())
+    pain_points_text = "\n".join(p.strip() for p in (pain_points or []) if p.strip())
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO account_profiles (account_id, value_proposition, usps, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO account_profiles (account_id, value_proposition, usps, pain_points, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (account_id) DO UPDATE SET
                 value_proposition = EXCLUDED.value_proposition,
                 usps = EXCLUDED.usps,
+                pain_points = EXCLUDED.pain_points,
                 updated_at = EXCLUDED.updated_at
             """,
-            (account_id, (value_proposition or "").strip(), usps_text, now_iso()),
+            (account_id, (value_proposition or "").strip(), usps_text, pain_points_text, now_iso()),
         )
     return get_account_profile(account_id)
 

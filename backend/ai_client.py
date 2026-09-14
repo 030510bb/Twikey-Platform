@@ -86,10 +86,12 @@ def _text_of(message) -> str:
     return "".join(block.text for block in message.content if block.type == "text").strip()
 
 
-def _profile_context(value_proposition: str, usps: list, personas: list = None) -> str:
+def _profile_context(value_proposition: str, usps: list, personas: list = None, pain_points: list = None) -> str:
     parts = [f"Waardepropositie:\n{value_proposition or '(nog niet ingevuld)'}"]
     if usps:
         parts.append("USP's:\n" + "\n".join(f"- {u}" for u in usps))
+    if pain_points:
+        parts.append("Grootste problemen die dit bedrijf voor klanten oplost:\n" + "\n".join(f"- {p}" for p in pain_points))
     if personas:
         persona_lines = []
         for p in personas:
@@ -100,7 +102,7 @@ def _profile_context(value_proposition: str, usps: list, personas: list = None) 
     return "\n\n".join(parts)
 
 
-def generate_profile_questions(value_proposition: str, usps: list, personas: list = None) -> list:
+def generate_profile_questions(value_proposition: str, usps: list, personas: list = None, pain_points: list = None) -> list:
     """Eén AI-verdiepingsronde (bewust geen doorlopend chatgesprek, zie
     crm-roadmap.md): geeft 2-4 gerichte vervolgvragen terug om vage of
     onvolledige antwoorden in het intakeformulier aan te scherpen."""
@@ -109,18 +111,19 @@ def generate_profile_questions(value_proposition: str, usps: list, personas: lis
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     system = (
         "Je helpt een B2B sales-team hun intakeformulier aan te scherpen. Op basis "
-        "van hun (mogelijk nog vage of onvolledige) waardepropositie, USP's en "
-        "buyer persona's, stel je 2 tot 4 korte, concrete vervolgvragen die hen "
-        "helpen dit scherper te krijgen - bijvoorbeeld ontbrekende cijfers/bewijs, "
-        "een te vage USP, of een buyer persona zonder duidelijk pijnpunt. Schrijf "
-        "in het Nederlands. Geef ALLEEN de vragen terug, één per regel, elk "
-        "beginnend met '- ', zonder inleiding, nummering of afsluiting."
+        "van hun (mogelijk nog vage of onvolledige) waardepropositie, USP's, de "
+        "grootste problemen die ze voor klanten oplossen, en buyer persona's, stel "
+        "je 2 tot 4 korte, concrete vervolgvragen die hen helpen dit scherper te "
+        "krijgen - bijvoorbeeld ontbrekende cijfers/bewijs, een te vage USP, een "
+        "pijnpunt zonder concreet resultaat, of een buyer persona zonder duidelijk "
+        "pijnpunt. Schrijf in het Nederlands. Geef ALLEEN de vragen terug, één per "
+        "regel, elk beginnend met '- ', zonder inleiding, nummering of afsluiting."
     )
     message = client.messages.create(
         model=_MODEL,
         max_tokens=400,
         system=system,
-        messages=[{"role": "user", "content": _profile_context(value_proposition, usps, personas)}],
+        messages=[{"role": "user", "content": _profile_context(value_proposition, usps, personas, pain_points)}],
     )
     lines = _text_of(message).splitlines()
     questions = [line.strip().lstrip("-").strip() for line in lines if line.strip().lstrip("-").strip()]
@@ -129,7 +132,8 @@ def generate_profile_questions(value_proposition: str, usps: list, personas: lis
     return questions[:4]
 
 
-def generate_variant_suggestions(value_proposition: str, usps: list, persona: dict = None, count: int = 2) -> list:
+def generate_variant_suggestions(value_proposition: str, usps: list, persona: dict = None, count: int = 2,
+                                  pain_points: list = None) -> list:
     """Genereert `count` mail-variant-suggesties (offer_name/subject_template/
     body_template, met {{firstName}}/{{lastName}}/{{company}} merge-velden)
     op basis van het bedrijfsprofiel, optioneel toegespitst op één buyer
@@ -143,7 +147,9 @@ def generate_variant_suggestions(value_proposition: str, usps: list, persona: di
     system = (
         "Je schrijft korte, Nederlandse eerste-contact outreach-mails (informeel-"
         "zakelijk, je-vorm) voor een B2B sales-team, op basis van hun "
-        "waardepropositie en USP's. Gebruik de merge-velden {{firstName}}, "
+        "waardepropositie, USP's en de grootste problemen die ze voor klanten "
+        "oplossen - gebruik dat laatste om de mail pijnpunt-gedreven te openen "
+        "waar dat past. Gebruik de merge-velden {{firstName}}, "
         "{{lastName}} en {{company}} waar relevant - laat ze letterlijk staan, "
         "vul ze niet in. Subject: kort en persoonlijk. Body: max ~80 woorden, "
         "mag eenvoudige <br><br> gebruiken voor alinea's, geen aanhef/afsluiting "
@@ -152,7 +158,7 @@ def generate_variant_suggestions(value_proposition: str, usps: list, persona: di
         'de sleutels "offer_name", "subject_template" en "body_template". Geen '
         "uitleg, geen markdown-codeblok, alleen de JSON-array."
     )
-    context = _profile_context(value_proposition, usps)
+    context = _profile_context(value_proposition, usps, pain_points=pain_points)
     if persona:
         context += f"\n\nSchrijf specifiek voor deze buyer persona: {persona.get('name')}"
         if persona.get("description"):

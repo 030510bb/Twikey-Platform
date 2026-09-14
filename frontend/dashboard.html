@@ -3001,23 +3001,33 @@
             }
         }
 
+        let SEQUENCE_ENROLLMENTS = [];
+
         async function viewEnrollments(id) {
             const el = document.getElementById(`enrollments-${id}`);
             el.innerHTML = '<p style="color:#666;">Laden...</p>';
             try {
                 const data = await apiGet(`/api/sequences/${id}/enrollments`);
                 const rows = data.enrollments || [];
+                SEQUENCE_ENROLLMENTS = rows;
                 el.innerHTML = rows.length ? `
                     <div style="overflow-x:auto;">
                     <table>
-                        <thead><tr><th>Contact</th><th>Stap</th><th>Status</th><th>Volgende verzending</th></tr></thead>
+                        <thead><tr><th>Contact</th><th>Stap</th><th>Status</th><th>Volgende verzending</th><th></th></tr></thead>
                         <tbody>
-                            ${rows.map(e => `
+                            ${rows.map((e, i) => `
                                 <tr>
                                     <td>${escapeHtml(e.first_name + ' ' + (e.last_name || ''))}</td>
                                     <td>${e.current_step + 1}</td>
                                     <td>${escapeHtml(e.status)}</td>
                                     <td>${e.next_send_at ? new Date(e.next_send_at).toLocaleString('nl-NL') : '-'}</td>
+                                    <td>${e.rendered_subject ? `<button class="button button-secondary" style="font-size:12px; padding:2px 8px;" onclick="toggleEnrollmentPreview(${i})">Preview</button>` : ''}</td>
+                                </tr>
+                                <tr id="enrollment-preview-row-${i}" style="display:none;">
+                                    <td colspan="5" style="background:#f9fafb; padding:10px 14px; border-bottom:1px solid #e5e7eb;">
+                                        <div style="font-weight:600; color:#18407D; margin-bottom:4px;">${escapeHtml(e.rendered_subject || '')}</div>
+                                        <div style="white-space:pre-wrap;">${escapeHtml(e.rendered_body || '')}</div>
+                                    </td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -3027,6 +3037,11 @@
             } catch (err) {
                 el.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
             }
+        }
+
+        function toggleEnrollmentPreview(idx) {
+            const row = document.getElementById(`enrollment-preview-row-${idx}`);
+            row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
         }
 
         // --- Contacten / mini-CRM -------------------------------------------

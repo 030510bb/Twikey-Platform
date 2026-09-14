@@ -2597,7 +2597,23 @@ def api_enroll_sequence(sequence_id: int, payload: EnrollIn, account: dict = Dep
 
 @app.get("/api/sequences/{sequence_id}/enrollments")
 def api_list_enrollments(sequence_id: int, account: dict = Depends(get_current_account)):
-    return {"enrollments": database.list_enrollments(sequence_id, account["id"])}
+    """Elke inschrijving krijgt er een rendered_subject/rendered_body bij -
+    een preview van de eerstvolgende mail die dit contact zal ontvangen,
+    met de merge-velden al ingevuld (zelfde _render_template als bij
+    daadwerkelijk versturen, dus wat je hier ziet is exact wat er uit zal
+    gaan)."""
+    enrollments = database.list_enrollments(sequence_id, account["id"])
+    sequence = database.get_sequence(sequence_id, account["id"])
+    steps_by_order = {s["step_order"]: s for s in sequence["steps"]} if sequence else {}
+    for e in enrollments:
+        step = steps_by_order.get(e["current_step"])
+        if step:
+            e["rendered_subject"] = _render_template(step["subject_template"], e)
+            e["rendered_body"] = _render_template(step["body_template"], e)
+        else:
+            e["rendered_subject"] = None
+            e["rendered_body"] = None
+    return {"enrollments": enrollments}
 
 
 @app.post("/api/sequences/auto-enroll-by-persona")

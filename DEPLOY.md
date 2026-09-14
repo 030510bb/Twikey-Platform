@@ -278,6 +278,29 @@ dezelfde `ADMIN_SECRET` bij **Environment**. Voor accounts zonder
 `daily_import_enabled` aan is dit endpoint een no-op — veilig om toe te
 voegen zonder bestaande klanten te raken.
 
+## Cron: flow-monitoring ("Flows die aandacht nodig hebben")
+
+Bewaakt actieve opvolgsequenties en gelanceerde campagnes met een
+openstaande verzendwachtrij, en pauzeert automatisch wat onder de
+ingestelde reply-rate-drempel zakt (Integraties-tabblad, standaard uit) —
+zodat een slecht presterende flow niet dagenlang onopgemerkt doorloopt.
+Gepauzeerde flows verschijnen op het Dashboard-tabblad en zijn met één
+klik te hervatten.
+
+```bash
+curl -X POST https://api.justmeet.tech/api/cron/process-flow-monitor \
+  -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
+```
+
+Zelfde opzet als de andere cron-endpoints hierboven: één aanroep verwerkt
+alle accounts met `flow_monitor_enabled` aan, en een fout bij één account
+stopt de rest van de run niet. Richt in als een vijfde Render Cron Job, met
+dit endpoint als **Command**, bijvoorbeeld één keer per dag (`0 8 * * *`,
+ná het verzendvenster van 08:00-09:30 zodat de mails van die dag al
+meetellen) of vaker als je liever sneller ingrijpt, met dezelfde
+`ADMIN_SECRET` bij **Environment**. Voor accounts zonder
+`flow_monitor_enabled` aan is dit endpoint een no-op.
+
 ## Stap 5 — Eigen domein koppelen (justmeet.tech)
 
 Dit platform draait op zichzelf prima op de Render-URLs

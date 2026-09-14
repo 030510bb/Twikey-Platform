@@ -686,6 +686,14 @@
                 <div id="attention-body"></div>
             </div>
 
+            <div class="card" id="flows-attention-card" style="display:none;">
+                <h2><span class="icon">🚨</span>Flows die aandacht nodig hebben</h2>
+                <p style="color:#666; margin-bottom: 10px;">
+                    Automatisch gepauzeerd wegens een reply-rate onder de ingestelde drempel (zie Integraties → Flow-monitoring).
+                </p>
+                <div id="flows-attention-body"></div>
+            </div>
+
             <div class="grid-2">
                 <div class="stats-box">
                     <div class="value" id="dashboard-contact-count">-</div>
@@ -1483,6 +1491,34 @@
             </div>
 
             <div class="card">
+                <h2><span class="icon">🚨</span>Flow-monitoring</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Bewaakt actieve opvolgsequenties en gelanceerde campagnes met een openstaande verzendwachtrij.
+                    Zodra de reply-rate onder de drempel zakt (en er genoeg verstuurd is om dat betrouwbaar te zeggen),
+                    wordt de flow automatisch gepauzeerd en verschijnt 'ie op het Dashboard onder
+                    "Flows die aandacht nodig hebben", zodat je 'm kunt bijsturen en handmatig kunt hervatten.
+                </p>
+                <div id="flowmonitor-alert"></div>
+                <div class="input-group" style="margin-bottom: 14px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="flowmonitor-enabled" style="width:auto;">
+                        Automatisch pauzeren bij lage reply-rate
+                    </label>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                    <div class="input-group" style="margin:0;">
+                        <label>Drempel (reply-rate in %)</label>
+                        <input type="number" id="flowmonitor-threshold" value="2" min="0" max="100" step="0.1">
+                    </div>
+                    <div class="input-group" style="margin:0;">
+                        <label>Minimaal verstuurd voor beoordeling</label>
+                        <input type="number" id="flowmonitor-min-sent" value="20" min="1">
+                    </div>
+                </div>
+                <button class="button button-primary" style="margin-top:10px;" onclick="saveFlowMonitorSettings()">Opslaan</button>
+            </div>
+
+            <div class="card">
                 <h2><span class="icon">🧭</span>Vibe Prospecting / Explorium</h2>
                 <p style="color:#666; margin-bottom: 15px;">
                     Koppel je eigen Explorium-account om hieronder nieuwe leads en
@@ -1997,6 +2033,7 @@
                 loadProspectingSettings();
                 loadHubspotSettings();
                 loadSendingSettings();
+                loadFlowMonitorSettings();
             }
             if (tabName === 'contacts') {
                 loadTeammatesForAssignDropdown();
@@ -2449,6 +2486,37 @@
                 sendingSettingsAlert('✓ Verzendinstellingen opgeslagen.', 'success');
             } catch (err) {
                 sendingSettingsAlert(`Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function loadFlowMonitorSettings() {
+            try {
+                const data = await apiGet('/api/account/flow-monitor-settings');
+                document.getElementById('flowmonitor-enabled').checked = !!data.flow_monitor_enabled;
+                document.getElementById('flowmonitor-threshold').value =
+                    Math.round((data.flow_monitor_reply_threshold || 0.02) * 1000) / 10;
+                document.getElementById('flowmonitor-min-sent').value = data.flow_monitor_min_sent || 20;
+            } catch (err) {
+                contactsAlert('flowmonitor-alert', `Kon instellingen niet laden: ${err.message}`, 'warning');
+            }
+        }
+
+        async function saveFlowMonitorSettings() {
+            const thresholdPct = parseFloat(document.getElementById('flowmonitor-threshold').value);
+            const minSent = parseInt(document.getElementById('flowmonitor-min-sent').value, 10);
+            if (isNaN(thresholdPct) || thresholdPct < 0 || thresholdPct > 100) {
+                contactsAlert('flowmonitor-alert', 'Vul een geldige drempel in (0-100%).', 'warning');
+                return;
+            }
+            try {
+                await apiPut('/api/account/flow-monitor-settings', {
+                    flow_monitor_enabled: document.getElementById('flowmonitor-enabled').checked,
+                    flow_monitor_reply_threshold: thresholdPct / 100,
+                    flow_monitor_min_sent: minSent || 20,
+                });
+                contactsAlert('flowmonitor-alert', '✓ Opgeslagen.', 'success');
+            } catch (err) {
+                contactsAlert('flowmonitor-alert', `Opslaan mislukt: ${err.message}`, 'warning');
             }
         }
 
@@ -3903,6 +3971,52 @@
                 document.getElementById('dashboard-contact-count').textContent = '?';
             }
             loadAttentionItems();
+            loadFlowsAttention();
+        }
+
+        async function loadFlowsAttention() {
+            const card = document.getElementById('flows-attention-card');
+            try {
+                const data = await apiGet('/api/dashboard/flows-attention');
+                const sequences = data.sequences || [];
+                const campaigns = data.campaigns || [];
+                if (!sequences.length && !campaigns.length) { card.style.display = 'none'; return; }
+                card.style.display = 'block';
+                document.getElementById('flows-attention-body').innerHTML = [
+                    ...sequences.map(s => `
+                        <div class="metric-row">
+                            <span class="metric-label">🔁 Sequence: ${escapeHtml(s.name)} - lage reply-rate</span>
+                            <button class="button button-secondary" style="font-size:12px; padding:4px 10px;" onclick="reactivateFlowSequence(${s.id})">Hervatten</button>
+                        </div>
+                    `),
+                    ...campaigns.map(c => `
+                        <div class="metric-row">
+                            <span class="metric-label">📧 Campagne: ${escapeHtml(c.name)} - lage reply-rate</span>
+                            <button class="button button-secondary" style="font-size:12px; padding:4px 10px;" onclick="reactivateFlowCampaign(${c.id})">Hervatten</button>
+                        </div>
+                    `),
+                ].join('');
+            } catch (err) {
+                card.style.display = 'none';
+            }
+        }
+
+        async function reactivateFlowSequence(id) {
+            try {
+                await apiPost(`/api/sequences/${id}/status`, { status: 'active' });
+                loadFlowsAttention();
+            } catch (err) {
+                alert(`Hervatten mislukt: ${err.message}`);
+            }
+        }
+
+        async function reactivateFlowCampaign(id) {
+            try {
+                await apiPost(`/api/campaigns/${id}/resume`, {});
+                loadFlowsAttention();
+            } catch (err) {
+                alert(`Hervatten mislukt: ${err.message}`);
+            }
         }
 
         const ATTENTION_SEVERITY_COLOR = { high: '#b91c1c', medium: '#b45309', low: '#666' };

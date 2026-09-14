@@ -506,6 +506,28 @@ bepalen:
   worden die ook per teamlid, of blijven die gedeeld terwijl alleen het
   afzenderadres verschuift naar per-teamlid?
 
+## Toekomstig idee (nog niet gescoped): overzicht van geplande mails (dag/week/maand)
+
+Door Benjamin geopperd: een overzicht op het dashboard van welke mails er
+nog gepland staan om verstuurd te worden, gegroepeerd per dag/week/maand -
+zodat in één oogopslag te zien is wat er aankomt. Raakvlak met het
+"Flows die aandacht nodig hebben"-idee (monitoring/auto-pause, zie eerdere
+sessie) - dat toont wat er MIS dreigt te gaan, dit toont wat er nog KOMT.
+Bewust niet meegenomen - nog te bepalen:
+- Wat telt als "gepland"? `sequence_enrollments.next_send_at` heeft een
+  concrete toekomstige datum en leent zich hier direct voor. Contacten in
+  de campagne-verzendwachtrij (bij een actieve dagelijkse verzendlimiet)
+  hebben geen vaste toekomstige datum - die worden verstuurd zodra er
+  weer dagbudget is. Tellen die als "morgen" (optimistische aanname), als
+  aparte "wachtrij"-categorie, of worden ze genegeerd in dit overzicht?
+- Weergave: een simpele telling per periode ("12 mails deze week"), of een
+  uitklapbare lijst per contact/sequence/campagne?
+- Plek: nieuw blok op de hoofd-Dashboard-tab (naast bestaande statistieken
+  en het "Flows die aandacht nodig hebben"-blok), of een eigen tab/sectie?
+- Houdt dit rekening met het verzendvenster (08:00-09:30, zie hierboven)
+  en het uitgesloten-dagen-idee - toont het bijvoorbeeld "morgen
+  08:00-09:30" i.p.v. alleen een kale datum?
+
 ## Fase 3 (nog niet gescoped) — AI-gedreven intake & optimalisatie
 
 **Update 9 sept. 2026**: de kern hiervan is gebouwd, zie "Fase 3b"

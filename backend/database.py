@@ -604,6 +604,27 @@ ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS daily_import_country T
 -- (boven een eventuele afmeldlink) - per account in te stellen bij
 -- Verzendinstellingen.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email_signature TEXT NOT NULL DEFAULT '';
+
+-- Flow-monitoring ("Flows die aandacht nodig hebben"): per account uit te
+-- zetten (standaard uit), pauzeert automatisch een actieve sequence of
+-- gelanceerde campagne zodra de reply-rate onder de ingestelde drempel
+-- zakt EN er genoeg verstuurd is om dat betrouwbaar te kunnen zeggen
+-- (flow_monitor_min_sent voorkomt vals alarm bij een net gestarte flow).
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS flow_monitor_enabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS flow_monitor_reply_threshold REAL NOT NULL DEFAULT 0.02;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS flow_monitor_min_sent INTEGER NOT NULL DEFAULT 20;
+
+-- paused_reason onderscheidt een automatische pauze (flow-monitor, waarde
+-- 'low_reply_rate') van een handmatige pauze door de gebruiker (leeg) -
+-- zodat het "aandacht nodig"-dashboardblok alleen de eerste toont.
+ALTER TABLE sequences ADD COLUMN IF NOT EXISTS paused_reason TEXT NOT NULL DEFAULT '';
+
+-- Campagnes hadden nog geen pauzeerbaarheid - alleen relevant voor een
+-- campagne met nog een openstaande verzendwachtrij (zie
+-- pending_campaign_recipients_for_account); een volledig verstuurde
+-- campagne heeft niets meer om te pauzeren.
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS paused INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS paused_reason TEXT NOT NULL DEFAULT '';
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -2384,14 +2405,20 @@ def list_sequences(account_id: int) -> list:
         return result
 
 
-def set_sequence_status(sequence_id: int, account_id: int, status: str) -> bool:
+def set_sequence_status(sequence_id: int, account_id: int, status: str, paused_reason: str = '') -> bool:
+    """paused_reason='low_reply_rate' marks an automatic flow-monitor pause
+    (see flag_underperforming_flows) so the "needs attention" dashboard
+    block can tell it apart from a manual pause; always cleared when
+    reactivating, and defaults to '' for the existing manual pause/resume
+    toggle (unchanged behavior for that caller)."""
     with get_conn() as conn:
         existing = conn.execute(
             "SELECT 1 FROM sequences WHERE id = ? AND account_id = ?", (sequence_id, account_id)
         ).fetchone()
         if not existing:
             return False
-        conn.execute("UPDATE sequences SET status = ? WHERE id = ?", (status, sequence_id))
+        reason = paused_reason if status == 'paused' else ''
+        conn.execute("UPDATE sequences SET status = ?, paused_reason = ? WHERE id = ?", (status, reason, sequence_id))
         return True
 
 
@@ -3598,6 +3625,147 @@ def update_sending_settings(account_id: int, daily_digest_enabled: bool = None,
     return get_sending_settings(account_id)
 
 
+def get_flow_monitor_settings(account_id: int) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT flow_monitor_enabled, flow_monitor_reply_threshold, flow_monitor_min_sent "
+            "FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+        return {
+            "flow_monitor_enabled": bool(row["flow_monitor_enabled"]),
+            "flow_monitor_reply_threshold": row["flow_monitor_reply_threshold"],
+            "flow_monitor_min_sent": row["flow_monitor_min_sent"],
+        }
+
+
+def update_flow_monitor_settings(account_id: int, flow_monitor_enabled: bool = None,
+                                  flow_monitor_reply_threshold: float = None,
+                                  flow_monitor_min_sent: int = None) -> dict:
+    fields, params = [], []
+    if flow_monitor_enabled is not None:
+        fields.append("flow_monitor_enabled = ?")
+        params.append(1 if flow_monitor_enabled else 0)
+    if flow_monitor_reply_threshold is not None:
+        fields.append("flow_monitor_reply_threshold = ?")
+        params.append(flow_monitor_reply_threshold)
+    if flow_monitor_min_sent is not None:
+        fields.append("flow_monitor_min_sent = ?")
+        params.append(flow_monitor_min_sent)
+    if fields:
+        params.append(account_id)
+        with get_conn() as conn:
+            conn.execute(f"UPDATE accounts SET {', '.join(fields)} WHERE id = ?", params)
+    return get_flow_monitor_settings(account_id)
+
+
+def account_ids_with_flow_monitor_enabled() -> list:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT id FROM accounts WHERE flow_monitor_enabled = 1").fetchall()
+        return [r["id"] for r in rows]
+
+
+def sequence_reply_stats(account_id: int) -> list:
+    """Voor elke ACTIEVE sequence: totaal verstuurd (sequence_sends met
+    sent_at gezet) en het aantal distinct contacten binnen die sequence
+    dat ooit heeft gereageerd (incoming_replies). Een al gepauzeerde
+    sequence hoeft niet opnieuw beoordeeld te worden door
+    flag_underperforming_flows, vandaar de status-filter hier al."""
+    with get_conn() as conn:
+        sequences = conn.execute(
+            "SELECT id, name FROM sequences WHERE account_id = ? AND status = 'active'", (account_id,)
+        ).fetchall()
+        result = []
+        for seq in sequences:
+            sent_row = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM sequence_sends ss
+                JOIN sequence_enrollments se ON se.id = ss.enrollment_id
+                WHERE se.sequence_id = ? AND ss.sent_at IS NOT NULL
+                """,
+                (seq["id"],),
+            ).fetchone()
+            reply_row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT ir.contact_id) AS n
+                FROM incoming_replies ir
+                JOIN sequence_enrollments se ON se.contact_id = ir.contact_id
+                WHERE se.sequence_id = ? AND ir.account_id = ?
+                """,
+                (seq["id"], account_id),
+            ).fetchone()
+            sent = sent_row["n"] or 0
+            replies = reply_row["n"] or 0
+            result.append({
+                "id": seq["id"], "name": seq["name"], "sent": sent, "replies": replies,
+                "reply_rate": round(replies / sent, 3) if sent else 0.0,
+            })
+        return result
+
+
+def flag_underperforming_flows(account_id: int) -> dict:
+    """Evalueert actieve sequences en gelanceerde campagnes met een
+    openstaande verzendwachtrij tegen de flow_monitor-instellingen van dit
+    account, en pauzeert wat eronder zit (met paused_reason='low_reply_rate'
+    zodat het onderscheiden blijft van een handmatige pauze). Doet niets
+    als flow_monitor_enabled uit staat. Retourneert wat er deze run nieuw
+    gepauzeerd is."""
+    settings = get_flow_monitor_settings(account_id)
+    if not settings["flow_monitor_enabled"]:
+        return {"paused_sequences": [], "paused_campaigns": []}
+    threshold = settings["flow_monitor_reply_threshold"]
+    min_sent = settings["flow_monitor_min_sent"]
+
+    paused_sequences = []
+    for seq in sequence_reply_stats(account_id):
+        if seq["sent"] >= min_sent and seq["reply_rate"] < threshold:
+            set_sequence_status(seq["id"], account_id, "paused", paused_reason="low_reply_rate")
+            paused_sequences.append(seq)
+
+    paused_campaigns = []
+    for c in campaigns_overview(account_id):
+        if (c["status"] == "launched" and not c.get("paused") and (c.get("pending") or 0) > 0
+                and (c["sent"] or 0) >= min_sent and c["conversion_rate"] < threshold):
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE campaigns SET paused = 1, paused_reason = 'low_reply_rate' WHERE id = ? AND account_id = ?",
+                    (c["id"], account_id),
+                )
+            paused_campaigns.append(c)
+
+    return {"paused_sequences": paused_sequences, "paused_campaigns": paused_campaigns}
+
+
+def attention_flows(account_id: int) -> dict:
+    """Voor het 'Flows die aandacht nodig hebben'-dashboardblok - alleen
+    flows die WEGENS onderpresteren gepauzeerd zijn (paused_reason =
+    'low_reply_rate'), niet flows die de gebruiker zelf om andere redenen
+    handmatig heeft gepauzeerd."""
+    with get_conn() as conn:
+        seq_rows = conn.execute(
+            "SELECT id, name FROM sequences WHERE account_id = ? AND status = 'paused' AND paused_reason = 'low_reply_rate'",
+            (account_id,),
+        ).fetchall()
+        camp_rows = conn.execute(
+            "SELECT id, name FROM campaigns WHERE account_id = ? AND paused = 1 AND paused_reason = 'low_reply_rate'",
+            (account_id,),
+        ).fetchall()
+        return {"sequences": [dict(r) for r in seq_rows], "campaigns": [dict(r) for r in camp_rows]}
+
+
+def resume_campaign(campaign_id: int, account_id: int) -> bool:
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM campaigns WHERE id = ? AND account_id = ?", (campaign_id, account_id)
+        ).fetchone()
+        if not existing:
+            return False
+        conn.execute(
+            "UPDATE campaigns SET paused = 0, paused_reason = '' WHERE id = ?", (campaign_id,)
+        )
+        return True
+
+
 def set_do_not_contact_by_id(contact_id: int) -> dict | None:
     """Zet do_not_contact voor één contact op basis van diens id alleen -
     GEEN account_id-scoping, want de aanroeper hier is altijd de publieke,
@@ -3752,7 +3920,7 @@ def pending_campaign_recipients_for_account(account_id: int, limit: int) -> list
             JOIN campaign_variants cv ON cv.id = cr.variant_id
             JOIN contacts c ON c.id = cr.contact_id
             JOIN campaigns camp ON camp.id = cr.campaign_id
-            WHERE camp.account_id = ? AND camp.status = 'launched'
+            WHERE camp.account_id = ? AND camp.status = 'launched' AND camp.paused = 0
               AND cr.sent_at IS NULL AND cr.send_error IS NULL
             ORDER BY camp.launched_at ASC, cr.id ASC
             LIMIT ?
@@ -3772,7 +3940,8 @@ def account_ids_with_pending_campaign_sends() -> list:
             SELECT DISTINCT camp.account_id AS account_id
             FROM campaign_recipients cr
             JOIN campaigns camp ON camp.id = cr.campaign_id
-            WHERE camp.status = 'launched' AND cr.sent_at IS NULL AND cr.send_error IS NULL
+            WHERE camp.status = 'launched' AND camp.paused = 0
+              AND cr.sent_at IS NULL AND cr.send_error IS NULL
             """
         ).fetchall()
         return [r["account_id"] for r in rows]
@@ -3861,7 +4030,7 @@ def campaigns_overview(account_id: int) -> list:
         rows = conn.execute(
             """
             SELECT camp.id, camp.name, camp.status, camp.created_at, camp.launched_at,
-                   camp.sector, camp.persona_id, bp.name AS persona_name,
+                   camp.sector, camp.persona_id, camp.paused, bp.name AS persona_name,
                    COUNT(cr.id) AS total_recipients,
                    SUM(CASE WHEN cr.sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent,
                    SUM(CASE WHEN cr.send_error IS NOT NULL THEN 1 ELSE 0 END) AS failed,

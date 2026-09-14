@@ -805,12 +805,52 @@ def api_update_sending_settings(payload: SendingSettingsIn, account: dict = Depe
     return {"success": True, **settings}
 
 
+class FlowMonitorSettingsIn(BaseModel):
+    flow_monitor_enabled: bool | None = None
+    flow_monitor_reply_threshold: float | None = None
+    flow_monitor_min_sent: int | None = None
+
+
+@app.get("/api/account/flow-monitor-settings")
+def api_get_flow_monitor_settings(account: dict = Depends(get_current_account)):
+    return database.get_flow_monitor_settings(account["id"])
+
+
+@app.put("/api/account/flow-monitor-settings")
+def api_update_flow_monitor_settings(payload: FlowMonitorSettingsIn, account: dict = Depends(get_current_account)):
+    if payload.flow_monitor_reply_threshold is not None and not (0 <= payload.flow_monitor_reply_threshold <= 1):
+        raise HTTPException(status_code=400, detail="De drempel moet tussen 0 en 1 liggen (bv. 0.02 voor 2%).")
+    if payload.flow_monitor_min_sent is not None and payload.flow_monitor_min_sent < 1:
+        raise HTTPException(status_code=400, detail="Het minimum aantal verstuurd moet minstens 1 zijn.")
+    settings = database.update_flow_monitor_settings(
+        account["id"], flow_monitor_enabled=payload.flow_monitor_enabled,
+        flow_monitor_reply_threshold=payload.flow_monitor_reply_threshold,
+        flow_monitor_min_sent=payload.flow_monitor_min_sent,
+    )
+    return {"success": True, **settings}
+
+
 @app.get("/api/dashboard/attention")
 def api_dashboard_attention(account: dict = Depends(get_current_account)):
     """"Aandacht nodig"-kaart op het Dashboard-tabblad: mislukte
     verzendingen, openstaande conceptantwoorden, vervallen herinneringen en
     een eventuele verzendwachtrij - zie database.attention_items()."""
     return {"items": database.attention_items(account["id"])}
+
+
+@app.get("/api/dashboard/flows-attention")
+def api_dashboard_flows_attention(account: dict = Depends(get_current_account)):
+    """"Flows die aandacht nodig hebben"-blok: sequences/campagnes die de
+    flow-monitor automatisch heeft gepauzeerd wegens een te lage
+    reply-rate - zie database.attention_flows()."""
+    return database.attention_flows(account["id"])
+
+
+@app.post("/api/campaigns/{campaign_id}/resume")
+def api_resume_campaign(campaign_id: int, account: dict = Depends(get_current_account)):
+    if not database.resume_campaign(campaign_id, account["id"]):
+        raise HTTPException(status_code=404, detail="Campagne niet gevonden.")
+    return {"success": True}
 
 
 # Flexible CSV column-name matching: accepts common Dutch and English
@@ -2786,6 +2826,26 @@ def api_process_digests():
         if account_ok:
             sent += 1
     return {"success": True, "accounts_sent": sent, "errors": errors}
+
+
+@app.post("/api/cron/process-flow-monitor", dependencies=[Depends(require_admin_secret)])
+def api_process_flow_monitor():
+    """"Flows die aandacht nodig hebben": evalueert per account (met
+    flow_monitor_enabled=1) actieve sequences en gelanceerde campagnes met
+    een openstaande verzendwachtrij tegen de ingestelde reply-rate-drempel,
+    en pauzeert automatisch wat eronder zit - zie
+    database.flag_underperforming_flows(). Zelfde beveiliging/
+    aanroeppatroon als de andere periodieke cron-endpoints, zie DEPLOY.md."""
+    accounts_checked, paused_total, errors = 0, 0, 0
+    for account_id in database.account_ids_with_flow_monitor_enabled():
+        try:
+            result = database.flag_underperforming_flows(account_id)
+            paused_total += len(result["paused_sequences"]) + len(result["paused_campaigns"])
+            accounts_checked += 1
+        except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
+            logger.warning("Flow-monitor mislukt voor account %s: %s", account_id, exc)
+            errors += 1
+    return {"success": True, "accounts_checked": accounts_checked, "paused": paused_total, "errors": errors}
 
 
 # ---------------------------------------------------------------------------

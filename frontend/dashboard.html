@@ -3442,7 +3442,11 @@
             if (select.dataset.loaded) return;
             try {
                 const data = await apiGet('/api/campaigns');
-                select.innerHTML = (data.campaigns || []).map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${c.status})</option>`).join('');
+                const campaigns = data.campaigns || [];
+                select.innerHTML = campaigns.length
+                    ? '<option value="">Kies een campagne...</option>' +
+                      campaigns.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${c.status})</option>`).join('')
+                    : '<option value="">Geen campagnes gevonden - maak er eerst een aan</option>';
                 select.dataset.loaded = '1';
             } catch (err) {
                 select.innerHTML = '<option value="">Kon campagnes niet laden</option>';

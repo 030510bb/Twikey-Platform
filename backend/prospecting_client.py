@@ -55,7 +55,13 @@ def _request(api_key: str, method: str, path: str, json_body: dict = None) -> di
         raise ExploriumError(f"Kon Explorium niet bereiken: {exc}") from exc
 
     if resp.status_code in (401, 403):
-        raise ExploriumError("Ongeldige of verlopen Explorium API-key.")
+        # Was hardcoded op "ongeldige/verlopen key" voor élke 401/403, maar
+        # dezelfde key kan prima werken voor het ene endpoint (bv.
+        # businesses/lookalikes) en een 401/403 geven op een ander
+        # (bv. prospects) - bv. door een scope die niet op het abonnement
+        # zit, of onvoldoende credits voor die specifieke databron.
+        # resp.text meesturen i.p.v. altijd "key is fout" te concluderen.
+        raise ExploriumError(f"Explorium API-toegang geweigerd ({resp.status_code}) voor dit onderdeel: {resp.text[:300]}")
     if resp.status_code == 429:
         raise ExploriumError("Explorium rate limit bereikt (max 200 verzoeken/minuut) - probeer het straks opnieuw.")
     if not resp.ok:

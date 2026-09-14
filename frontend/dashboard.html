@@ -1260,6 +1260,20 @@
                         <option value="">Iedereen</option>
                         <option value="none">Niet-toegewezen</option>
                     </select>
+                    <select id="contacts-filter-status" onchange="loadContacts()">
+                        <option value="">Alle statussen</option>
+                        <option value="customer">Klant</option>
+                        <option value="open_quote">Offerte openstaand</option>
+                        <option value="do_not_contact">Niet benaderen</option>
+                        <option value="excluded">Uitgesloten</option>
+                    </select>
+                    <select id="contacts-filter-source" onchange="loadContacts()">
+                        <option value="">Alle bronnen</option>
+                        <option value="manual">Handmatig</option>
+                        <option value="csv">CSV-import</option>
+                        <option value="vibe_prospecting">Vibe Prospecting (handmatig)</option>
+                        <option value="vibe_prospecting_daily">Vibe Prospecting (dagelijks)</option>
+                    </select>
                     <label style="display:flex; align-items:center; gap:6px; font-weight:normal;">
                         <input type="checkbox" id="contacts-filter-exclude-excluded" style="width:auto;" onchange="loadContacts()"> Verberg uitgesloten
                     </label>
@@ -3264,11 +3278,15 @@
             const tag = document.getElementById('contacts-filter-tag').value;
             const persona = document.getElementById('contacts-filter-persona').value;
             const assigned = document.getElementById('contacts-filter-assigned').value;
+            const status = document.getElementById('contacts-filter-status').value;
+            const source = document.getElementById('contacts-filter-source').value;
             const excludeExcluded = document.getElementById('contacts-filter-exclude-excluded').checked;
             if (q) params.set('q', q);
             if (tag) params.set('tag', tag);
             if (persona) params.set('persona_id', persona);
             if (assigned) params.set('assigned_to', assigned);
+            if (status) params.set('status', status);
+            if (source) params.set('source', source);
             if (excludeExcluded) params.set('exclude_excluded', 'true');
             try {
                 const data = await apiGet(`/api/contacts?${params.toString()}`);

@@ -1039,18 +1039,20 @@ class ContactIn(BaseModel):
 @app.get("/api/contacts")
 def api_list_contacts(
     q: str = None, tag: str = None, persona_id: int = None, assigned_to: str = None,
-    exclude_excluded: bool = False, exclude_dnc: bool = False,
+    exclude_excluded: bool = False, exclude_dnc: bool = False, status: str = None, source: str = None,
     account: dict = Depends(get_current_account),
 ):
     """q searches first/last name, e-mail and company. assigned_to accepts a
-    user id, or "none" for unassigned contacts."""
+    user id, or "none" for unassigned contacts. status: customer/open_quote/
+    do_not_contact/excluded. source: manual/csv/vibe_prospecting/
+    vibe_prospecting_daily."""
     aid = account["id"]
     resolved_assigned_to = None
     if assigned_to is not None:
         resolved_assigned_to = "none" if assigned_to == "none" else int(assigned_to)
     contacts = database.list_contacts(
         aid, q=q, tag=tag, persona_id=persona_id, assigned_to=resolved_assigned_to,
-        exclude_excluded=exclude_excluded, exclude_dnc=exclude_dnc,
+        exclude_excluded=exclude_excluded, exclude_dnc=exclude_dnc, status=status, source=source,
     )
     return {"contacts": contacts, "count": database.count_contacts(aid)}
 

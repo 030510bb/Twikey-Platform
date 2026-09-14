@@ -1185,14 +1185,18 @@ def get_contact_by_email(account_id: int, email: str):
 
 
 def list_contacts(account_id: int, q: str = None, tag: str = None, persona_id: int = None, assigned_to=None,
-                   exclude_excluded: bool = False, exclude_dnc: bool = False) -> list:
+                   exclude_excluded: bool = False, exclude_dnc: bool = False, status: str = None,
+                   source: str = None) -> list:
     """List contacts for one account, newest first, each with its tags (list
     of {id, name}) and assignee (id/email or None) attached. Optional filters:
     q (matches first/last name, email or company, case-insensitive substring),
     tag (tag name), persona_id (buyer persona id), assigned_to (user id, or the string "none" for
     unassigned), exclude_excluded (drop contacts with a non-empty
     excluded_reason - e.g. before building a campaign), exclude_dnc (drop
-    contacts marked "niet meer benaderen")."""
+    contacts marked "niet meer benaderen"), status (one of "customer",
+    "open_quote", "do_not_contact", "excluded" - filters on the matching
+    flag/excluded_reason), source (exact match on contacts.source, e.g.
+    "vibe_prospecting_daily")."""
     with get_conn() as conn:
         sql = """
             SELECT c.*, u.email AS assigned_to_email, bp.name AS persona_name
@@ -1228,6 +1232,17 @@ def list_contacts(account_id: int, q: str = None, tag: str = None, persona_id: i
                 WHERE t.account_id = ? AND t.name = ?
             )"""
             params += [account_id, tag]
+        if status == "customer":
+            sql += " AND c.is_customer = 1"
+        elif status == "open_quote":
+            sql += " AND c.has_open_quote = 1"
+        elif status == "do_not_contact":
+            sql += " AND c.do_not_contact = 1"
+        elif status == "excluded":
+            sql += " AND c.excluded_reason IS NOT NULL AND c.excluded_reason != ''"
+        if source:
+            sql += " AND c.source = ?"
+            params.append(source)
         sql += " ORDER BY c.created_at DESC"
 
         rows = [dict(r) for r in conn.execute(sql, params).fetchall()]

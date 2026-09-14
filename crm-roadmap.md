@@ -507,25 +507,24 @@ bepalen:
 
 ## Toekomstig idee (nog niet gescoped): overzicht van geplande mails (dag/week/maand)
 
-Door Benjamin geopperd: een overzicht op het dashboard van welke mails er
-nog gepland staan om verstuurd te worden, gegroepeerd per dag/week/maand -
-zodat in één oogopslag te zien is wat er aankomt. Raakvlak met het
-"Flows die aandacht nodig hebben"-idee (monitoring/auto-pause, zie eerdere
-sessie) - dat toont wat er MIS dreigt te gaan, dit toont wat er nog KOMT.
-Bewust niet meegenomen - nog te bepalen:
-- Wat telt als "gepland"? `sequence_enrollments.next_send_at` heeft een
-  concrete toekomstige datum en leent zich hier direct voor. Contacten in
-  de campagne-verzendwachtrij (bij een actieve dagelijkse verzendlimiet)
-  hebben geen vaste toekomstige datum - die worden verstuurd zodra er
-  weer dagbudget is. Tellen die als "morgen" (optimistische aanname), als
-  aparte "wachtrij"-categorie, of worden ze genegeerd in dit overzicht?
-- Weergave: een simpele telling per periode ("12 mails deze week"), of een
-  uitklapbare lijst per contact/sequence/campagne?
-- Plek: nieuw blok op de hoofd-Dashboard-tab (naast bestaande statistieken
-  en het "Flows die aandacht nodig hebben"-blok), of een eigen tab/sectie?
-- Houdt dit rekening met het verzendvenster (08:00-09:30, zie hierboven)
-  en het uitgesloten-dagen-idee - toont het bijvoorbeeld "morgen
-  08:00-09:30" i.p.v. alleen een kale datum?
+**Gebouwd (14 sept. 2026)**: nieuw blok "Geplande mails" op de hoofd-
+Dashboard-tab, direct onder "Flows die aandacht nodig hebben" (dat toont
+wat er MIS dreigt te gaan, dit toont wat er nog KOMT). Bovenaan een
+telling per periode (Vandaag / Deze week / Later / Binnenkort), daaronder
+een uitklapbare lijst per sequence en per campagne met de contacten erin
+(naam, bedrijf, moment). Sequence-stappen hebben een concrete datum
+(`sequence_enrollments.next_send_at`) en zijn ingedeeld in
+vandaag/deze week (binnen 7 dagen)/later. Campagne-wachtrijcontacten
+(bij een actieve dagelijkse verzendlimiet) hebben geen vaste datum - die
+tellen apart mee als "Binnenkort" (ze gaan de deur uit zodra er weer
+dagbudget is). Contacten met do_not_contact/excluded_reason worden niet
+meegeteld - die staan niet echt "gepland". Endpoint:
+`GET /api/dashboard/scheduled-sends` (database.scheduled_sends_overview).
+
+Bewust niet meegenomen: rekening houden met het exacte verzendvenster
+(08:00-09:30) of de verzenddagen-instelling in de weergave zelf (bv.
+"morgen 08:00-09:30" i.p.v. een kale datum) - dat kan later als losse
+verfijning.
 
 ## Gebouwd (14 sept. 2026): dagelijkse prospecting-imports automatisch inschrijven op een sequence
 

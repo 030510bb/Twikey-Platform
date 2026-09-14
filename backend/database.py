@@ -39,6 +39,7 @@ import secrets
 from collections import Counter, defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import bcrypt
 import psycopg2
@@ -4059,6 +4060,87 @@ def pending_campaign_recipients_for_account(account_id: int, limit: int) -> list
             (account_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def scheduled_sends_overview(account_id: int, upcoming_limit: int = 500) -> dict:
+    """Overzicht van wat er nog gepland staat om verstuurd te worden voor
+    dit account - crm-roadmap.md "overzicht van geplande mails". Sequence-
+    stappen hebben een concrete next_send_at en worden ingedeeld in
+    vandaag/deze week/later (Amsterdam-tijd, zelfde zone als het
+    verzendvenster - zie _in_send_window in app.py). De campagne-wachtrij
+    (zie pending_campaign_recipients_for_account) heeft geen vaste datum -
+    die contacten tellen apart mee als 'binnenkort' (ze gaan de deur uit
+    zodra er weer dagbudget is, zie remaining_daily_budget). Contacten met
+    do_not_contact/excluded_reason worden overgeslagen - die worden bij de
+    eerstvolgende cron-run alsnog geskipt (zie due_enrollments' caller in
+    app.py), dus ze staan hier niet echt "gepland"."""
+    tz = ZoneInfo("Europe/Amsterdam")
+    today = datetime.now(tz).date()
+    week_end = today + timedelta(days=7)
+    with get_conn() as conn:
+        seq_rows = conn.execute(
+            """
+            SELECT se.next_send_at, s.id AS sequence_id, s.name AS sequence_name,
+                   c.id AS contact_id, c.first_name, c.last_name, c.email, c.company
+            FROM sequence_enrollments se
+            JOIN sequences s ON s.id = se.sequence_id
+            JOIN contacts c ON c.id = se.contact_id
+            WHERE se.account_id = ? AND se.status = 'active' AND s.status = 'active'
+              AND c.do_not_contact = 0 AND (c.excluded_reason IS NULL OR c.excluded_reason = '')
+            ORDER BY se.next_send_at ASC
+            LIMIT ?
+            """,
+            (account_id, upcoming_limit),
+        ).fetchall()
+        camp_rows = conn.execute(
+            """
+            SELECT camp.id AS campaign_id, camp.name AS campaign_name,
+                   c.id AS contact_id, c.first_name, c.last_name, c.email, c.company
+            FROM campaign_recipients cr
+            JOIN campaigns camp ON camp.id = cr.campaign_id
+            JOIN contacts c ON c.id = cr.contact_id
+            WHERE camp.account_id = ? AND camp.status = 'launched' AND camp.paused = 0
+              AND cr.sent_at IS NULL AND cr.send_error IS NULL
+              AND c.do_not_contact = 0 AND (c.excluded_reason IS NULL OR c.excluded_reason = '')
+            ORDER BY camp.launched_at ASC, cr.id ASC
+            LIMIT ?
+            """,
+            (account_id, upcoming_limit),
+        ).fetchall()
+
+    counts = {"today": 0, "week": 0, "later": 0, "queue": 0}
+    by_sequence = {}
+    for r in seq_rows:
+        try:
+            send_date = datetime.fromisoformat(r["next_send_at"]).astimezone(tz).date()
+        except (TypeError, ValueError):
+            send_date = today
+        bucket = "today" if send_date <= today else ("week" if send_date <= week_end else "later")
+        counts[bucket] += 1
+        entry = by_sequence.setdefault(
+            r["sequence_id"], {"sequence_id": r["sequence_id"], "sequence_name": r["sequence_name"], "items": []}
+        )
+        entry["items"].append({
+            "contact_id": r["contact_id"], "name": f"{r['first_name']} {r['last_name']}".strip(),
+            "email": r["email"], "company": r["company"], "date": send_date.isoformat(), "bucket": bucket,
+        })
+
+    by_campaign = {}
+    for r in camp_rows:
+        counts["queue"] += 1
+        entry = by_campaign.setdefault(
+            r["campaign_id"], {"campaign_id": r["campaign_id"], "campaign_name": r["campaign_name"], "items": []}
+        )
+        entry["items"].append({
+            "contact_id": r["contact_id"], "name": f"{r['first_name']} {r['last_name']}".strip(),
+            "email": r["email"], "company": r["company"],
+        })
+
+    return {
+        "counts": counts,
+        "by_sequence": sorted(by_sequence.values(), key=lambda e: e["sequence_name"].lower()),
+        "by_campaign": sorted(by_campaign.values(), key=lambda e: e["campaign_name"].lower()),
+    }
 
 
 def account_ids_with_pending_campaign_sends() -> list:

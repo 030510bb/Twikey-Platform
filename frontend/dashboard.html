@@ -694,6 +694,33 @@
                 <div id="flows-attention-body"></div>
             </div>
 
+            <div class="card" id="scheduled-sends-card" style="display:none;">
+                <h2><span class="icon">📅</span>Geplande mails</h2>
+                <p style="color:#666; margin-bottom: 10px;">
+                    Wat er nog klaarstaat om verstuurd te worden: sequence-stappen (met een concrete datum) en de
+                    campagne-wachtrij (geen vaste datum - gaat de deur uit zodra er weer dagbudget is).
+                </p>
+                <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:14px;">
+                    <div style="background:#f8f9fb; border-radius:8px; padding:12px; text-align:center;">
+                        <div style="font-size:22px; font-weight:bold;" id="scheduled-sends-count-today">0</div>
+                        <div style="font-size:12px; color:#666;">Vandaag</div>
+                    </div>
+                    <div style="background:#f8f9fb; border-radius:8px; padding:12px; text-align:center;">
+                        <div style="font-size:22px; font-weight:bold;" id="scheduled-sends-count-week">0</div>
+                        <div style="font-size:12px; color:#666;">Deze week</div>
+                    </div>
+                    <div style="background:#f8f9fb; border-radius:8px; padding:12px; text-align:center;">
+                        <div style="font-size:22px; font-weight:bold;" id="scheduled-sends-count-later">0</div>
+                        <div style="font-size:12px; color:#666;">Later</div>
+                    </div>
+                    <div style="background:#f8f9fb; border-radius:8px; padding:12px; text-align:center;">
+                        <div style="font-size:22px; font-weight:bold;" id="scheduled-sends-count-queue">0</div>
+                        <div style="font-size:12px; color:#666;">Binnenkort (wachtrij)</div>
+                    </div>
+                </div>
+                <div id="scheduled-sends-body"></div>
+            </div>
+
             <div class="grid-2">
                 <div class="stats-box">
                     <div class="value" id="dashboard-contact-count">-</div>
@@ -4155,6 +4182,59 @@
             }
             loadAttentionItems();
             loadFlowsAttention();
+            loadScheduledSends();
+        }
+
+        function scheduledSendBucketLabel(item) {
+            if (item.bucket === 'today') return 'vandaag';
+            if (item.bucket === 'week') return `deze week (${item.date})`;
+            return item.date;
+        }
+
+        function scheduledSendItemRow(item, dateLabel) {
+            const companyPart = item.company ? ` - ${escapeHtml(item.company)}` : '';
+            return `
+                <div class="metric-row">
+                    <span class="metric-label">${escapeHtml(item.name || item.email)}${companyPart}</span>
+                    <span style="color:#666; font-size:12px;">${dateLabel}</span>
+                </div>
+            `;
+        }
+
+        async function loadScheduledSends() {
+            const card = document.getElementById('scheduled-sends-card');
+            try {
+                const data = await apiGet('/api/dashboard/scheduled-sends');
+                const counts = data.counts || {};
+                const bySequence = data.by_sequence || [];
+                const byCampaign = data.by_campaign || [];
+                if (!bySequence.length && !byCampaign.length) { card.style.display = 'none'; return; }
+                card.style.display = 'block';
+                document.getElementById('scheduled-sends-count-today').textContent = counts.today || 0;
+                document.getElementById('scheduled-sends-count-week').textContent = counts.week || 0;
+                document.getElementById('scheduled-sends-count-later').textContent = counts.later || 0;
+                document.getElementById('scheduled-sends-count-queue').textContent = counts.queue || 0;
+                document.getElementById('scheduled-sends-body').innerHTML = [
+                    ...bySequence.map(s => `
+                        <details style="margin-bottom:8px;">
+                            <summary style="cursor:pointer; font-weight:600;">🔁 ${escapeHtml(s.sequence_name)} (${s.items.length})</summary>
+                            <div style="margin:8px 0 0 20px;">
+                                ${s.items.map(i => scheduledSendItemRow(i, scheduledSendBucketLabel(i))).join('')}
+                            </div>
+                        </details>
+                    `),
+                    ...byCampaign.map(c => `
+                        <details style="margin-bottom:8px;">
+                            <summary style="cursor:pointer; font-weight:600;">📧 ${escapeHtml(c.campaign_name)} (${c.items.length}) - binnenkort</summary>
+                            <div style="margin:8px 0 0 20px;">
+                                ${c.items.map(i => scheduledSendItemRow(i, 'binnenkort')).join('')}
+                            </div>
+                        </details>
+                    `),
+                ].join('');
+            } catch (err) {
+                card.style.display = 'none';
+            }
         }
 
         async function loadFlowsAttention() {

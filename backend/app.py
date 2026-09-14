@@ -892,6 +892,16 @@ def api_dashboard_flows_attention(account: dict = Depends(get_current_account)):
     return database.attention_flows(account["id"])
 
 
+@app.get("/api/dashboard/scheduled-sends")
+def api_dashboard_scheduled_sends(account: dict = Depends(get_current_account)):
+    """"Geplande mails"-blok op het Dashboard-tabblad: wat er nog klaarstaat
+    om verstuurd te worden (crm-roadmap.md, "overzicht van geplande
+    mails") - het spiegelbeeld van "Flows die aandacht nodig hebben"
+    hierboven: dat toont wat er MIS dreigt te gaan, dit toont wat er nog
+    KOMT. Zie database.scheduled_sends_overview()."""
+    return database.scheduled_sends_overview(account["id"])
+
+
 @app.post("/api/campaigns/{campaign_id}/resume")
 def api_resume_campaign(campaign_id: int, account: dict = Depends(get_current_account)):
     if not database.resume_campaign(campaign_id, account["id"]):

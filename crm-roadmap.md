@@ -775,3 +775,17 @@ idempotent per 7 dagen via `accounts_needing_icp_suggestions()`), plus een
 handmatige "Nu genereren"-knop voor direct resultaat zonder op de eerste
 cron-run te hoeven wachten. Eén rij per account (`icp_suggestions`-tabel)
 - elke ronde overschrijft de vorige, geen geschiedenis bijgehouden.
+
+## Gebouwd (15 sept. 2026): multiselect-filters op het Contacten-tabblad
+
+De 5 filters (Tags, Buyer persona's, Toegewezen aan, Status, Bron)
+ondersteunen nu meerdere waardes tegelijk (OR binnen hetzelfde filter, AND
+tussen filters onderling) i.p.v. één losse waarde - bv. status "Klant" én
+"Uitgesloten" tegelijk tonen. `database.list_contacts()` gebruikt
+Postgres' `= ANY(?)` (al gebruikt op andere plekken in dit bestand) voor
+tag/persona_id/source, met net iets andere logica voor `assigned_to`
+(mixt user-id's met de losse waarde "none") en `status` (mapt op
+verschillende onderliggende kolommen i.p.v. één kolom). Frontend: native
+`<select multiple>`-listboxen i.p.v. custom widgets - eenvoudiger te
+bouwen/onderhouden, met een korte hint over Cmd/Ctrl-klikken voor
+meerdere selecties.

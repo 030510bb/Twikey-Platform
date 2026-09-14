@@ -1450,19 +1450,23 @@ def get_contact_by_email(account_id: int, email: str):
         return dict(row) if row else None
 
 
-def list_contacts(account_id: int, q: str = None, tag: str = None, persona_id: int = None, assigned_to=None,
-                   exclude_excluded: bool = False, exclude_dnc: bool = False, status: str = None,
-                   source: str = None) -> list:
+def list_contacts(account_id: int, q: str = None, tag: list = None, persona_id: list = None, assigned_to: list = None,
+                   exclude_excluded: bool = False, exclude_dnc: bool = False, status: list = None,
+                   source: list = None) -> list:
     """List contacts for one account, newest first, each with its tags (list
-    of {id, name}) and assignee (id/email or None) attached. Optional filters:
-    q (matches first/last name, email or company, case-insensitive substring),
-    tag (tag name), persona_id (buyer persona id), assigned_to (user id, or the string "none" for
-    unassigned), exclude_excluded (drop contacts with a non-empty
+    of {id, name}) and assignee (id/email or None) attached. Optional
+    filters - each of tag/persona_id/assigned_to/status/source is a list
+    (multiselect: OR binnen hetzelfde filter, AND tussen filters onderling;
+    leeg/None = niet filteren op dat veld):
+    q (matches first/last name, email or company, case-insensitive
+    substring), tag (lijst tag-namen), persona_id (lijst buyer-persona-
+    id's), assigned_to (lijst user-id's, en/of de string "none" voor
+    niet-toegewezen), exclude_excluded (drop contacts with a non-empty
     excluded_reason - e.g. before building a campaign), exclude_dnc (drop
-    contacts marked "niet meer benaderen"), status (one of "customer",
-    "open_quote", "do_not_contact", "excluded" - filters on the matching
-    flag/excluded_reason), source (exact match on contacts.source, e.g.
-    "vibe_prospecting_daily")."""
+    contacts marked "niet meer benaderen"), status (lijst uit "customer",
+    "open_quote", "do_not_contact", "excluded" - filtert op de
+    bijbehorende vlag/excluded_reason), source (lijst exacte
+    contacts.source-waarden, bv. "vibe_prospecting_daily")."""
     with get_conn() as conn:
         sql = """
             SELECT c.*, u.email AS assigned_to_email, bp.name AS persona_name
@@ -1479,14 +1483,19 @@ def list_contacts(account_id: int, q: str = None, tag: str = None, persona_id: i
             )"""
             like = f"%{q.lower()}%"
             params += [like, like, like, like]
-        if persona_id is not None:
-            sql += " AND c.persona_id = ?"
-            params.append(persona_id)
-        if assigned_to == "none":
-            sql += " AND c.assigned_to IS NULL"
-        elif assigned_to is not None:
-            sql += " AND c.assigned_to = ?"
-            params.append(assigned_to)
+        if persona_id:
+            sql += " AND c.persona_id = ANY(?)"
+            params.append(list(persona_id))
+        if assigned_to:
+            conditions = []
+            if "none" in assigned_to:
+                conditions.append("c.assigned_to IS NULL")
+            ids = [int(a) for a in assigned_to if a != "none"]
+            if ids:
+                conditions.append("c.assigned_to = ANY(?)")
+                params.append(ids)
+            if conditions:
+                sql += " AND (" + " OR ".join(conditions) + ")"
         if exclude_excluded:
             sql += " AND (c.excluded_reason IS NULL OR c.excluded_reason = '')"
         if exclude_dnc:
@@ -1495,20 +1504,25 @@ def list_contacts(account_id: int, q: str = None, tag: str = None, persona_id: i
             sql += """ AND c.id IN (
                 SELECT ct.contact_id FROM contact_tags ct
                 JOIN tags t ON t.id = ct.tag_id
-                WHERE t.account_id = ? AND t.name = ?
+                WHERE t.account_id = ? AND t.name = ANY(?)
             )"""
-            params += [account_id, tag]
-        if status == "customer":
-            sql += " AND c.is_customer = 1"
-        elif status == "open_quote":
-            sql += " AND c.has_open_quote = 1"
-        elif status == "do_not_contact":
-            sql += " AND c.do_not_contact = 1"
-        elif status == "excluded":
-            sql += " AND c.excluded_reason IS NOT NULL AND c.excluded_reason != ''"
+            params += [account_id, list(tag)]
+        if status:
+            status_set = set(status)
+            conditions = []
+            if "customer" in status_set:
+                conditions.append("c.is_customer = 1")
+            if "open_quote" in status_set:
+                conditions.append("c.has_open_quote = 1")
+            if "do_not_contact" in status_set:
+                conditions.append("c.do_not_contact = 1")
+            if "excluded" in status_set:
+                conditions.append("(c.excluded_reason IS NOT NULL AND c.excluded_reason != '')")
+            if conditions:
+                sql += " AND (" + " OR ".join(conditions) + ")"
         if source:
-            sql += " AND c.source = ?"
-            params.append(source)
+            sql += " AND c.source = ANY(?)"
+            params.append(list(source))
         sql += " ORDER BY c.created_at DESC"
 
         rows = [dict(r) for r in conn.execute(sql, params).fetchall()]

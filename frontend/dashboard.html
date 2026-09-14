@@ -1383,32 +1383,45 @@
             <div class="card">
                 <h2><span class="icon">🔍</span>Contacten</h2>
                 <div id="contacts-list-alert"></div>
-                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:4px;">
                     <input type="text" id="contacts-search" placeholder="Zoek op naam, e-mail of bedrijf..." style="flex:1; min-width:200px;" oninput="debouncedLoadContacts()">
-                    <select id="contacts-filter-tag" onchange="loadContacts()"><option value="">Alle tags</option></select>
-                    <select id="contacts-filter-persona" onchange="loadContacts()"><option value="">Alle persona's</option></select>
-                    <select id="contacts-filter-assigned" onchange="loadContacts()">
-                        <option value="">Iedereen</option>
-                        <option value="none">Niet-toegewezen</option>
-                    </select>
-                    <select id="contacts-filter-status" onchange="loadContacts()">
-                        <option value="">Alle statussen</option>
-                        <option value="customer">Klant</option>
-                        <option value="open_quote">Offerte openstaand</option>
-                        <option value="do_not_contact">Niet benaderen</option>
-                        <option value="excluded">Uitgesloten</option>
-                    </select>
-                    <select id="contacts-filter-source" onchange="loadContacts()">
-                        <option value="">Alle bronnen</option>
-                        <option value="manual">Handmatig</option>
-                        <option value="csv">CSV-import</option>
-                        <option value="vibe_prospecting">Vibe Prospecting (handmatig)</option>
-                        <option value="vibe_prospecting_daily">Vibe Prospecting (dagelijks)</option>
-                    </select>
+                    <div class="input-group" style="margin:0;">
+                        <label style="font-weight:normal; font-size:12px; color:#666;">Tags</label>
+                        <select id="contacts-filter-tag" multiple size="4" style="min-width:140px;" onchange="loadContacts()"></select>
+                    </div>
+                    <div class="input-group" style="margin:0;">
+                        <label style="font-weight:normal; font-size:12px; color:#666;">Buyer persona's</label>
+                        <select id="contacts-filter-persona" multiple size="4" style="min-width:150px;" onchange="loadContacts()"></select>
+                    </div>
+                    <div class="input-group" style="margin:0;">
+                        <label style="font-weight:normal; font-size:12px; color:#666;">Toegewezen aan</label>
+                        <select id="contacts-filter-assigned" multiple size="4" style="min-width:150px;" onchange="loadContacts()">
+                            <option value="none">Niet-toegewezen</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin:0;">
+                        <label style="font-weight:normal; font-size:12px; color:#666;">Status</label>
+                        <select id="contacts-filter-status" multiple size="4" style="min-width:160px;" onchange="loadContacts()">
+                            <option value="customer">Klant</option>
+                            <option value="open_quote">Offerte openstaand</option>
+                            <option value="do_not_contact">Niet benaderen</option>
+                            <option value="excluded">Uitgesloten</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin:0;">
+                        <label style="font-weight:normal; font-size:12px; color:#666;">Bron</label>
+                        <select id="contacts-filter-source" multiple size="4" style="min-width:180px;" onchange="loadContacts()">
+                            <option value="manual">Handmatig</option>
+                            <option value="csv">CSV-import</option>
+                            <option value="vibe_prospecting">Vibe Prospecting (handmatig)</option>
+                            <option value="vibe_prospecting_daily">Vibe Prospecting (dagelijks)</option>
+                        </select>
+                    </div>
                     <label style="display:flex; align-items:center; gap:6px; font-weight:normal;">
                         <input type="checkbox" id="contacts-filter-exclude-excluded" style="width:auto;" onchange="loadContacts()"> Verberg uitgesloten
                     </label>
                 </div>
+                <p style="color:#999; font-size:11px; margin:0 0 12px;">Houd Cmd (Mac) of Ctrl (Windows) ingedrukt om meerdere waardes per filter te selecteren.</p>
                 <div id="contacts-bulk-bar" style="display:none; align-items:center; gap:10px; margin-bottom:10px; padding:10px; background:#f9fafb; border-radius:8px;">
                     <span id="contacts-bulk-count"></span>
                     <select id="contacts-bulk-campaign-select" style="max-width:280px;"></select>
@@ -3850,15 +3863,31 @@
             contactsSearchTimer = setTimeout(loadContacts, 300);
         }
 
+        // --- Multiselect-filter helpers (Contacten-tabblad) -----------------
+        // Native <select multiple> elementen: .value geeft/zet maar 1 waarde,
+        // dus bij het opnieuw vullen van de opties (na een API-reload) moeten
+        // de huidige selecties expliciet bewaard en teruggezet worden.
+        function getSelectedValues(id) {
+            const el = document.getElementById(id);
+            return el ? Array.from(el.selectedOptions).map(o => o.value) : [];
+        }
+
+        function setSelectedValues(id, values) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const wanted = new Set(values);
+            Array.from(el.options).forEach(o => { o.selected = wanted.has(o.value); });
+        }
+
         async function loadTeammatesForAssignDropdown() {
             try {
                 const data = await apiGet('/api/team/users');
                 allTeammates = data.users;
                 const select = document.getElementById('contacts-filter-assigned');
-                const current = select.value;
-                select.innerHTML = '<option value="">Iedereen</option><option value="none">Niet-toegewezen</option>' +
+                const current = getSelectedValues('contacts-filter-assigned');
+                select.innerHTML = '<option value="none">Niet-toegewezen</option>' +
                     allTeammates.map(u => `<option value="${u.id}">${u.email}</option>`).join('');
-                select.value = current;
+                setSelectedValues('contacts-filter-assigned', current);
             } catch (err) {
                 // Non-fatal - the assign dropdowns on each row just won't have options yet.
             }
@@ -3868,10 +3897,9 @@
             try {
                 const data = await apiGet('/api/tags');
                 const select = document.getElementById('contacts-filter-tag');
-                const current = select.value;
-                select.innerHTML = '<option value="">Alle tags</option>' +
-                    data.tags.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
-                select.value = current;
+                const current = getSelectedValues('contacts-filter-tag');
+                select.innerHTML = data.tags.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
+                setSelectedValues('contacts-filter-tag', current);
             } catch (err) {
                 // Non-fatal
             }
@@ -3890,9 +3918,9 @@
 
                 const filterSelect = document.getElementById('contacts-filter-persona');
                 if (filterSelect) {
-                    const current = filterSelect.value;
-                    filterSelect.innerHTML = '<option value="">Alle persona\'s</option>' + personaOptionsHtml();
-                    filterSelect.value = current;
+                    const current = getSelectedValues('contacts-filter-persona');
+                    filterSelect.innerHTML = personaOptionsHtml();
+                    setSelectedValues('contacts-filter-persona', current);
                 }
 
                 const seqSelect = document.getElementById('sequence-persona');
@@ -4083,18 +4111,18 @@
             tbody.innerHTML = '<tr><td colspan="9" style="color:#666;">Laden...</td></tr>';
             const params = new URLSearchParams();
             const q = document.getElementById('contacts-search').value.trim();
-            const tag = document.getElementById('contacts-filter-tag').value;
-            const persona = document.getElementById('contacts-filter-persona').value;
-            const assigned = document.getElementById('contacts-filter-assigned').value;
-            const status = document.getElementById('contacts-filter-status').value;
-            const source = document.getElementById('contacts-filter-source').value;
+            const tags = getSelectedValues('contacts-filter-tag');
+            const personas = getSelectedValues('contacts-filter-persona');
+            const assigned = getSelectedValues('contacts-filter-assigned');
+            const statuses = getSelectedValues('contacts-filter-status');
+            const sources = getSelectedValues('contacts-filter-source');
             const excludeExcluded = document.getElementById('contacts-filter-exclude-excluded').checked;
             if (q) params.set('q', q);
-            if (tag) params.set('tag', tag);
-            if (persona) params.set('persona_id', persona);
-            if (assigned) params.set('assigned_to', assigned);
-            if (status) params.set('status', status);
-            if (source) params.set('source', source);
+            tags.forEach(v => params.append('tag', v));
+            personas.forEach(v => params.append('persona_id', v));
+            assigned.forEach(v => params.append('assigned_to', v));
+            statuses.forEach(v => params.append('status', v));
+            sources.forEach(v => params.append('source', v));
             if (excludeExcluded) params.set('exclude_excluded', 'true');
             try {
                 const data = await apiGet(`/api/contacts?${params.toString()}`);

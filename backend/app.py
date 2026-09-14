@@ -52,7 +52,7 @@ from dotenv import load_dotenv
 # before Python even starts, so this ordering doesn't affect production).
 load_dotenv()
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
@@ -1316,20 +1316,22 @@ class ContactIn(BaseModel):
 
 @app.get("/api/contacts")
 def api_list_contacts(
-    q: str = None, tag: str = None, persona_id: int = None, assigned_to: str = None,
-    exclude_excluded: bool = False, exclude_dnc: bool = False, status: str = None, source: str = None,
+    q: str = None, tag: list[str] = Query(default=[]), persona_id: list[int] = Query(default=[]),
+    assigned_to: list[str] = Query(default=[]),
+    exclude_excluded: bool = False, exclude_dnc: bool = False, status: list[str] = Query(default=[]),
+    source: list[str] = Query(default=[]),
     account: dict = Depends(get_current_account),
 ):
-    """q searches first/last name, e-mail and company. assigned_to accepts a
-    user id, or "none" for unassigned contacts. status: customer/open_quote/
-    do_not_contact/excluded. source: manual/csv/vibe_prospecting/
-    vibe_prospecting_daily."""
+    """q searches first/last name, e-mail and company. tag/persona_id/
+    assigned_to/status/source zijn elk multiselect (herhaal de query-param
+    voor meerdere waardes, bv. ?status=customer&status=excluded) - OR
+    binnen hetzelfde filter, AND tussen filters onderling; leeg = niet
+    filteren op dat veld. assigned_to accepteert user-id's en/of "none"
+    voor niet-toegewezen. status: customer/open_quote/do_not_contact/
+    excluded. source: manual/csv/vibe_prospecting/vibe_prospecting_daily."""
     aid = account["id"]
-    resolved_assigned_to = None
-    if assigned_to is not None:
-        resolved_assigned_to = "none" if assigned_to == "none" else int(assigned_to)
     contacts = database.list_contacts(
-        aid, q=q, tag=tag, persona_id=persona_id, assigned_to=resolved_assigned_to,
+        aid, q=q, tag=tag, persona_id=persona_id, assigned_to=assigned_to,
         exclude_excluded=exclude_excluded, exclude_dnc=exclude_dnc, status=status, source=source,
     )
     return {"contacts": contacts, "count": database.count_contacts(aid)}

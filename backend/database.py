@@ -3586,11 +3586,11 @@ def update_linkedin_followup_settings(account_id: int, linkedin_followup_reminde
 
 def log_linkedin_action(account_id: int, contact_name: str, action: str, template_label: str = "", note: str = "", contact_id=None) -> dict:
     """action: one of 'connection_sent', 'connection_accepted', 'message_sent', 'reply_received'.
-    Bij 'connection_accepted' wordt - als de instelling aanstaat (standaard
-    aan, zie get_linkedin_followup_settings) - automatisch een opvolg-
-    herinnering aangemaakt na het ingestelde aantal dagen, gekoppeld aan
-    het CRM-contact als dat is meegegeven, anders op losse naam (zie
-    create_reminder's contact_name)."""
+    Bij 'connection_accepted' EN bij 'reply_received' wordt - als de
+    instelling aanstaat (standaard aan, zie get_linkedin_followup_settings,
+    zelfde aantal dagen voor beide triggers) - automatisch een opvolg-
+    herinnering aangemaakt, gekoppeld aan het CRM-contact als dat is
+    meegegeven, anders op losse naam (zie create_reminder's contact_name)."""
     with get_conn() as conn:
         cur = conn.execute(
             """
@@ -3604,14 +3604,17 @@ def log_linkedin_action(account_id: int, contact_name: str, action: str, templat
         entry = dict(row)
 
     reminder_created = False
-    if action == "connection_accepted":
+    reminder_notes = {
+        "connection_accepted": "Opvolgen na geaccepteerd LinkedIn-connectieverzoek",
+        "reply_received": "Opvolgen na ontvangen LinkedIn-reactie",
+    }
+    if action in reminder_notes:
         settings = get_linkedin_followup_settings(account_id)
         if settings["linkedin_followup_reminder_enabled"]:
             remind_at = (datetime.now(timezone.utc) + timedelta(days=settings["linkedin_followup_reminder_days"])).isoformat()
             reminder = create_reminder(
                 account_id, contact_id=contact_id, remind_at=remind_at,
-                note="Opvolgen na geaccepteerd LinkedIn-connectieverzoek",
-                contact_name=contact_name,
+                note=reminder_notes[action], contact_name=contact_name,
             )
             reminder_created = bool(reminder)
     entry["reminder_created"] = reminder_created

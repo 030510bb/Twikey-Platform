@@ -440,24 +440,36 @@ Contacten, A/B Test, Analytics, Integraties) tegen een echt draaiende
 backend + echte login-flow, plus een syntax-check van het uitgepakte
 `<script>`-blok — geen consolefouten, geen regressies.
 
-## Toekomstig idee (nog niet gescoped): leads uit Instagram/LinkedIn-advertenties
+## Deels gescoped (14 sept. 2026): leads uit Instagram/LinkedIn-advertenties
 
 Door Benjamin geopperd tijdens de Fase 3c-sessie: naast koud e-mailen ook
 advertenties draaien op Instagram/LinkedIn, en de resulterende leaddata (of
 berichten die prospects achterlaten) rechtstreeks importeren in de CRM voor
-directe opvolging. Bewust **niet** meegenomen in Fase 3c — dit is een
-nieuw, apart te scopen stuk werk, geen kleine uitbreiding:
-- Per platform een andere koppeling (Meta/Instagram Lead Ads API vs.
-  LinkedIn Lead Gen Forms API), allebei met een eigen OAuth-app-registratie
-  en goedkeuringsproces bij het platform zelf — dat kost tijd, los van het
-  bouwen.
-- Nog te kiezen: polling (periodiek ophalen) vs. webhooks (realtime
-  doorgestuurd) per platform, en hoe dat samenkomt met accountauthenticatie
-  (elk account koppelt straks vermoedelijk zijn eigen advertentie-account,
-  zoals nu ook al met SMTP/HubSpot/Explorium gebeurt).
-- Nog te bepalen: hoe een geïmporteerde ad-lead zich verhoudt tot de
-  bestaande contactbron-indeling (`source`: csv/manual/vibe_prospecting/
-  hubspot) en of/hoe zo'n lead meteen in een opvolgsequentie terechtkomt.
+directe opvolging. Nog niet gebouwd — dit is een nieuw, apart stuk werk,
+geen kleine uitbreiding. Twee ontwerpkeuzes zijn inmiddels wel gemaakt:
+
+- **Platform: LinkedIn eerst, niet Meta/Instagram.** Sluit beter aan bij
+  deze B2B-tool (er is al een LinkedIn-outreach-tracker) en LinkedIn's
+  API-goedkeuringsproces is voorspelbaarder. Instagram/Meta Lead Ads kan
+  later als losse uitbreiding op dezelfde manier erbij.
+- **Ophaalmethode: polling, geen webhooks.** Geen publiek
+  verificatie-endpoint nodig om te bouwen, en het past op dezelfde
+  cron-architectuur die de dagelijkse Vibe Prospecting-import al gebruikt
+  (zie hierboven, "dagelijkse prospecting-imports automatisch inschrijven
+  op een sequence") - nieuwe leads worden op dezelfde manier als contact
+  geïmporteerd (`source='linkedin_ads'`), met dezelfde reeds gebouwde
+  auto-enroll-naar-sequence-instelling herbruikbaar.
+
+**Concrete eerstvolgende stap, niet iets dat ik kan doen**: een LinkedIn
+Developer App registreren en toegang tot de Lead Gen Forms API aanvragen
+bij LinkedIn zelf - vereist een LinkedIn Company Page-beheerdersaccount
+van Benjamin/Twikey, en het goedkeuringsproces kan weken duren. Pas
+zinvol om de daadwerkelijke koppeling te bouwen zodra die toegang er is.
+
+Nog te bepalen zodra die toegang er is: hoe accountauthenticatie werkt
+(elk account koppelt vermoedelijk zijn eigen LinkedIn-advertentie-account,
+zoals nu ook al met SMTP/HubSpot/Explorium gebeurt) en de precieze
+cron-frequentie.
 
 Staat als "nog te plannen" in de "coming soon"-lijst op het
 Support-tabblad, zodat klanten weten dat dit eraan zit te komen.

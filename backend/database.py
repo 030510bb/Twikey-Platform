@@ -2446,7 +2446,7 @@ def enroll_contact(sequence_id: int, account_id: int, contact_id: int) -> dict:
     cooldown setting, since that's not a "new" enrollment."""
     with get_conn() as conn:
         seq = conn.execute(
-            "SELECT 1 FROM sequences WHERE id = ? AND account_id = ?", (sequence_id, account_id)
+            "SELECT name FROM sequences WHERE id = ? AND account_id = ?", (sequence_id, account_id)
         ).fetchone()
         contact = conn.execute(
             "SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)
@@ -2472,6 +2472,10 @@ def enroll_contact(sequence_id: int, account_id: int, contact_id: int) -> dict:
                 (account_id, contact_id, cutoff),
             ).fetchone()
             if blocked:
+                log_contact_activity(
+                    account_id, contact_id, "sequence_enroll_blocked",
+                    f"Inschrijving op sequence '{seq['name']}' geblokkeerd (afkoelperiode)", _conn=conn,
+                )
                 return {"enrollment": None, "skipped_reason": "cooldown"}
 
         cur = conn.execute(
@@ -2482,6 +2486,9 @@ def enroll_contact(sequence_id: int, account_id: int, contact_id: int) -> dict:
             RETURNING id
             """,
             (sequence_id, account_id, contact_id, now_iso(), now_iso()),
+        )
+        log_contact_activity(
+            account_id, contact_id, "sequence_enrolled", f"Ingeschreven op sequence '{seq['name']}'", _conn=conn,
         )
         enrollment_id = cur.fetchone()["id"]
         row = conn.execute("SELECT * FROM sequence_enrollments WHERE id = ?", (enrollment_id,)).fetchone()
@@ -2521,7 +2528,7 @@ def auto_enroll_by_persona(account_id: int) -> dict:
         enrolled, skipped_no_sequence = 0, 0
         for row in candidates:
             seq = conn.execute(
-                "SELECT id FROM sequences WHERE account_id = ? AND persona_id = ? AND status = 'active' "
+                "SELECT id, name FROM sequences WHERE account_id = ? AND persona_id = ? AND status = 'active' "
                 "ORDER BY created_at DESC LIMIT 1",
                 (account_id, row["persona_id"]),
             ).fetchone()
@@ -2541,6 +2548,10 @@ def auto_enroll_by_persona(account_id: int) -> dict:
                 VALUES (?, ?, ?, 0, 'active', ?, ?)
                 """,
                 (seq["id"], account_id, row["contact_id"], now_iso(), now_iso()),
+            )
+            log_contact_activity(
+                account_id, row["contact_id"], "sequence_enrolled",
+                f"Automatisch ingeschreven op sequence '{seq['name']}' (o.b.v. buyer persona)", _conn=conn,
             )
             enrolled += 1
         return {"enrolled": enrolled, "skipped_no_matching_sequence": skipped_no_sequence}

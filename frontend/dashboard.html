@@ -1491,9 +1491,16 @@
                         Selecteer ze later handmatig op het Contacten-tabblad en voeg ze toe aan een campagne.
                     </p>
                 </div>
-                <div style="display:grid; grid-template-columns: 1fr 2fr; gap:10px;">
+                <div style="display:grid; grid-template-columns: 1fr 1fr 2fr; gap:10px;">
                     <div class="input-group" style="margin:0;"><label>Aantal per dag</label><input type="number" id="prospecting-daily-count" value="10" min="1"></div>
-                    <div class="input-group" style="margin:0;"><label>Sector</label><input type="text" id="prospecting-daily-sector" placeholder="bijv. Horeca Groothandel"></div>
+                    <div class="input-group" style="margin:0;"><label>Land (2-letter code)</label><input type="text" id="prospecting-daily-country" value="nl" maxlength="2" placeholder="nl"></div>
+                    <div class="input-group" style="margin:0;">
+                        <label>Sector (exacte Explorium LinkedIn-categorie)</label>
+                        <input type="text" id="prospecting-daily-sector" placeholder="bijv. wholesale food and beverage">
+                        <p style="color:#999; font-size:11px; margin-top:2px;">
+                            Moet exact overeenkomen met Explorium's categorielijst (<a href="https://developers.explorium.ai/categories" target="_blank" rel="noopener">zie hier</a>) - vrije tekst wordt geweigerd.
+                        </p>
+                    </div>
                 </div>
 
                 <div style="margin-top: 10px;">
@@ -2448,6 +2455,7 @@
                     document.getElementById('prospecting-daily-enabled').checked = !!data.daily_import_enabled;
                     document.getElementById('prospecting-daily-count').value = data.daily_import_count || 10;
                     document.getElementById('prospecting-daily-sector').value = data.daily_import_sector || '';
+                    document.getElementById('prospecting-daily-country').value = data.daily_import_country || 'nl';
                 } else {
                     statusEl.innerHTML = '<div class="alert alert-warning">Nog niet gekoppeld - zoeken/lookalikes via Vibe Prospecting werkt nog niet.</div>';
                     disconnectBtn.style.display = 'none';
@@ -2463,6 +2471,7 @@
                 daily_import_enabled: document.getElementById('prospecting-daily-enabled').checked,
                 daily_import_count: parseInt(document.getElementById('prospecting-daily-count').value, 10) || 10,
                 daily_import_sector: document.getElementById('prospecting-daily-sector').value.trim(),
+                daily_import_country: document.getElementById('prospecting-daily-country').value.trim() || 'nl',
             };
             if (apiKey) { payload.api_key = apiKey; }
             try {

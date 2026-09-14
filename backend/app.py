@@ -1943,6 +1943,7 @@ class ProspectingSettingsIn(BaseModel):
     daily_import_enabled: bool = False
     daily_import_count: int = 10
     daily_import_sector: str = ''
+    daily_import_country: str = 'nl'
 
 
 @app.get("/api/integrations/prospecting")
@@ -1955,6 +1956,7 @@ def api_get_prospecting_settings(account: dict = Depends(get_current_account)):
         "daily_import_enabled": bool(row["daily_import_enabled"]),
         "daily_import_count": row["daily_import_count"],
         "daily_import_sector": row["daily_import_sector"],
+        "daily_import_country": row["daily_import_country"],
     }
 
 
@@ -1965,6 +1967,7 @@ def api_save_prospecting_settings(payload: ProspectingSettingsIn, account: dict 
         database.save_prospecting_settings(
             account["id"], api_key_encrypted, payload.daily_import_enabled,
             payload.daily_import_count, payload.daily_import_sector.strip(),
+            payload.daily_import_country.strip().lower() or 'nl',
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2231,9 +2234,12 @@ def api_process_prospecting():
         account_id = settings_row["account_id"]
         target = settings_row["daily_import_count"] or 10
         sector = (settings_row["daily_import_sector"] or "").strip()
+        country = (settings_row["daily_import_country"] or "nl").strip().lower()
         try:
             api_key = crypto.decrypt(settings_row["api_key_encrypted"])
-            filters = {"linkedin_category": {"values": [sector]}} if sector else {}
+            filters = {"country_code": {"values": [country]}}
+            if sector:
+                filters["linkedin_category"] = {"values": [sector]}
             businesses = prospecting_client.search_businesses(api_key, filters, size=target * 3)
             new_count = 0
             for business in businesses:

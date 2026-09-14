@@ -595,6 +595,11 @@ ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS daily_import_enabled I
 ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS daily_import_count INTEGER NOT NULL DEFAULT 10;
 ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS daily_import_sector TEXT NOT NULL DEFAULT '';
 
+-- Land-filter (ISO 2-letter code) voor de dagelijkse prospecting-zoekopdracht -
+-- zonder deze filter kwamen er wereldwijd bedrijven terug die aan de sector
+-- voldeden (bv. Frankrijk), niet alleen NL. Standaard 'nl'.
+ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS daily_import_country TEXT NOT NULL DEFAULT 'nl';
+
 -- Optionele e-mailhandtekening, onder campagne- en opvolgmails geplakt
 -- (boven een eventuele afmeldlink) - per account in te stellen bij
 -- Verzendinstellingen.
@@ -1857,10 +1862,11 @@ def get_prospecting_settings(account_id: int):
 
 
 def save_prospecting_settings(account_id: int, api_key_encrypted: str = None, daily_import_enabled: bool = False,
-                               daily_import_count: int = 10, daily_import_sector: str = '') -> dict:
+                               daily_import_count: int = 10, daily_import_sector: str = '',
+                               daily_import_country: str = 'nl') -> dict:
     """api_key_encrypted=None keeps the existing key (so the daily-import
-    toggle/count/sector can be saved without re-pasting the key every
-    time) - raises ValueError if no key exists yet either."""
+    toggle/count/sector/country can be saved without re-pasting the key
+    every time) - raises ValueError if no key exists yet either."""
     with get_conn() as conn:
         existing = conn.execute("SELECT * FROM prospecting_settings WHERE account_id = ?", (account_id,)).fetchone()
         if api_key_encrypted is None:
@@ -1870,16 +1876,18 @@ def save_prospecting_settings(account_id: int, api_key_encrypted: str = None, da
         conn.execute(
             """
             INSERT INTO prospecting_settings
-                (account_id, api_key_encrypted, daily_import_enabled, daily_import_count, daily_import_sector, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (account_id, api_key_encrypted, daily_import_enabled, daily_import_count, daily_import_sector, daily_import_country, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (account_id) DO UPDATE SET
                 api_key_encrypted = excluded.api_key_encrypted,
                 daily_import_enabled = excluded.daily_import_enabled,
                 daily_import_count = excluded.daily_import_count,
                 daily_import_sector = excluded.daily_import_sector,
+                daily_import_country = excluded.daily_import_country,
                 updated_at = excluded.updated_at
             """,
-            (account_id, api_key_encrypted, int(daily_import_enabled), daily_import_count, daily_import_sector, now_iso()),
+            (account_id, api_key_encrypted, int(daily_import_enabled), daily_import_count, daily_import_sector,
+             daily_import_country, now_iso()),
         )
         row = conn.execute("SELECT * FROM prospecting_settings WHERE account_id = ?", (account_id,)).fetchone()
         return dict(row)
@@ -1893,7 +1901,7 @@ def accounts_with_daily_prospecting_enabled() -> list:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT account_id, api_key_encrypted, daily_import_count, daily_import_sector
+            SELECT account_id, api_key_encrypted, daily_import_count, daily_import_sector, daily_import_country
             FROM prospecting_settings WHERE daily_import_enabled = 1
             """
         ).fetchall()

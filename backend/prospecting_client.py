@@ -73,10 +73,13 @@ def search_businesses(api_key: str, filters: dict, size: int = 20) -> list:
     object, bv. {"linkedin_category": {"values": [...]}} voor sector-zoeken
     (dagelijkse prospecting-cron) of
     {"linkedin_similar_companies": {"values": [id]}} voor lookalikes (zie
-    search_lookalike_businesses)."""
+    search_lookalike_businesses). page_size is een verplicht veld bij
+    Explorium (geeft anders een 422 "field required")."""
     data = _request(api_key, "POST", "/v1/businesses", {
         "mode": "full",
         "size": size,
+        "page_size": min(size, 100),
+        "page": 1,
         "filters": filters,
     })
     return data.get("data") or []
@@ -109,10 +112,14 @@ def fetch_prospects(api_key: str, filters: dict, size: int = 20) -> list:
     "include_related_job_titles": True}}. Geeft records met o.a.
     prospect_id/first_name/last_name/full_name/job_title/business_id
     terug - dus i.t.t. match_prospects/enrich_prospect_contacts hoef je
-    voor naam/functie niet nog een aparte aanroep te doen."""
+    voor naam/functie niet nog een aparte aanroep te doen. page_size is
+    een verplicht veld bij Explorium (geeft anders een 422 "field
+    required")."""
     data = _request(api_key, "POST", "/v1/prospects", {
         "mode": "full",
         "size": size,
+        "page_size": min(size, 100),
+        "page": 1,
         "filters": filters,
     })
     return data.get("data") or []

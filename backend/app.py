@@ -3657,6 +3657,97 @@ def api_icp_scores(account: dict = Depends(get_current_account)):
     return database.icp_scores(account["id"])
 
 
+def _fallback_icp_suggestions(icp_data: dict) -> list:
+    """Niet-AI terugvaloptie (geen ANTHROPIC_API_KEY, of de AI-aanroep
+    faalde) - eenvoudige regelgebaseerde adviezen rechtstreeks uit
+    icp_scores(), zelfde soort terugvalpatroon als de vaste 4
+    lead-magnet-varianten bij api_suggest_campaign_variants hierboven."""
+    suggestions = []
+    rec = icp_data.get("recommended_icp")
+    if rec and rec.get("basis") == "combinatie":
+        suggestions.append(
+            f"Focus op sector '{rec['sector']}', persona '{rec['persona']}' en omzetcategorie "
+            f"'{rec['revenue_range']}' - dit is nu je best presterende combinatie "
+            f"(score {rec['score']}/100, reply-rate {round(rec['reply_rate'] * 100, 1)}%, "
+            f"gebaseerd op {rec['emails_sent']} verstuurde mails)."
+        )
+    elif rec and rec.get("basis") == "losse_dimensies":
+        suggestions.append(
+            "Nog geen enkele sector x persona x omzet-combinatie met genoeg data - verstuur meer "
+            "campagnes/sequences naar dezelfde combinatie om een betrouwbaar advies te krijgen."
+        )
+    else:
+        suggestions.append(
+            "Nog onvoldoende verzend- en respons-data om een ICP-advies te geven - verstuur eerst meer "
+            "campagnes of opvolgsequenties."
+        )
+
+    dq = icp_data.get("data_quality") or {}
+    total = dq.get("contacts_total") or 0
+    if total:
+        missing_max = max(
+            dq.get("contacts_missing_sector", 0),
+            dq.get("contacts_missing_persona", 0),
+            dq.get("contacts_missing_revenue_range", 0),
+        )
+        if missing_max / total > 0.2:
+            suggestions.append(
+                f"Vul sector, buyer persona en/of omzetcategorie in bij meer contacten (van de {total} "
+                f"contacten mist dit nu bij een deel) - zonder die gegevens kan de ICP-analyse minder "
+                f"combinaties meenemen."
+            )
+    return suggestions
+
+
+def _generate_and_save_icp_suggestions(account_id: int) -> dict:
+    """Gedeeld tussen de handmatige 'Genereer nu'-knop en de wekelijkse
+    cron - berekent icp_scores(), probeert een AI-versie en valt terug op
+    _fallback_icp_suggestions bij geen AI-koppeling of een mislukte
+    aanroep, en slaat het resultaat op (overschrijft de vorige ronde)."""
+    icp_data = database.icp_scores(account_id)
+    source = "template"
+    suggestions = None
+    if ai_client.is_configured():
+        try:
+            suggestions = ai_client.generate_icp_suggestions(icp_data)
+            source = "ai"
+        except Exception as exc:  # noqa: BLE001 - val terug op de template-versie
+            logger.warning("AI-ICP-suggesties genereren mislukt voor account %s: %s", account_id, exc)
+    if not suggestions:
+        suggestions = _fallback_icp_suggestions(icp_data)
+    return database.save_icp_suggestions(account_id, suggestions, source)
+
+
+@app.get("/api/analytics/icp-suggestions")
+def api_get_icp_suggestions(account: dict = Depends(get_current_account)):
+    return {"result": database.get_icp_suggestions(account["id"])}
+
+
+@app.post("/api/analytics/icp-suggestions/generate")
+def api_generate_icp_suggestions_now(account: dict = Depends(get_current_account)):
+    """Handmatige trigger (bv. bij het eerste bezoek, voordat de wekelijkse
+    cron ooit is gedraaid) - zelfde onderliggende logica als de cron."""
+    return {"success": True, "result": _generate_and_save_icp_suggestions(account["id"])}
+
+
+@app.post("/api/cron/process-icp-suggestions", dependencies=[Depends(require_admin_secret)])
+def api_process_icp_suggestions():
+    """Wekelijkse, automatisch gegenereerde ICP-verbetervoorstellen
+    (crm-roadmap.md) - zelfde beveiligings-/foutisolatiepatroon als de
+    andere cron-endpoints. accounts_needing_icp_suggestions() is
+    idempotent per periode (standaard 7 dagen), dus vaker draaien dan
+    nodig is onschadelijk."""
+    processed, errors = 0, 0
+    for account_id in database.accounts_needing_icp_suggestions():
+        try:
+            _generate_and_save_icp_suggestions(account_id)
+            processed += 1
+        except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
+            logger.warning("ICP-suggesties genereren mislukt voor account %s: %s", account_id, exc)
+            errors += 1
+    return {"success": True, "processed": processed, "errors": errors}
+
+
 # ---------------------------------------------------------------------------
 # Tracking (public endpoints, hit by email clients / the lead-magnet page -
 # deliberately NOT behind auth, since anonymous recipients trigger these)

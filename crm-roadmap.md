@@ -758,3 +758,20 @@ search, lookalikes en foutafhandeling werken allemaal correct tegen een
 echte key) - "Contactpersonen zoeken" (fetch_prospects) kon niet meer
 getest worden bij gebrek aan tegoed, dat staat open tot er weer
 Explorium-credits zijn.
+
+## Gebouwd (15 sept. 2026): periodieke ICP-verbetervoorstellen
+
+Nieuw blok "Verbetervoorstellen" op Analytics, direct onder de bestaande
+ICP-analyse: 3-5 concrete, geprioriteerde adviezen op basis van
+`icp_scores()` (welke sector/persona/omzet-combinatie het beste
+presteert, en waar data ontbreekt). Met AI (`ANTHROPIC_API_KEY`
+geconfigureerd) via een nieuwe `ai_client.generate_icp_suggestions()`;
+zonder AI-koppeling een eenvoudige regelgebaseerde terugvaloptie
+(`_fallback_icp_suggestions` in app.py), zelfde patroon als de bestaande
+AI-features in dit platform.
+
+Wekelijkse automatische cron (`POST /api/cron/process-icp-suggestions`,
+idempotent per 7 dagen via `accounts_needing_icp_suggestions()`), plus een
+handmatige "Nu genereren"-knop voor direct resultaat zonder op de eerste
+cron-run te hoeven wachten. Eén rij per account (`icp_suggestions`-tabel)
+- elke ronde overschrijft de vorige, geen geschiedenis bijgehouden.

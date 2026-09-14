@@ -391,3 +391,73 @@ def generate_outreach_emails(persona: str, goal: str, stage: str, tone: str,
     if not cleaned_emails:
         raise ValueError("Claude gaf geen e-mail terug met de verwachte velden")
     return cleaned_emails
+
+
+def _icp_summary_text(icp_data: dict) -> str:
+    parts = []
+    rec = icp_data.get("recommended_icp")
+    if rec and rec.get("basis") == "combinatie":
+        parts.append(
+            f"Best presterende combinatie: sector '{rec.get('sector')}', persona '{rec.get('persona')}', "
+            f"omzetcategorie '{rec.get('revenue_range')}' - score {rec.get('score')}/100 "
+            f"(reply-rate {round((rec.get('reply_rate') or 0) * 100, 1)}%, "
+            f"gebaseerd op {rec.get('emails_sent')} verstuurde mails)."
+        )
+    elif rec:
+        parts.append(f"Nog geen combinatie met genoeg data - sterkste losse signalen: {rec}")
+    else:
+        parts.append("Nog geen enkele dimensie met genoeg data (minimaal 3 verstuurde mails) om iets op te baseren.")
+
+    combos = icp_data.get("combinations") or []
+    sufficient = [c for c in combos if c.get("sufficient_data")][:3]
+    if sufficient:
+        parts.append("Top combinaties met genoeg data:\n" + "\n".join(
+            f"- {c['sector']} / {c['persona']} / {c['revenue_range']}: score {c['score']}, "
+            f"reply-rate {round(c['reply_rate'] * 100, 1)}%, {c['emails_sent']} verstuurd"
+            for c in sufficient
+        ))
+
+    dq = icp_data.get("data_quality") or {}
+    total = dq.get("contacts_total") or 0
+    if total:
+        parts.append(
+            f"Data-kwaliteit: van {total} contacten mist {dq.get('contacts_missing_sector', 0)} een sector, "
+            f"{dq.get('contacts_missing_persona', 0)} een buyer persona, "
+            f"{dq.get('contacts_missing_revenue_range', 0)} een omzetcategorie."
+        )
+    return "\n\n".join(parts)
+
+
+def generate_icp_suggestions(icp_data: dict) -> list:
+    """Periodieke, automatisch gegenereerde verbetervoorstellen o.b.v. de
+    ICP-analyse (crm-roadmap.md, Support > "Binnenkort beschikbaar" - nu
+    gebouwd). icp_data is de dict die database.icp_scores() teruggeeft.
+    Geeft 3-5 concrete, prioriteit-gesorteerde suggesties terug in het
+    Nederlands. Roept dezelfde soort AI-call aan als
+    generate_profile_questions/generate_variant_suggestions hierboven -
+    zie app.py voor de niet-AI-terugvaloptie als ANTHROPIC_API_KEY
+    ontbreekt of deze aanroep faalt."""
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    system = (
+        "Je bent een sales-analist die een B2B-team helpt hun outreach te verbeteren op basis van hun "
+        "eigen ICP-analyse (welke combinatie van sector/buyer persona/omzetcategorie de beste open-, "
+        "klik- en reply-cijfers heeft). Geef 3 tot 5 korte, concrete, direct uitvoerbare adviezen, "
+        "geprioriteerd op impact - bijvoorbeeld: meer targeten op de best presterende combinatie, een "
+        "slecht presterende sector/persona heroverwegen, of ontbrekende data (sector/persona/omzet) bij "
+        "contacten aanvullen als dat de analyse onbetrouwbaar maakt. Wees specifiek met de cijfers die "
+        "je krijgt, geen algemene sales-adviezen. Schrijf in het Nederlands. Geef ALLEEN de adviezen "
+        "terug, één per regel, elk beginnend met '- ', zonder inleiding, nummering of afsluiting."
+    )
+    message = client.messages.create(
+        model=_MODEL,
+        max_tokens=500,
+        system=system,
+        messages=[{"role": "user", "content": _icp_summary_text(icp_data)}],
+    )
+    lines = _text_of(message).splitlines()
+    suggestions = [line.strip().lstrip("-").strip() for line in lines if line.strip().lstrip("-").strip()]
+    if not suggestions:
+        raise ValueError("Claude gaf geen bruikbare suggesties terug")
+    return suggestions[:5]

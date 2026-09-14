@@ -201,6 +201,20 @@ CREATE TABLE IF NOT EXISTS account_profiles (
     updated_at TEXT NOT NULL
 );
 
+-- Periodieke, automatisch gegenereerde verbetervoorstellen o.b.v. de
+-- ICP-analyse (crm-roadmap.md, Support > "Binnenkort beschikbaar" - nu
+-- gebouwd). Eén rij per account (net als account_profiles hierboven) -
+-- elke ronde overschrijft de vorige, geen geschiedenis nodig. suggestions
+-- is een JSON-array van strings (i.t.t. de "één per regel"-tekstvelden
+-- elders in dit bestand, omdat een suggestie zelf een komma of nieuwe
+-- gedachte kan bevatten en JSON dat ondubbelzinnig scheidt).
+CREATE TABLE IF NOT EXISTS icp_suggestions (
+    account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
+    suggestions TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'template',
+    generated_at TEXT NOT NULL
+);
+
 -- Eén AI-verdiepingsronde (bewust geen doorlopend chatgesprek, zie
 -- crm-roadmap.md Fase 3-scope-beslissing): bij het genereren van
 -- verdiepende vragen slaat dit een klein aantal gerichte vervolgvragen op;
@@ -3108,6 +3122,10 @@ DEFAULT_KB_ARTICLES = [
      "Op het Replies-tabblad worden binnengekomen reacties automatisch gecategoriseerd (bezwaar-type) en "
      "krijgt elke reply een AI-conceptantwoord dat je kunt goedkeuren voordat het verstuurd wordt - of "
      "automatisch laten versturen zonder handmatige goedkeuring, instelbaar op datzelfde tabblad."),
+    ("AI & Bedrijfsprofiel", "Wat zijn de ICP-verbetervoorstellen bij Analytics?",
+     "Onder de ICP-analyse op het Analytics-tabblad staan 3-5 automatisch gegenereerde, concrete adviezen "
+     "op basis van je open-/klik-/reply-cijfers per sector/persona/omzetcategorie - elke week vanzelf "
+     "vernieuwd, of direct opnieuw te genereren via 'Nu genereren'."),
 
     ("Integraties", "Hoe koppel ik HubSpot om bestaande klanten uit te sluiten?",
      "Maak een private app aan in je eigen HubSpot (Instellingen > Integraties > Private apps) met "
@@ -3739,6 +3757,58 @@ def icp_scores(account_id: int) -> dict:
             "min_sample_size": ICP_MIN_SAMPLE,
         },
     }
+
+
+ICP_SUGGESTIONS_REFRESH_DAYS = 7
+
+
+def get_icp_suggestions(account_id: int) -> dict:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM icp_suggestions WHERE account_id = ?", (account_id,)).fetchone()
+        if not row:
+            return None
+        return {
+            "suggestions": json.loads(row["suggestions"]),
+            "source": row["source"],
+            "generated_at": row["generated_at"],
+        }
+
+
+def save_icp_suggestions(account_id: int, suggestions: list, source: str) -> dict:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO icp_suggestions (account_id, suggestions, source, generated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (account_id) DO UPDATE SET
+                suggestions = EXCLUDED.suggestions,
+                source = EXCLUDED.source,
+                generated_at = EXCLUDED.generated_at
+            """,
+            (account_id, json.dumps(suggestions), source, now_iso()),
+        )
+    return get_icp_suggestions(account_id)
+
+
+def accounts_needing_icp_suggestions(days: int = ICP_SUGGESTIONS_REFRESH_DAYS) -> list:
+    """Elk account dat nog nooit suggesties kreeg, of waarvan de laatste
+    ronde ouder is dan `days` - idempotent per periode, zelfde patroon als
+    accounts_needing_digest(). Alleen accounts met minstens 1 contact -
+    zonder contacten heeft icp_scores() toch niets om op te scoren."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.id FROM accounts a
+            WHERE EXISTS (SELECT 1 FROM contacts c WHERE c.account_id = a.id)
+              AND NOT EXISTS (
+                  SELECT 1 FROM icp_suggestions s
+                  WHERE s.account_id = a.id AND s.generated_at > ?
+              )
+            """,
+            (cutoff,),
+        ).fetchall()
+        return [r["id"] for r in rows]
 
 
 # ---------------------------------------------------------------------------

@@ -367,6 +367,28 @@ Job, met dit endpoint als **Command**, bijvoorbeeld elk uur, met dezelfde
 `ADMIN_SECRET` bij **Environment**. Voor accounts zonder deze koppeling
 is dit endpoint een no-op.
 
+## Cron: periodieke ICP-verbetervoorstellen
+
+Genereert wekelijks (per account, idempotent per periode) automatisch 3-5
+concrete adviezen op basis van de ICP-analyse (Analytics-tabblad) - met AI
+als `ANTHROPIC_API_KEY` is ingesteld, anders een eenvoudige
+regelgebaseerde terugvaloptie. Zichtbaar op Analytics onder "ICP-analyse"
+→ "Verbetervoorstellen", ook handmatig te vernieuwen via de "Nu
+genereren"-knop daar.
+
+```bash
+curl -X POST https://twikey-platform-backend.onrender.com/api/cron/process-icp-suggestions \
+  -H "X-Admin-Secret: <dezelfde ADMIN_SECRET als hierboven>"
+```
+
+Zelfde opzet als de andere cron-endpoints hierboven: één aanroep verwerkt
+alle accounts die een nieuwe ronde nodig hebben (nog nooit gehad, of de
+vorige ronde is ouder dan 7 dagen), en een fout bij één account stopt de
+rest van de run niet. Richt in als een Render Cron Job, met dit endpoint
+als **Command**, bijvoorbeeld één keer per dag (`0 9 * * *`) - de 7-dagen-
+afkap zorgt er zelf voor dat een account niet vaker dan wekelijks een
+nieuwe ronde krijgt, ook al draait de cron dagelijks.
+
 ## Stap 5 — Eigen domein koppelen (justmeet.tech)
 
 Dit platform draait op zichzelf prima op de Render-URLs

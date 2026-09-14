@@ -1225,10 +1225,6 @@
                     op basis van de open-, klik- en reply-cijfers van al je verzonden mails,
                     om te zien welk klantprofiel het beste past ("ideal customer profile").
                 </p>
-                <p style="font-size:12px; margin-bottom:15px;">
-                    <span style="background:#FFE7C9; color:#B46500; font-weight:700; padding:2px 8px; border-radius:20px;">🚀 Binnenkort</span>
-                    <span style="color:#999;"> periodieke, automatisch gegenereerde verbetervoorstellen op basis van deze data — zie Support &gt; Binnenkort beschikbaar.</span>
-                </p>
                 <div id="icp-recommended"></div>
                 <div id="icp-data-quality" style="color:#999; font-size:12px; margin:10px 0;"></div>
                 <div id="icp-combinations"></div>
@@ -1246,6 +1242,17 @@
                     <h3 style="font-size:14px; margin-bottom:8px;">Per omzetcategorie</h3>
                     <div id="icp-dim-revenue_range"></div>
                 </div>
+            </div>
+
+            <div class="card">
+                <h2><span class="icon">💡</span>Verbetervoorstellen</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Elke week automatisch opnieuw gegenereerd op basis van de ICP-analyse hierboven - concrete,
+                    geprioriteerde adviezen i.p.v. alleen de kale cijfers.
+                </p>
+                <div id="icp-suggestions-meta" style="color:#999; font-size:12px; margin-bottom:10px;"></div>
+                <div id="icp-suggestions-list"></div>
+                <button class="button button-secondary" style="margin-top:12px;" onclick="generateIcpSuggestions()">Nu genereren</button>
             </div>
         </div>
 
@@ -2120,10 +2127,6 @@
                     <span class="status-badge status-warning">Binnenkort</span>
                 </div>
                 <div class="metric-row">
-                    <span class="metric-label">Periodieke, automatisch gegenereerde verbetervoorstellen op basis van de ICP-analyse</span>
-                    <span class="status-badge status-warning">Binnenkort</span>
-                </div>
-                <div class="metric-row">
                     <span class="metric-label">Leads uit Instagram-/LinkedIn-advertenties automatisch importeren (koppeling staat klaar bij Integraties, wacht op goedgekeurde API-toegang bij LinkedIn/Meta)</span>
                     <span class="status-badge status-warning">Binnenkort</span>
                 </div>
@@ -2300,6 +2303,7 @@
             if (tabName === 'analytics') {
                 loadCampaignsList();
                 loadIcpScores();
+                loadIcpSuggestions();
                 loadCampaignsOverview();
             }
             if (tabName === 'dashboard') {
@@ -5241,6 +5245,44 @@
                 document.getElementById('icp-dim-revenue_range').innerHTML = icpRowsHtml(data.dimensions.revenue_range, r => r.value);
             } catch (err) {
                 recEl.innerHTML = `<div class="alert alert-warning">ICP-analyse laden mislukt: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function renderIcpSuggestions(result) {
+            const metaEl = document.getElementById('icp-suggestions-meta');
+            const listEl = document.getElementById('icp-suggestions-list');
+            if (!result) {
+                metaEl.textContent = '';
+                listEl.innerHTML = '<p style="color:#666;">Nog geen suggesties gegenereerd - klik hieronder, of wacht op de wekelijkse automatische ronde.</p>';
+                return;
+            }
+            const when = new Date(result.generated_at).toLocaleString('nl-NL');
+            const sourceLabel = result.source === 'ai' ? 'AI-gegenereerd' : 'sjabloon (geen AI-koppeling geconfigureerd)';
+            metaEl.textContent = `Laatst gegenereerd: ${when} · ${sourceLabel}`;
+            listEl.innerHTML = result.suggestions.map(s => `
+                <div class="metric-row">
+                    <span class="metric-label">💡 ${escapeHtml(s)}</span>
+                </div>
+            `).join('');
+        }
+
+        async function loadIcpSuggestions() {
+            try {
+                const data = await apiGet('/api/analytics/icp-suggestions');
+                renderIcpSuggestions(data.result);
+            } catch (err) {
+                document.getElementById('icp-suggestions-list').innerHTML = `<div class="alert alert-warning">Laden mislukt: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        async function generateIcpSuggestions() {
+            const listEl = document.getElementById('icp-suggestions-list');
+            listEl.innerHTML = '<p style="color:#666;">Genereren...</p>';
+            try {
+                const data = await apiPost('/api/analytics/icp-suggestions/generate', {});
+                renderIcpSuggestions(data.result);
+            } catch (err) {
+                listEl.innerHTML = `<div class="alert alert-warning">Genereren mislukt: ${escapeHtml(err.message)}</div>`;
             }
         }
 

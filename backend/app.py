@@ -2127,15 +2127,19 @@ def api_assign_contact(contact_id: int, payload: AssignIn, account: dict = Depen
 # ---------------------------------------------------------------------------
 
 class ReminderIn(BaseModel):
-    contact_id: int
+    contact_id: int | None = None
+    contact_name: str = ""  # nodig als contact_id leeg is - een herinnering moet ergens over gaan
     remind_at: str  # ISO date/datetime
     note: str = ""
 
 
 @app.post("/api/reminders")
 def api_create_reminder(payload: ReminderIn, account: dict = Depends(get_current_account)):
+    if not payload.contact_id and not payload.contact_name.strip():
+        raise HTTPException(status_code=400, detail="Kies een contact of vul een naam in.")
     reminder = database.create_reminder(
-        account["id"], payload.contact_id, payload.remind_at, payload.note, created_by=account.get("user_id")
+        account["id"], payload.contact_id, payload.remind_at, payload.note,
+        created_by=account.get("user_id"), contact_name=payload.contact_name,
     )
     if not reminder:
         raise HTTPException(status_code=404, detail="Contact niet gevonden.")
@@ -3671,6 +3675,27 @@ def api_update_linkedin_template(template_id: int, payload: TemplateUpdateIn, ac
     if not updated:
         raise HTTPException(status_code=404, detail="Template niet gevonden")
     return {"success": True, "template": updated}
+
+
+class LinkedinFollowupSettingsIn(BaseModel):
+    linkedin_followup_reminder_enabled: bool | None = None
+    linkedin_followup_reminder_days: int | None = None
+
+
+@app.get("/api/account/linkedin-followup-settings")
+def api_get_linkedin_followup_settings(account: dict = Depends(get_current_account)):
+    return database.get_linkedin_followup_settings(account["id"])
+
+
+@app.put("/api/account/linkedin-followup-settings")
+def api_update_linkedin_followup_settings(payload: LinkedinFollowupSettingsIn, account: dict = Depends(get_current_account)):
+    if payload.linkedin_followup_reminder_days is not None and payload.linkedin_followup_reminder_days < 1:
+        raise HTTPException(status_code=400, detail="Het aantal dagen moet minstens 1 zijn.")
+    settings = database.update_linkedin_followup_settings(
+        account["id"], linkedin_followup_reminder_enabled=payload.linkedin_followup_reminder_enabled,
+        linkedin_followup_reminder_days=payload.linkedin_followup_reminder_days,
+    )
+    return {"success": True, **settings}
 
 
 class LinkedinLogIn(BaseModel):

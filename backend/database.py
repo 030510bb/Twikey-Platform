@@ -712,6 +712,21 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS send_exclude_holidays_nl INTEGER N
 -- meta_ads_settings eerder in dit schema staan dan sequences.
 ALTER TABLE linkedin_ads_settings ADD COLUMN IF NOT EXISTS auto_enroll_sequence_id INTEGER REFERENCES sequences(id);
 ALTER TABLE meta_ads_settings ADD COLUMN IF NOT EXISTS auto_enroll_sequence_id INTEGER REFERENCES sequences(id);
+
+-- Een herinnering hoeft niet meer per se aan een CRM-contact gekoppeld te
+-- zijn (crm-roadmap.md, "LinkedIn: opvolg-herinnering na geaccepteerd
+-- connectieverzoek") - het LinkedIn-tabblad logt outreach vaak op losse
+-- naam, nog voordat iemand als CRM-contact is toegevoegd. contact_name is
+-- de weergavenaam voor zo'n ongekoppelde herinnering; DROP NOT NULL is
+-- veilig herhaalbaar (geen fout als de kolom al nullable is).
+ALTER TABLE reminders ALTER COLUMN contact_id DROP NOT NULL;
+ALTER TABLE reminders ADD COLUMN IF NOT EXISTS contact_name TEXT NOT NULL DEFAULT '';
+
+-- Automatisch een opvolg-herinnering aanmaken zodra een LinkedIn-
+-- connectieverzoek als geaccepteerd wordt gelogd (log_linkedin_action) -
+-- standaard aan, na 2 dagen, beide instelbaar.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS linkedin_followup_reminder_enabled INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS linkedin_followup_reminder_days INTEGER NOT NULL DEFAULT 2;
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -2007,17 +2022,31 @@ def contact_timeline(contact_id: int, account_id: int):
 # Reminders (agenderen)
 # ---------------------------------------------------------------------------
 
-def create_reminder(account_id: int, contact_id: int, remind_at: str, note: str = "", created_by=None) -> dict:
+def create_reminder(account_id: int, contact_id: int = None, remind_at: str = None, note: str = "",
+                     created_by=None, contact_name: str = "") -> dict:
+    """contact_id is optioneel - een herinnering kan ook op losse naam staan
+    (bv. vanuit het LinkedIn-tabblad, nog voordat iemand als CRM-contact
+    bestaat), zie contact_name. Retourneert None als contact_id is
+    meegegeven maar niet bij dit account hoort, of als zowel contact_id
+    als contact_name ontbreken (een herinnering moet ergens over gaan)."""
+    contact_name = (contact_name or "").strip()
+    if not contact_id and not contact_name:
+        return None
     with get_conn() as conn:
-        owned = conn.execute("SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)).fetchone()
-        if not owned:
-            return None
+        if contact_id:
+            owned = conn.execute("SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)).fetchone()
+            if not owned:
+                return None
         cur = conn.execute(
-            "INSERT INTO reminders (account_id, contact_id, remind_at, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-            (account_id, contact_id, remind_at, note, created_by, now_iso()),
+            """
+            INSERT INTO reminders (account_id, contact_id, contact_name, remind_at, note, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
+            """,
+            (account_id, contact_id, contact_name, remind_at, note, created_by, now_iso()),
         )
         reminder_id = cur.fetchone()["id"]
-        log_contact_activity(account_id, contact_id, "reminder_set", f"Herinnering gezet voor {remind_at}" + (f": {note}" if note else ""), _conn=conn)
+        if contact_id:
+            log_contact_activity(account_id, contact_id, "reminder_set", f"Herinnering gezet voor {remind_at}" + (f": {note}" if note else ""), _conn=conn)
         row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
         return dict(row)
 
@@ -2026,7 +2055,7 @@ def list_reminders(account_id: int, only_due: bool = False, only_open: bool = Tr
     with get_conn() as conn:
         sql = """
             SELECT r.*, c.first_name, c.last_name, c.email, c.company
-            FROM reminders r JOIN contacts c ON c.id = r.contact_id
+            FROM reminders r LEFT JOIN contacts c ON c.id = r.contact_id
             WHERE r.account_id = ?
         """
         params = [account_id]
@@ -3527,8 +3556,41 @@ def update_linkedin_template(template_id: int, account_id: int, body: str) -> di
         return dict(row) if row else None
 
 
+def get_linkedin_followup_settings(account_id: int) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT linkedin_followup_reminder_enabled, linkedin_followup_reminder_days FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+        return {
+            "linkedin_followup_reminder_enabled": bool(row["linkedin_followup_reminder_enabled"]),
+            "linkedin_followup_reminder_days": row["linkedin_followup_reminder_days"],
+        }
+
+
+def update_linkedin_followup_settings(account_id: int, linkedin_followup_reminder_enabled: bool = None,
+                                       linkedin_followup_reminder_days: int = None) -> dict:
+    fields, params = [], []
+    if linkedin_followup_reminder_enabled is not None:
+        fields.append("linkedin_followup_reminder_enabled = ?")
+        params.append(1 if linkedin_followup_reminder_enabled else 0)
+    if linkedin_followup_reminder_days is not None:
+        fields.append("linkedin_followup_reminder_days = ?")
+        params.append(linkedin_followup_reminder_days)
+    if fields:
+        params.append(account_id)
+        with get_conn() as conn:
+            conn.execute(f"UPDATE accounts SET {', '.join(fields)} WHERE id = ?", params)
+    return get_linkedin_followup_settings(account_id)
+
+
 def log_linkedin_action(account_id: int, contact_name: str, action: str, template_label: str = "", note: str = "", contact_id=None) -> dict:
-    """action: one of 'connection_sent', 'connection_accepted', 'message_sent', 'reply_received'."""
+    """action: one of 'connection_sent', 'connection_accepted', 'message_sent', 'reply_received'.
+    Bij 'connection_accepted' wordt - als de instelling aanstaat (standaard
+    aan, zie get_linkedin_followup_settings) - automatisch een opvolg-
+    herinnering aangemaakt na het ingestelde aantal dagen, gekoppeld aan
+    het CRM-contact als dat is meegegeven, anders op losse naam (zie
+    create_reminder's contact_name)."""
     with get_conn() as conn:
         cur = conn.execute(
             """
@@ -3539,7 +3601,21 @@ def log_linkedin_action(account_id: int, contact_name: str, action: str, templat
         )
         new_id = cur.fetchone()["id"]
         row = conn.execute("SELECT * FROM linkedin_outreach WHERE id = ?", (new_id,)).fetchone()
-        return dict(row)
+        entry = dict(row)
+
+    reminder_created = False
+    if action == "connection_accepted":
+        settings = get_linkedin_followup_settings(account_id)
+        if settings["linkedin_followup_reminder_enabled"]:
+            remind_at = (datetime.now(timezone.utc) + timedelta(days=settings["linkedin_followup_reminder_days"])).isoformat()
+            reminder = create_reminder(
+                account_id, contact_id=contact_id, remind_at=remind_at,
+                note="Opvolgen na geaccepteerd LinkedIn-connectieverzoek",
+                contact_name=contact_name,
+            )
+            reminder_created = bool(reminder)
+    entry["reminder_created"] = reminder_created
+    return entry
 
 
 def list_linkedin_log(account_id: int, limit: int = 50) -> list:

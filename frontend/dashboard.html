@@ -893,6 +893,21 @@
                     <label>Notitie (optioneel):</label>
                     <input type="text" id="li-note" placeholder="korte notitie">
                 </div>
+                <div class="input-group">
+                    <label>Koppel aan CRM-contact (optioneel)</label>
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="li-contact-search" placeholder="zoek op naam of e-mail" style="flex:1;">
+                        <button type="button" class="button button-secondary" onclick="searchLinkedinContactMatch()">Zoeken</button>
+                    </div>
+                    <select id="li-contact-match" style="margin-top:6px;">
+                        <option value="">Geen koppeling</option>
+                    </select>
+                    <p style="color:#999; font-size:12px; margin-top:4px;">
+                        Optioneel - nodig voor een automatische opvolg-herinnering na "Connectieverzoek geaccepteerd"
+                        (zie Integraties → LinkedIn-opvolging). Zonder koppeling wordt de herinnering op de
+                        ingetypte naam gezet, zonder link naar een CRM-contact.
+                    </p>
+                </div>
                 <button class="button button-primary" onclick="logLinkedinAction()">Actie loggen</button>
             </div>
 
@@ -1648,6 +1663,26 @@
             </div>
 
             <div class="card">
+                <h2><span class="icon">🔗</span>LinkedIn-opvolging</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Zet automatisch een herinnering klaar (Contacten-tabblad) om op te volgen zodra je bij het
+                    LinkedIn-tabblad een connectieverzoek als "geaccepteerd" logt.
+                </p>
+                <div id="linkedinfollowup-alert"></div>
+                <div class="input-group" style="margin-bottom: 14px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="linkedinfollowup-enabled" style="width:auto;" checked>
+                        Automatisch een opvolg-herinnering aanmaken
+                    </label>
+                </div>
+                <div class="input-group" style="max-width:220px;">
+                    <label>Aantal dagen na acceptatie</label>
+                    <input type="number" id="linkedinfollowup-days" value="2" min="1">
+                </div>
+                <button class="button button-primary" style="margin-top:10px;" onclick="saveLinkedinFollowupSettings()">Opslaan</button>
+            </div>
+
+            <div class="card">
                 <h2><span class="icon">🧭</span>Vibe Prospecting / Explorium</h2>
                 <p style="color:#666; margin-bottom: 15px;">
                     Koppel je eigen Explorium-account om hieronder nieuwe leads en
@@ -2249,6 +2284,7 @@
                 loadSendingSettings();
                 loadFlowMonitorSettings();
                 loadEnrollmentCooldownSettings();
+                loadLinkedinFollowupSettings();
                 loadSendScheduleSettings();
             }
             if (tabName === 'contacts') {
@@ -2882,6 +2918,33 @@
                 contactsAlert('enrollmentcooldown-alert', '✓ Opgeslagen.', 'success');
             } catch (err) {
                 contactsAlert('enrollmentcooldown-alert', `Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function loadLinkedinFollowupSettings() {
+            try {
+                const data = await apiGet('/api/account/linkedin-followup-settings');
+                document.getElementById('linkedinfollowup-enabled').checked = !!data.linkedin_followup_reminder_enabled;
+                document.getElementById('linkedinfollowup-days').value = data.linkedin_followup_reminder_days || 2;
+            } catch (err) {
+                contactsAlert('linkedinfollowup-alert', `Kon instellingen niet laden: ${err.message}`, 'warning');
+            }
+        }
+
+        async function saveLinkedinFollowupSettings() {
+            const days = parseInt(document.getElementById('linkedinfollowup-days').value, 10);
+            if (!days || days < 1) {
+                contactsAlert('linkedinfollowup-alert', 'Vul een geldig aantal dagen in (minstens 1).', 'warning');
+                return;
+            }
+            try {
+                await apiPut('/api/account/linkedin-followup-settings', {
+                    linkedin_followup_reminder_enabled: document.getElementById('linkedinfollowup-enabled').checked,
+                    linkedin_followup_reminder_days: days,
+                });
+                contactsAlert('linkedinfollowup-alert', '✓ Opgeslagen.', 'success');
+            } catch (err) {
+                contactsAlert('linkedinfollowup-alert', `Opslaan mislukt: ${err.message}`, 'warning');
             }
         }
 
@@ -4240,14 +4303,19 @@
                     tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">Geen openstaande herinneringen.</td></tr>';
                     return;
                 }
-                tbody.innerHTML = data.reminders.map(r => `
+                tbody.innerHTML = data.reminders.map(r => {
+                    const who = r.contact_id
+                        ? `${escapeHtml(r.first_name)} ${escapeHtml(r.last_name)} <span style="color:#666; font-size:12px;">(${escapeHtml(r.email)})</span>`
+                        : `${escapeHtml(r.contact_name || 'Onbekend')} <span style="color:#999; font-size:12px;">(geen CRM-koppeling)</span>`;
+                    return `
                     <tr>
                         <td>${new Date(r.remind_at).toLocaleDateString('nl-NL')}</td>
-                        <td>${r.first_name} ${r.last_name} <span style="color:#666; font-size:12px;">(${r.email})</span></td>
-                        <td>${r.note || ''}</td>
+                        <td>${who}</td>
+                        <td>${escapeHtml(r.note || '')}</td>
                         <td><button class="button button-secondary" style="margin:0; font-size:12px; padding:4px 8px;" onclick="completeReminder(${r.id})">Afgehandeld</button></td>
                     </tr>
-                `).join('');
+                `;
+                }).join('');
             } catch (err) {
                 contactsAlert('reminders-alert', `Kon herinneringen niet laden: ${err.message}`, 'warning');
             }
@@ -5255,24 +5323,46 @@
             }
         }
 
+        async function searchLinkedinContactMatch() {
+            const q = document.getElementById('li-contact-search').value.trim();
+            const select = document.getElementById('li-contact-match');
+            if (!q) { select.innerHTML = '<option value="">Geen koppeling</option>'; return; }
+            try {
+                const data = await apiGet(`/api/contacts?q=${encodeURIComponent(q)}`);
+                const contacts = data.contacts || [];
+                select.innerHTML = '<option value="">Geen koppeling</option>' +
+                    contacts.map(c => `<option value="${c.id}">${escapeHtml(c.first_name)} ${escapeHtml(c.last_name)} (${escapeHtml(c.email)})</option>`).join('');
+                if (!contacts.length) { select.innerHTML = '<option value="">Geen match gevonden</option>'; }
+            } catch (err) {
+                select.innerHTML = '<option value="">Zoeken mislukt</option>';
+            }
+        }
+
         async function logLinkedinAction() {
             const contactName = document.getElementById('li-contact-name').value.trim();
             const action = document.getElementById('li-action').value;
             const templateLabel = document.getElementById('li-template-used').value;
             const note = document.getElementById('li-note').value.trim();
+            const contactMatchId = document.getElementById('li-contact-match').value;
             if (!contactName) {
                 alert('Vul een naam in.');
                 return;
             }
             try {
-                await apiPost('/api/linkedin/log', {
+                const result = await apiPost('/api/linkedin/log', {
                     contact_name: contactName,
                     action,
                     template_label: templateLabel,
                     note,
+                    contact_id: contactMatchId ? parseInt(contactMatchId, 10) : null,
                 });
                 document.getElementById('li-contact-name').value = '';
                 document.getElementById('li-note').value = '';
+                document.getElementById('li-contact-search').value = '';
+                document.getElementById('li-contact-match').innerHTML = '<option value="">Geen koppeling</option>';
+                if (result.entry && result.entry.reminder_created) {
+                    alert('✓ Gelogd. Er is automatisch een opvolg-herinnering aangemaakt (zie Contacten-tabblad).');
+                }
                 loadLinkedinStats();
                 loadLinkedinLog();
             } catch (err) {

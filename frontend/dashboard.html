@@ -1578,6 +1578,16 @@
                         </p>
                     </div>
                 </div>
+                <div class="input-group">
+                    <label>Automatisch inschrijven op sequence</label>
+                    <select id="prospecting-daily-auto-enroll-sequence">
+                        <option value="">Niet automatisch inschrijven (handmatig via Contacten-tabblad)</option>
+                    </select>
+                    <p style="color:#999; font-size:12px; margin-top:4px;">
+                        Elke nieuw geïmporteerde dagelijkse prospect wordt direct ingeschreven op deze sequence.
+                        Respecteert nog steeds de afkoelperiode-instelling hierboven bij Sequence-inschrijving.
+                    </p>
+                </div>
 
                 <div style="margin-top: 10px;">
                     <button class="button button-primary" onclick="saveProspectingSettings()">Opslaan</button>
@@ -2592,6 +2602,8 @@
                     document.getElementById('prospecting-daily-count').value = data.daily_import_count || 10;
                     document.getElementById('prospecting-daily-sector').value = data.daily_import_sector || '';
                     document.getElementById('prospecting-daily-country').value = data.daily_import_country || 'nl';
+                    await loadProspectingAutoEnrollSequenceSelect();
+                    document.getElementById('prospecting-daily-auto-enroll-sequence').value = data.daily_import_auto_enroll_sequence_id || '';
                 } else {
                     statusEl.innerHTML = '<div class="alert alert-warning">Nog niet gekoppeld - zoeken/lookalikes via Vibe Prospecting werkt nog niet.</div>';
                     disconnectBtn.style.display = 'none';
@@ -2601,13 +2613,27 @@
             }
         }
 
+        async function loadProspectingAutoEnrollSequenceSelect() {
+            const select = document.getElementById('prospecting-daily-auto-enroll-sequence');
+            try {
+                const data = await apiGet('/api/sequences');
+                const sequences = data.sequences || [];
+                select.innerHTML = '<option value="">Niet automatisch inschrijven (handmatig via Contacten-tabblad)</option>' +
+                    sequences.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${s.status})</option>`).join('');
+            } catch (err) {
+                select.innerHTML = '<option value="">Kon sequences niet laden</option>';
+            }
+        }
+
         async function saveProspectingSettings() {
             const apiKey = document.getElementById('prospecting-api-key').value.trim();
+            const autoEnrollSequenceId = document.getElementById('prospecting-daily-auto-enroll-sequence').value;
             const payload = {
                 daily_import_enabled: document.getElementById('prospecting-daily-enabled').checked,
                 daily_import_count: parseInt(document.getElementById('prospecting-daily-count').value, 10) || 10,
                 daily_import_sector: document.getElementById('prospecting-daily-sector').value.trim(),
                 daily_import_country: document.getElementById('prospecting-daily-country').value.trim() || 'nl',
+                daily_import_auto_enroll_sequence_id: autoEnrollSequenceId ? parseInt(autoEnrollSequenceId, 10) : null,
             };
             if (apiKey) { payload.api_key = apiKey; }
             try {

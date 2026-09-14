@@ -2041,6 +2041,7 @@ class ProspectingSettingsIn(BaseModel):
     daily_import_count: int = 10
     daily_import_sector: str = ''
     daily_import_country: str = 'nl'
+    daily_import_auto_enroll_sequence_id: int | None = None  # None = uit, blijft de bewuste handmatige stap
 
 
 @app.get("/api/integrations/prospecting")
@@ -2054,6 +2055,7 @@ def api_get_prospecting_settings(account: dict = Depends(get_current_account)):
         "daily_import_count": row["daily_import_count"],
         "daily_import_sector": row["daily_import_sector"],
         "daily_import_country": row["daily_import_country"],
+        "daily_import_auto_enroll_sequence_id": row["daily_import_auto_enroll_sequence_id"],
     }
 
 
@@ -2065,6 +2067,7 @@ def api_save_prospecting_settings(payload: ProspectingSettingsIn, account: dict 
             account["id"], api_key_encrypted, payload.daily_import_enabled,
             payload.daily_import_count, payload.daily_import_sector.strip(),
             payload.daily_import_country.strip().lower() or 'nl',
+            payload.daily_import_auto_enroll_sequence_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2327,11 +2330,13 @@ def api_process_prospecting():
     campagne'. Zelfde beveiliging/aanroeppatroon als
     /api/cron/process-sequences, zie DEPLOY.md."""
     accounts_processed, contacts_imported, errors = 0, 0, 0
+    sequence_enrolled, sequence_skipped_cooldown = 0, 0
     for settings_row in database.accounts_with_daily_prospecting_enabled():
         account_id = settings_row["account_id"]
         target = settings_row["daily_import_count"] or 10
         sector = (settings_row["daily_import_sector"] or "").strip()
         country = (settings_row["daily_import_country"] or "nl").strip().lower()
+        auto_enroll_sequence_id = settings_row["daily_import_auto_enroll_sequence_id"]
         try:
             api_key = crypto.decrypt(settings_row["api_key_encrypted"])
             filters = {"country_code": {"values": [country]}}
@@ -2376,12 +2381,21 @@ def api_process_prospecting():
                     )
                     _apply_hubspot_exclusion(account_id, contact)
                     new_count += 1
+                    if auto_enroll_sequence_id:
+                        result = database.enroll_contact(auto_enroll_sequence_id, account_id, contact["id"])
+                        if result["enrollment"]:
+                            sequence_enrolled += 1
+                        elif result["skipped_reason"] == "cooldown":
+                            sequence_skipped_cooldown += 1
             contacts_imported += new_count
             accounts_processed += 1
         except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
             logger.warning("Dagelijkse prospecting mislukt voor account %s: %s", account_id, exc)
             errors += 1
-    return {"success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported, "errors": errors}
+    return {
+        "success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported,
+        "errors": errors, "sequence_enrolled": sequence_enrolled, "sequence_skipped_cooldown": sequence_skipped_cooldown,
+    }
 
 
 # ---------------------------------------------------------------------------

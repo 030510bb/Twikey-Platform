@@ -712,3 +712,26 @@ artikelen te dupliceren of te overschrijven.
 **Staande afspraak vanaf nu**: elke nieuw gebouwde klantfunctionaliteit
 krijgt er een kort KB-artikel bij in `DEFAULT_KB_ARTICLES`, zodat de
 kennisbank niet opnieuw achter de feiten aan raakt.
+
+## Fix (14 sept. 2026): Explorium lookalikes-endpoint was fout, live gevonden
+
+Bij de eerste keer dat een echte Explorium-key een test-zoekopdracht
+draaide (Integraties → Vibe Prospecting → Bedrijf zoeken → Lookalikes
+zoeken), gaf Explorium een 422 terug: `filters.linkedin_similar_companies:
+extra fields not permitted`. De aanname dat lookalikes via een `filters`-
+veld op de generieke `/v1/businesses`-zoekendpoint liepen (zoals
+sector-zoeken) bleek onjuist — Explorium heeft hiervoor een volledig eigen
+enrichment-endpoint: `POST /v1/businesses/lookalikes/enrich`, met
+`{"business_id": "<32-char hex>"}` als body (één ID per aanroep, geen
+lijst/paginering) en een respons met `lookalike_*`-voorvoegsels
+(`lookalike_business_id`/`lookalike_business_name`/`lookalike_website`/
+...) in plaats van de gebruikelijke platte `business_id`/`name`/`domain`-
+velden.
+
+`search_lookalike_businesses()` (`backend/prospecting_client.py`) is
+herschreven naar dit juiste endpoint, en normaliseert de respons terug
+naar `business_id`/`name`/`domain` zodat de rest van de code (en de
+frontend) dit ongewijzigd als een gewoon business-record kan behandelen.
+Reguliere bedrijf-zoekopdrachten (`/v1/businesses/match`,
+`/v1/businesses`) bleken bij dezelfde test wél meteen correct te werken -
+alleen het lookalikes-pad was fout.

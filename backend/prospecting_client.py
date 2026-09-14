@@ -15,7 +15,12 @@ Explorium only ever supported one-prospect-at-a-time, and a "match
 prospects by business_id" call that isn't what that endpoint is for at
 all, see fetch_prospects() below):
   - POST /v1/businesses/match                    - find a business by name/domain, returns a business_id
-  - POST /v1/businesses                          - filter-based business search (sector search, lookalikes)
+  - POST /v1/businesses                          - filter-based business search (sector search)
+  - POST /v1/businesses/lookalikes/enrich         - lookalikes for ONE business_id (NOT a /v1/businesses filter -
+                                                     linkedin_similar_companies as a `filters` field gives a 422
+                                                     "extra fields not permitted", discovered 14 sept 2026 against
+                                                     a real key; this is a dedicated enrichment endpoint with its
+                                                     own lookalike_*-prefixed response shape, normalized below)
   - POST /v1/prospects/match                     - match ONE already-identified person (by email/phone/linkedin/full_name+company)
   - POST /v1/prospects                           - filter-based prospect search (e.g. business_id + job_title) - this is
                                                      the one to use for "find people at this company", not prospects/match
@@ -26,6 +31,8 @@ Every call raises ExploriumError with a readable, Dutch message on any
 non-2xx response so app.py can surface it to the customer instead of a raw
 traceback.
 """
+
+from urllib.parse import urlparse
 
 import requests
 
@@ -71,10 +78,10 @@ def search_businesses(api_key: str, filters: dict, size: int = 20) -> list:
     """Generieke filter-based business search (POST /v1/businesses) -
     filters is een Explorium filter-dict met per veld een {"values": [...]}
     object, bv. {"linkedin_category": {"values": [...]}} voor sector-zoeken
-    (dagelijkse prospecting-cron) of
-    {"linkedin_similar_companies": {"values": [id]}} voor lookalikes (zie
-    search_lookalike_businesses). page_size is een verplicht veld bij
-    Explorium (geeft anders een 422 "field required")."""
+    (dagelijkse prospecting-cron). page_size is een verplicht veld bij
+    Explorium (geeft anders een 422 "field required"). Voor lookalikes NIET
+    hier een filter aan meegeven - dat is een apart endpoint, zie
+    search_lookalike_businesses()."""
     data = _request(api_key, "POST", "/v1/businesses", {
         "mode": "full",
         "size": size,
@@ -86,8 +93,31 @@ def search_businesses(api_key: str, filters: dict, size: int = 20) -> list:
 
 
 def search_lookalike_businesses(api_key: str, business_id: str, size: int = 20) -> list:
-    """Lookalikes (crm-roadmap.md punt 3)."""
-    return search_businesses(api_key, {"linkedin_similar_companies": {"values": [business_id]}}, size)
+    """Lookalikes (crm-roadmap.md punt 3) - POST /v1/businesses/lookalikes/enrich,
+    een losse enrichment-call per business_id (geen `size`/paginering op
+    Explorium's kant; levert doorgaans een handvol resultaten per aanroep).
+    `size` knipt het resultaat aan onze kant af zodat de caller niet meer
+    terugkrijgt dan gevraagd. Explorium's respons gebruikt lookalike_*-
+    voorvoegsels (lookalike_business_id/lookalike_business_name/
+    lookalike_website) - genormaliseerd naar business_id/name/domain zodat
+    de rest van de codebase (en de frontend) dit als een gewoon
+    business-record kan behandelen, net als search_businesses()."""
+    data = _request(api_key, "POST", "/v1/businesses/lookalikes/enrich", {"business_id": business_id})
+    results = data.get("data") or []
+    businesses = []
+    for r in results[:size]:
+        website = r.get("lookalike_website") or ""
+        domain = urlparse(website).netloc or website
+        businesses.append({
+            "business_id": r.get("lookalike_business_id"),
+            "name": r.get("lookalike_business_name"),
+            "domain": domain,
+            "number_of_employees_range": r.get("lookalike_number_of_employees_range"),
+            "revenue_range": r.get("lookalike_revenue_range"),
+            "country": r.get("lookalike_country_location"),
+            "similarity_score": r.get("similarity_score"),
+        })
+    return businesses
 
 
 def match_prospects(api_key: str, prospects: list) -> list:

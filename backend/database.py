@@ -2997,30 +2997,156 @@ DEFAULT_KB_ARTICLES = [
     ("Aan de slag", "Hoe verstuur ik mijn eerste campagne?",
      "Voeg eerst contacten toe, ga dan naar het tabblad Campagnes, maak een nieuwe campagne aan en klik op "
      "'Versturen'. Je kunt de resultaten (geopend/geklikt) volgen op het campagne-overzicht."),
+
     ("Mail", "Kan ik mailen vanuit mijn eigen domein?",
      "Ja - ga naar Integraties > Mail-instellingen en vul de SMTP-gegevens van je eigen mailaccount in. "
      "Zonder eigen instellingen wordt het gedeelde afzenderadres van het platform gebruikt."),
     ("Mail", "Waarom komen replies niet binnen?",
      "Reply-tracking heeft naast verzendgegevens (SMTP) ook IMAP-gegevens nodig, zodat het platform je "
-     "inbox mag uitlezen. Vul beide in bij Integraties > Mail-instellingen."),
+     "inbox mag uitlezen. Vul beide in bij Integraties > Mail-instellingen, en zorg dat IMAP aanstaat bij "
+     "je mailprovider zelf. Dit moet de mailbox zijn waar replies ook echt binnenkomen - dus dezelfde "
+     "inbox als het afzenderadres waarmee je verstuurt."),
+    ("Mail", "Kan elk teamlid vanaf zijn eigen adres versturen?",
+     "Ja - elk teamlid stelt zijn eigen afzenderadres in bij Team > 'Mijn eigen afzenderadres'. Automatische "
+     "mails aan een contact gaan dan vanaf het adres van de toegewezen accountmanager van dat contact; "
+     "handmatige verzendingen gaan altijd vanaf het adres van wie er zelf op verstuur klikt. Zonder eigen "
+     "adres wordt teruggevallen op het account-brede adres (Mail-instellingen), en anders op het gedeelde "
+     "platformadres."),
+    ("Mail", "Kan ik een dagelijkse verzendlimiet instellen?",
+     "Ja - bij Integraties > Verzendinstellingen zet je een limiet aan (handig bij het opwarmen van een "
+     "nieuw domein). Mails die boven de limiet uitkomen blijven in een wachtrij staan en worden de "
+     "volgende dagen automatisch verder verstuurd."),
+    ("Mail", "Op welke dagen worden automatische mails verstuurd?",
+     "Standaard doordeweeks (ma-vr) tussen 08:00-09:30, met Nederlandse feestdagen automatisch uitgesloten. "
+     "Instelbaar bij Integraties > Verzenddagen. Geldt alleen voor automatische verzending (sequences/"
+     "campagne-wachtrij) - een handmatige 'Campagne lanceren'-klik wacht niet op dit venster."),
+    ("Mail", "Krijg ik een dagelijkse samenvatting van de activiteit?",
+     "Ja, optioneel - zet 'Dagelijkse samenvatting-mail' aan bij Integraties > Verzendinstellingen. Alle "
+     "teamleden op het account ontvangen dan een overzicht van verstuurd/geopend/geklikt/replies van de "
+     "afgelopen 24 uur."),
+    ("Mail", "Wordt er automatisch een afmeldlink toegevoegd aan mails?",
+     "Ja, standaard aan - onderaan elke automatische mail staat een afmeldlink. Uit te zetten bij "
+     "Integraties > Verzendinstellingen als je dat liever niet hebt."),
+
     ("CRM", "Hoe voorkom ik dat bestaande klanten worden benaderd?",
      "Gebruik de uitsluitlijst in Integraties: markeer een contact handmatig als 'klant' of 'offerte loopt', "
      "upload een CSV met te vermijden bedrijven, of koppel HubSpot voor een live-check."),
     ("CRM", "Wat is het verschil tussen 'uitgesloten' en 'niet meer benaderen'?",
      "'Uitgesloten' komt van de uitsluitlijst (klant/offerte) en kan automatisch worden opgeheven als die "
      "status wijzigt. 'Niet meer benaderen' is een expliciete, blijvende stop die je zelf per contact zet."),
+    ("CRM", "Hoe stel ik een herinnering in om een contact op te volgen?",
+     "Klik bij een contact op 'Herinnering instellen' en kies een datum - deze verschijnt dan op de "
+     "'Aandacht nodig'-kaart op het Dashboard zodra hij vervalt. Een herinnering hoeft niet per se aan een "
+     "bestaand CRM-contact gekoppeld te zijn (bv. vanuit het LinkedIn-tabblad op losse naam gezet)."),
+    ("CRM", "Kan ik contacten aan een teamlid toewijzen?",
+     "Ja - stel 'Toegewezen aan' in per contact (Contacten-tabblad). Dit bepaalt onder andere vanaf welk "
+     "adres automatische mails aan dat contact verstuurd worden als het teamlid een eigen afzenderadres "
+     "heeft ingesteld."),
+    ("CRM", "Hoe importeer ik een CSV met contacten?",
+     "Ga naar Integraties > Contacten importeren en upload je bestand. Het platform herkent zelf welke "
+     "kolom bij welk veld hoort (ook bij afwijkende kolomkoppen) en laat je de koppeling controleren "
+     "voordat er iets wordt geïmporteerd."),
+    ("CRM", "Wat zijn buyer persona's en waar stel ik ze in?",
+     "Een buyer persona is een doelgroep-profiel (bv. 'Eigenaar/Directeur', 'Operations Manager') met een "
+     "korte omschrijving van hun pijnpunt/context. In te stellen bij het Profiel-tabblad - hoe specifieker "
+     "de omschrijving, hoe beter de AI-mailsuggesties voor die persona worden."),
+
+    ("Sequences & Campagnes", "Wat is het verschil tussen een sequence en een campagne?",
+     "Een sequence is een doorlopende opvolgflow (meerdere mails over tijd, bv. na X dagen een volgende "
+     "stap) voor contacten die je er zelf op inschrijft. Een campagne is een eenmalige verzending met een "
+     "of meerdere varianten (A/B-test) naar een groep contacten in één keer."),
+    ("Sequences & Campagnes", "Hoe voorkom ik dat een contact dubbel/te vaak in een sequence terechtkomt?",
+     "Standaard aan: een nieuwe inschrijving wordt geblokkeerd zolang een contact al actief in een sequence "
+     "zit, of in de afgelopen 3 maanden ergens is ingeschreven geweest. Instelbaar (aan/uit + het aantal "
+     "maanden) bij Integraties > Sequence-inschrijving."),
+    ("Sequences & Campagnes", "Waarom is een sequence of campagne automatisch gepauzeerd?",
+     "Flow-monitoring (optioneel aan te zetten bij Integraties) pauzeert een flow automatisch zodra de "
+     "reply-rate te lang onder een ingestelde drempel blijft. Gepauzeerde flows staan op het Dashboard "
+     "onder 'Flows die aandacht nodig hebben' en zijn met één klik te hervatten."),
+    ("Sequences & Campagnes", "Waar zie ik welke mails nog gepland staan om verstuurd te worden?",
+     "Op het Dashboard, blok 'Geplande mails' - een telling per periode (vandaag/deze week/later/wachtrij) "
+     "met een uitklapbare lijst per sequence en per campagne."),
+    ("Sequences & Campagnes", "Hoe maak ik een A/B-test met AI-gegenereerde mailvarianten?",
+     "Ga naar A/B Test, kies optioneel een buyer persona, en klik op '✨ AI-suggesties genereren' - dat "
+     "levert nieuwe variant-teksten op basis van je Bedrijfsprofiel. Werkt ook zonder AI-koppeling (dan "
+     "krijg je een sjabloon met je eigen waardepropositie erin)."),
+
+    ("LinkedIn", "Automatiseert het platform LinkedIn-connectieverzoeken of DM's?",
+     "Nee, bewust niet - dat schendt LinkedIn's gebruiksvoorwaarden en kan tot een accountblokkering "
+     "leiden. Het LinkedIn-tabblad is een handmatige tracker: jij logt zelf wat je hebt gedaan, zodat je "
+     "wel een overzicht/geschiedenis hebt."),
+    ("LinkedIn", "Kan ik automatisch herinnerd worden om op te volgen na een geaccepteerd connectieverzoek?",
+     "Ja - log de actie 'Connectieverzoek geaccepteerd' (of 'Reactie ontvangen') op het LinkedIn-tabblad, "
+     "en er wordt automatisch een opvolg-herinnering aangemaakt (standaard na 2 dagen). Instelbaar bij "
+     "Integraties > LinkedIn-opvolging. Koppel de actie aan een CRM-contact voor de beste weergave, maar "
+     "het werkt ook op losse naam."),
+    ("LinkedIn", "Kan ik leads uit LinkedIn- of Instagram-advertenties automatisch importeren?",
+     "Deze koppeling staat klaar bij Integraties, maar vereist eerst goedgekeurde API-toegang bij LinkedIn "
+     "(Lead Sync API) resp. Meta (leads_retrieval via App Review) - dat regel je zelf rechtstreeks bij die "
+     "platforms, dat proces kan enkele weken duren. Zodra je een token hebt, vul je die in en staat de "
+     "import aan."),
+
+    ("Team", "Hoe nodig ik een teamlid uit?",
+     "Ga naar Team > Teamlid uitnodigen, vul e-mailadres, naam, functie en rol in. Je teamlid krijgt een "
+     "mail om zelf een wachtwoord in te stellen."),
+    ("Team", "Wat is het verschil tussen Beheerder en Gebruiker?",
+     "Een Beheerder mag alles. Een Gebruiker ziet en gebruikt alle resultaten (contacten, sequence-"
+     "inschrijving, campagne-ontvangers toevoegen) maar mag geen sequences/campagnes aanmaken, bewerken, "
+     "pauzeren/hervatten of lanceren. In te stellen per teamlid bij Team."),
+    ("Team", "Kan ik mijn eigen naam of functie aanpassen?",
+     "Ja, dat mag elk teamlid zelf, ongeacht rol - klik op 'Bewerken' bij je eigen rij in de teamledenlijst "
+     "(Team-tabblad)."),
+
+    ("AI & Bedrijfsprofiel", "Wat is het Bedrijfsprofiel en waar wordt het voor gebruikt?",
+     "Bij Profiel vul je je waardepropositie, USP's en de grootste problemen in die je voor klanten oplost. "
+     "Dit wordt gebruikt om AI-mailsuggesties en AI-verdiepingsvragen op maat te genereren, in plaats van "
+     "altijd dezelfde vaste teksten."),
+    ("AI & Bedrijfsprofiel", "Wat is de AI-verdiepingsronde bij het Bedrijfsprofiel?",
+     "Een eenmalige set gerichte vervolgvragen (via Claude, werkt ook zonder AI-koppeling met een vaste "
+     "vragenset) om een vage of onvolledige waardepropositie/USP/pijnpunt aan te scherpen."),
+    ("AI & Bedrijfsprofiel", "Hoe werken de AI-conceptantwoorden op replies?",
+     "Op het Replies-tabblad worden binnengekomen reacties automatisch gecategoriseerd (bezwaar-type) en "
+     "krijgt elke reply een AI-conceptantwoord dat je kunt goedkeuren voordat het verstuurd wordt - of "
+     "automatisch laten versturen zonder handmatige goedkeuring, instelbaar op datzelfde tabblad."),
+
+    ("Integraties", "Hoe koppel ik HubSpot om bestaande klanten uit te sluiten?",
+     "Maak een private app aan in je eigen HubSpot (Instellingen > Integraties > Private apps) met "
+     "leesrechten op companies/deals, en plak de access token bij Integraties > HubSpot. Bedrijven die al "
+     "klant zijn of een lopende deal hebben worden dan automatisch uitgesloten bij het toevoegen/"
+     "importeren van contacten."),
+    ("Integraties", "Wat is Vibe Prospecting en hoe importeer ik dagelijks nieuwe leads?",
+     "Vibe Prospecting/Explorium zoekt en verrijkt nieuwe leads op basis van sector/land. Koppel je API-key "
+     "bij Integraties, en zet 'Elke dag automatisch nieuwe contacten importeren' aan om dagelijks een "
+     "vast aantal nieuwe contacten binnen te laten komen - nooit automatisch benaderd, alleen als contact "
+     "toegevoegd."),
+    ("Integraties", "Kan een dagelijkse prospecting-import automatisch op een sequence worden ingeschreven?",
+     "Ja, optioneel - kies bij Integraties > Vibe Prospecting een sequence bij 'Automatisch inschrijven op "
+     "sequence'. Staat standaard uit; de bestaande afkoelperiode-instelling (Sequence-inschrijving) geldt "
+     "hier ook op."),
 ]
 
 
 def _seed_default_kb_articles(conn):
-    existing = conn.execute("SELECT COUNT(*) AS n FROM kb_articles").fetchone()
-    if existing["n"] > 0:
-        return
-    for i, (category, question, answer) in enumerate(DEFAULT_KB_ARTICLES):
+    """Voegt elk artikel uit DEFAULT_KB_ARTICLES toe dat nog niet bestaat
+    (gematcht op question) - idempotent per artikel, i.p.v. het oudere
+    'alleen zaaien als de tabel helemaal leeg is' gedrag. Zo komt een
+    uitbreiding van DEFAULT_KB_ARTICLES in de code (nieuwe functionaliteit
+    krijgt een support-artikel) ook echt aan in een database die al
+    artikelen heeft, zonder bestaande (mogelijk handmatig aangepaste)
+    artikelen te overschrijven."""
+    existing_questions = {
+        row["question"] for row in conn.execute("SELECT question FROM kb_articles").fetchall()
+    }
+    max_sort_order = conn.execute("SELECT COALESCE(MAX(sort_order), -1) AS n FROM kb_articles").fetchone()["n"]
+    next_sort_order = max_sort_order + 1
+    for category, question, answer in DEFAULT_KB_ARTICLES:
+        if question in existing_questions:
+            continue
         conn.execute(
             "INSERT INTO kb_articles (category, question, answer, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
-            (category, question, answer, i, now_iso()),
+            (category, question, answer, next_sort_order, now_iso()),
         )
+        next_sort_order += 1
 
 
 def list_kb_articles(q: str = None) -> list:

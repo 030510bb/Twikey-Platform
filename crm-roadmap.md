@@ -688,3 +688,27 @@ meegegeven aan Claude bij zowel de AI-verdiepingsvragen als de AI-
 mailvariant-suggesties (`ai_client._profile_context`), zodat gegenereerde
 outreach-copy pijnpunt-gedreven kan openen i.p.v. alleen op waardepropositie/
 USP's te leunen.
+
+## Gebouwd (14 sept. 2026): kennisbank uitgebreid voor alle gebouwde functionaliteit
+
+`DEFAULT_KB_ARTICLES` (database.py) is uitgebreid van 6 naar ~30 artikelen,
+met nieuwe categorieën (Sequences & Campagnes, LinkedIn, Team, AI &
+Bedrijfsprofiel, Integraties) die dekken wat er sinds Fase 3c is gebouwd -
+eigen afzenderadres per teamlid, verzenddagen/-limiet, geplande mails,
+sequence-inschrijving/afkoelperiode, flow-monitoring, teamrollen,
+LinkedIn-opvolging, LinkedIn/Meta-advertentieleads, dagelijkse prospecting
++ auto-enroll, HubSpot-uitsluiting, AI-conceptantwoorden, etc.
+
+**Belangrijke bugfix bij dezelfde gelegenheid**: `_seed_default_kb_articles()`
+zaaide voorheen ALLEEN artikelen als de tabel nog volledig leeg was ("if
+existing['n'] > 0: return") - eenmaal live gebruikt was de kennisbank dus
+permanent bevroren op de 6 artikelen waarmee die voor het eerst werd
+opgestart, en een latere uitbreiding van `DEFAULT_KB_ARTICLES` in de code
+zou nooit in de productiedatabase terechtkomen. Nu per-artikel idempotent
+(gematcht op `question`) - elke toekomstige uitbreiding van de lijst komt
+gewoon aan bij de eerstvolgende backend-herstart, zonder bestaande
+artikelen te dupliceren of te overschrijven.
+
+**Staande afspraak vanaf nu**: elke nieuw gebouwde klantfunctionaliteit
+krijgt er een kort KB-artikel bij in `DEFAULT_KB_ARTICLES`, zodat de
+kennisbank niet opnieuw achter de feiten aan raakt.

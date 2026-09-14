@@ -1317,6 +1317,37 @@ def update_contact(contact_id: int, account_id: int, **fields) -> dict:
         return dict(row)
 
 
+def delete_contact(contact_id: int, account_id: int) -> bool:
+    """Verwijdert een contact definitief, inclusief alle gekoppelde data
+    (tags, tijdlijn, herinneringen, campagne-ontvangerschap, sequence-
+    inschrijvingen + -verzendingen, LinkedIn-outreach, binnengekomen
+    replies) - geen van die tabellen heeft ON DELETE CASCADE, dus een
+    contact met geschiedenis zou anders altijd op een foreign-key-fout
+    stuklopen. Onomkeerbaar - de aanroeper (UI) hoort hier expliciet om te
+    laten bevestigen. Returns False als het contact niet bij dit account
+    hoort."""
+    with get_conn() as conn:
+        owned = conn.execute(
+            "SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)
+        ).fetchone()
+        if not owned:
+            return False
+        conn.execute(
+            "DELETE FROM sequence_sends WHERE enrollment_id IN "
+            "(SELECT id FROM sequence_enrollments WHERE contact_id = ?)",
+            (contact_id,),
+        )
+        conn.execute("DELETE FROM sequence_enrollments WHERE contact_id = ?", (contact_id,))
+        conn.execute("DELETE FROM campaign_recipients WHERE contact_id = ?", (contact_id,))
+        conn.execute("DELETE FROM contact_tags WHERE contact_id = ?", (contact_id,))
+        conn.execute("DELETE FROM contact_activity WHERE contact_id = ?", (contact_id,))
+        conn.execute("DELETE FROM reminders WHERE contact_id = ?", (contact_id,))
+        conn.execute("DELETE FROM linkedin_outreach WHERE contact_id = ?", (contact_id,))
+        conn.execute("DELETE FROM incoming_replies WHERE contact_id = ?", (contact_id,))
+        conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
+        return True
+
+
 def count_contacts(account_id: int) -> int:
     with get_conn() as conn:
         row = conn.execute(

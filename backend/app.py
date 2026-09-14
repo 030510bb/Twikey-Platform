@@ -1142,6 +1142,40 @@ def api_update_contact(contact_id: int, payload: ContactUpdateIn, account: dict 
     return {"success": True, "contact": contact}
 
 
+@app.delete("/api/contacts/{contact_id}")
+def api_delete_contact(contact_id: int, account: dict = Depends(get_current_account)):
+    if not database.delete_contact(contact_id, account["id"]):
+        raise HTTPException(status_code=404, detail="Contact niet gevonden.")
+    return {"success": True}
+
+
+class BulkContactIdsIn(BaseModel):
+    contact_ids: list[int]
+
+
+@app.post("/api/contacts/bulk-delete")
+def api_bulk_delete_contacts(payload: BulkContactIdsIn, account: dict = Depends(get_current_account)):
+    deleted = sum(1 for cid in payload.contact_ids if database.delete_contact(cid, account["id"]))
+    return {"success": True, "deleted": deleted, "skipped": len(payload.contact_ids) - deleted}
+
+
+class BulkContactFlagIn(BaseModel):
+    contact_ids: list[int]
+    do_not_contact: bool | None = None
+    is_customer: bool | None = None
+    has_open_quote: bool | None = None
+
+
+@app.post("/api/contacts/bulk-flag")
+def api_bulk_flag_contacts(payload: BulkContactFlagIn, account: dict = Depends(get_current_account)):
+    """Bulk-versie van PATCH /api/contacts/{id} voor de status-vlaggen -
+    exclude_unset zodat alleen de expliciet meegegeven vlag wordt gezet,
+    net als bij de single-contact route."""
+    fields = payload.model_dump(exclude={"contact_ids"}, exclude_unset=True)
+    updated = sum(1 for cid in payload.contact_ids if database.update_contact(cid, account["id"], **fields))
+    return {"success": True, "updated": updated}
+
+
 class BulkContactsIn(BaseModel):
     contacts: list[ContactIn]
 

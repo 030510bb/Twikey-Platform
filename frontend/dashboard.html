@@ -1268,6 +1268,8 @@
                     <span id="contacts-bulk-count"></span>
                     <select id="contacts-bulk-campaign-select" style="max-width:280px;"></select>
                     <button class="button button-primary" onclick="addSelectedContactsToCampaign()">Toevoegen aan campagne</button>
+                    <button class="button button-secondary" onclick="bulkSetDoNotContact()">Niet benaderen</button>
+                    <button class="button button-secondary" style="color:#b91c1c;" onclick="bulkDeleteContacts()">Verwijderen</button>
                 </div>
                 <div style="overflow-x:auto;">
                 <table>
@@ -3359,6 +3361,34 @@
                 loadContacts();
             } catch (err) {
                 contactsAlert('contacts-list-alert', `Toevoegen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function bulkSetDoNotContact() {
+            try {
+                const result = await apiPost('/api/contacts/bulk-flag', {
+                    contact_ids: Array.from(selectedContactIds), do_not_contact: true,
+                });
+                contactsAlert('contacts-list-alert', `✓ ${result.updated} contact(en) op 'niet benaderen' gezet.`, 'success');
+                selectedContactIds.clear();
+                loadContacts();
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function bulkDeleteContacts() {
+            const count = selectedContactIds.size;
+            if (!confirm(`Weet je zeker dat je deze ${count} contact(en) definitief wilt verwijderen? Dit kan niet ongedaan worden gemaakt.`)) {
+                return;
+            }
+            try {
+                const result = await apiPost('/api/contacts/bulk-delete', { contact_ids: Array.from(selectedContactIds) });
+                contactsAlert('contacts-list-alert', `✓ ${result.deleted} contact(en) verwijderd${result.skipped ? ` (${result.skipped} overgeslagen)` : ''}.`, 'success');
+                selectedContactIds.clear();
+                loadContacts();
+            } catch (err) {
+                contactsAlert('contacts-list-alert', `Verwijderen mislukt: ${err.message}`, 'warning');
             }
         }
 

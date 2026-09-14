@@ -1521,6 +1521,27 @@
             </div>
 
             <div class="card">
+                <h2><span class="icon">🔁</span>Sequence-inschrijving</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Voorkomt dat een contact te vaak of dubbel in een sequence terechtkomt. Blokkeert een nieuwe
+                    inschrijving zolang het contact al actief in een sequence zit, of in de ingestelde periode
+                    ergens is ingeschreven geweest - geldt account-breed, over alle sequences heen.
+                </p>
+                <div id="enrollmentcooldown-alert"></div>
+                <div class="input-group" style="margin-bottom: 14px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="enrollmentcooldown-enabled" style="width:auto;" checked>
+                        Dubbele/te frequente inschrijving voorkomen
+                    </label>
+                </div>
+                <div class="input-group" style="max-width:220px;">
+                    <label>Afkoelperiode (maanden)</label>
+                    <input type="number" id="enrollmentcooldown-months" value="3" min="1">
+                </div>
+                <button class="button button-primary" style="margin-top:10px;" onclick="saveEnrollmentCooldownSettings()">Opslaan</button>
+            </div>
+
+            <div class="card">
                 <h2><span class="icon">🧭</span>Vibe Prospecting / Explorium</h2>
                 <p style="color:#666; margin-bottom: 15px;">
                     Koppel je eigen Explorium-account om hieronder nieuwe leads en
@@ -2036,6 +2057,7 @@
                 loadHubspotSettings();
                 loadSendingSettings();
                 loadFlowMonitorSettings();
+                loadEnrollmentCooldownSettings();
             }
             if (tabName === 'contacts') {
                 loadTeammatesForAssignDropdown();
@@ -2519,6 +2541,33 @@
                 contactsAlert('flowmonitor-alert', '✓ Opgeslagen.', 'success');
             } catch (err) {
                 contactsAlert('flowmonitor-alert', `Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function loadEnrollmentCooldownSettings() {
+            try {
+                const data = await apiGet('/api/account/enrollment-cooldown-settings');
+                document.getElementById('enrollmentcooldown-enabled').checked = !!data.enrollment_cooldown_enabled;
+                document.getElementById('enrollmentcooldown-months').value = data.enrollment_cooldown_months || 3;
+            } catch (err) {
+                contactsAlert('enrollmentcooldown-alert', `Kon instellingen niet laden: ${err.message}`, 'warning');
+            }
+        }
+
+        async function saveEnrollmentCooldownSettings() {
+            const months = parseInt(document.getElementById('enrollmentcooldown-months').value, 10);
+            if (!months || months < 1) {
+                contactsAlert('enrollmentcooldown-alert', 'Vul een geldig aantal maanden in (minstens 1).', 'warning');
+                return;
+            }
+            try {
+                await apiPut('/api/account/enrollment-cooldown-settings', {
+                    enrollment_cooldown_enabled: document.getElementById('enrollmentcooldown-enabled').checked,
+                    enrollment_cooldown_months: months,
+                });
+                contactsAlert('enrollmentcooldown-alert', '✓ Opgeslagen.', 'success');
+            } catch (err) {
+                contactsAlert('enrollmentcooldown-alert', `Opslaan mislukt: ${err.message}`, 'warning');
             }
         }
 
@@ -3051,7 +3100,10 @@
             if (!contactIds.length) return;
             try {
                 const data = await apiPost(`/api/sequences/${id}/enroll`, { contact_ids: contactIds });
-                document.getElementById('sequences-alert').innerHTML = `<div class="alert alert-success">${data.enrolled} contact(en) ingeschreven.</div>`;
+                const cooldownNote = data.skipped_cooldown
+                    ? ` (${data.skipped_cooldown} overgeslagen: al actief of te recent in een sequence ingeschreven)`
+                    : '';
+                document.getElementById('sequences-alert').innerHTML = `<div class="alert alert-success">${data.enrolled} contact(en) ingeschreven.${cooldownNote}</div>`;
                 loadSequences();
             } catch (err) {
                 document.getElementById('sequences-alert').innerHTML = `<div class="alert alert-warning">Mislukt: ${err.message}</div>`;
@@ -3497,7 +3549,10 @@
             }
             try {
                 const result = await apiPost(`/api/sequences/${sequenceId}/enroll`, { contact_ids: Array.from(selectedContactIds) });
-                contactsAlert('contacts-list-alert', `✓ ${result.enrolled} contact(en) ingeschreven op de sequence.`, 'success');
+                const cooldownNote = result.skipped_cooldown
+                    ? ` (${result.skipped_cooldown} overgeslagen: al actief of te recent in een sequence ingeschreven)`
+                    : '';
+                contactsAlert('contacts-list-alert', `✓ ${result.enrolled} contact(en) ingeschreven op de sequence.${cooldownNote}`, 'success');
                 selectedContactIds.clear();
                 document.getElementById('contacts-bulk-sequence-select').removeAttribute('data-loaded');
                 loadContacts();

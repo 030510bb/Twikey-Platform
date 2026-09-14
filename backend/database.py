@@ -625,6 +625,16 @@ ALTER TABLE sequences ADD COLUMN IF NOT EXISTS paused_reason TEXT NOT NULL DEFAU
 -- campagne heeft niets meer om te pauzeren.
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS paused INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS paused_reason TEXT NOT NULL DEFAULT '';
+
+-- Voorkomt dat een contact te vaak/dubbel in een sequence terechtkomt:
+-- standaard AAN (Benjamins expliciete keuze), blokkeert een nieuwe
+-- inschrijving zolang het contact al actief in een sequence zit, of in de
+-- afgelopen N maanden ergens is ingeschreven geweest (N instelbaar, zie
+-- get_enrollment_cooldown_settings). Geldt account-breed, over alle
+-- sequences heen - niet alleen "niet dubbel in dezelfde sequence" (dat
+-- voorkwam de bestaande UNIQUE(sequence_id, contact_id) al).
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS enrollment_cooldown_enabled INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS enrollment_cooldown_months INTEGER NOT NULL DEFAULT 3;
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -2422,11 +2432,18 @@ def set_sequence_status(sequence_id: int, account_id: int, status: str, paused_r
         return True
 
 
-def enroll_contact(sequence_id: int, account_id: int, contact_id: int):
+def enroll_contact(sequence_id: int, account_id: int, contact_id: int) -> dict:
     """Enrolls at step 0, due immediately (the next processing tick sends
-    it). Returns None if the sequence/contact doesn't exist for this
-    account; returns the existing enrollment unchanged if already enrolled
-    (idempotent - safe to call again e.g. from a bulk-enroll action)."""
+    it). Always returns {"enrollment": <row or None>, "skipped_reason":
+    None|"not_found"|"cooldown"} - "not_found" if the sequence/contact
+    doesn't exist for this account, "cooldown" if enrollment_cooldown
+    settings block it (see get_enrollment_cooldown_settings: the contact
+    is currently actively enrolled in ANY sequence, or was enrolled in ANY
+    sequence within the configured cooldown window - a deliberate
+    anti-spam safeguard, default on). Re-enrolling into the exact same
+    sequence the contact is already in is idempotent (returns the
+    existing enrollment unchanged, skipped_reason=None) regardless of the
+    cooldown setting, since that's not a "new" enrollment."""
     with get_conn() as conn:
         seq = conn.execute(
             "SELECT 1 FROM sequences WHERE id = ? AND account_id = ?", (sequence_id, account_id)
@@ -2435,13 +2452,28 @@ def enroll_contact(sequence_id: int, account_id: int, contact_id: int):
             "SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)
         ).fetchone()
         if not seq or not contact:
-            return None
+            return {"enrollment": None, "skipped_reason": "not_found"}
         existing = conn.execute(
             "SELECT * FROM sequence_enrollments WHERE sequence_id = ? AND contact_id = ?",
             (sequence_id, contact_id),
         ).fetchone()
         if existing:
-            return dict(existing)
+            return {"enrollment": dict(existing), "skipped_reason": None}
+
+        cooldown = get_enrollment_cooldown_settings(account_id)
+        if cooldown["enrollment_cooldown_enabled"]:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=30 * cooldown["enrollment_cooldown_months"])).isoformat()
+            blocked = conn.execute(
+                """
+                SELECT 1 FROM sequence_enrollments
+                WHERE account_id = ? AND contact_id = ? AND (status = 'active' OR enrolled_at >= ?)
+                LIMIT 1
+                """,
+                (account_id, contact_id, cutoff),
+            ).fetchone()
+            if blocked:
+                return {"enrollment": None, "skipped_reason": "cooldown"}
+
         cur = conn.execute(
             """
             INSERT INTO sequence_enrollments
@@ -2453,30 +2485,38 @@ def enroll_contact(sequence_id: int, account_id: int, contact_id: int):
         )
         enrollment_id = cur.fetchone()["id"]
         row = conn.execute("SELECT * FROM sequence_enrollments WHERE id = ?", (enrollment_id,)).fetchone()
-        return dict(row)
+        return {"enrollment": dict(row), "skipped_reason": None}
 
 
 def auto_enroll_by_persona(account_id: int) -> dict:
     """Fase 3: "automatisch inschrijven o.b.v. persona" - voor elk contact met
-    een buyer persona dat nog nergens actief is ingeschreven, zoekt de actieve
-    sequence die aan diezelfde persona gekoppeld is (sequences.persona_id) en
-    schrijft het contact daarin in. Contacten zonder persona, of met een
-    persona zonder bijpassende actieve sequence, worden overgeslagen (geen
-    generieke fallback-sequence - dat blijft een bewuste, aparte keuze via de
-    bestaande handmatige inschrijf-flow). Idempotent: opnieuw draaien
-    schrijft niemand dubbel in."""
+    een buyer persona dat nog nergens actief is ingeschreven (EN buiten de
+    enrollment-cooldown valt, zie get_enrollment_cooldown_settings), zoekt de
+    actieve sequence die aan diezelfde persona gekoppeld is
+    (sequences.persona_id) en schrijft het contact daarin in. Contacten
+    zonder persona, of met een persona zonder bijpassende actieve sequence,
+    worden overgeslagen (geen generieke fallback-sequence - dat blijft een
+    bewuste, aparte keuze via de bestaande handmatige inschrijf-flow).
+    Idempotent: opnieuw draaien schrijft niemand dubbel in."""
+    cooldown = get_enrollment_cooldown_settings(account_id)
+    cooldown_clause = ""
+    cooldown_params = []
+    if cooldown["enrollment_cooldown_enabled"]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30 * cooldown["enrollment_cooldown_months"])).isoformat()
+        cooldown_clause = " OR se.enrolled_at >= ?"
+        cooldown_params = [cutoff]
     with get_conn() as conn:
         candidates = conn.execute(
-            """
+            f"""
             SELECT c.id AS contact_id, c.persona_id
             FROM contacts c
             WHERE c.account_id = ? AND c.persona_id IS NOT NULL
               AND NOT EXISTS (
                   SELECT 1 FROM sequence_enrollments se
-                  WHERE se.contact_id = c.id AND se.status = 'active'
+                  WHERE se.contact_id = c.id AND (se.status = 'active'{cooldown_clause})
               )
             """,
-            (account_id,),
+            [account_id] + cooldown_params,
         ).fetchall()
         enrolled, skipped_no_sequence = 0, 0
         for row in candidates:
@@ -3663,6 +3703,34 @@ def account_ids_with_flow_monitor_enabled() -> list:
     with get_conn() as conn:
         rows = conn.execute("SELECT id FROM accounts WHERE flow_monitor_enabled = 1").fetchall()
         return [r["id"] for r in rows]
+
+
+def get_enrollment_cooldown_settings(account_id: int) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT enrollment_cooldown_enabled, enrollment_cooldown_months FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+        return {
+            "enrollment_cooldown_enabled": bool(row["enrollment_cooldown_enabled"]),
+            "enrollment_cooldown_months": row["enrollment_cooldown_months"],
+        }
+
+
+def update_enrollment_cooldown_settings(account_id: int, enrollment_cooldown_enabled: bool = None,
+                                         enrollment_cooldown_months: int = None) -> dict:
+    fields, params = [], []
+    if enrollment_cooldown_enabled is not None:
+        fields.append("enrollment_cooldown_enabled = ?")
+        params.append(1 if enrollment_cooldown_enabled else 0)
+    if enrollment_cooldown_months is not None:
+        fields.append("enrollment_cooldown_months = ?")
+        params.append(enrollment_cooldown_months)
+    if fields:
+        params.append(account_id)
+        with get_conn() as conn:
+            conn.execute(f"UPDATE accounts SET {', '.join(fields)} WHERE id = ?", params)
+    return get_enrollment_cooldown_settings(account_id)
 
 
 def sequence_reply_stats(account_id: int) -> list:

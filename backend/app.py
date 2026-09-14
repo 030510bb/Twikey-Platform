@@ -830,6 +830,27 @@ def api_update_flow_monitor_settings(payload: FlowMonitorSettingsIn, account: di
     return {"success": True, **settings}
 
 
+class EnrollmentCooldownSettingsIn(BaseModel):
+    enrollment_cooldown_enabled: bool | None = None
+    enrollment_cooldown_months: int | None = None
+
+
+@app.get("/api/account/enrollment-cooldown-settings")
+def api_get_enrollment_cooldown_settings(account: dict = Depends(get_current_account)):
+    return database.get_enrollment_cooldown_settings(account["id"])
+
+
+@app.put("/api/account/enrollment-cooldown-settings")
+def api_update_enrollment_cooldown_settings(payload: EnrollmentCooldownSettingsIn, account: dict = Depends(get_current_account)):
+    if payload.enrollment_cooldown_months is not None and payload.enrollment_cooldown_months < 1:
+        raise HTTPException(status_code=400, detail="Het aantal maanden moet minstens 1 zijn.")
+    settings = database.update_enrollment_cooldown_settings(
+        account["id"], enrollment_cooldown_enabled=payload.enrollment_cooldown_enabled,
+        enrollment_cooldown_months=payload.enrollment_cooldown_months,
+    )
+    return {"success": True, **settings}
+
+
 @app.get("/api/dashboard/attention")
 def api_dashboard_attention(account: dict = Depends(get_current_account)):
     """"Aandacht nodig"-kaart op het Dashboard-tabblad: mislukte
@@ -2628,11 +2649,14 @@ class EnrollIn(BaseModel):
 
 @app.post("/api/sequences/{sequence_id}/enroll")
 def api_enroll_sequence(sequence_id: int, payload: EnrollIn, account: dict = Depends(get_current_account)):
-    enrolled = 0
+    enrolled, skipped_cooldown = 0, 0
     for contact_id in payload.contact_ids:
-        if database.enroll_contact(sequence_id, account["id"], contact_id):
+        result = database.enroll_contact(sequence_id, account["id"], contact_id)
+        if result["enrollment"]:
             enrolled += 1
-    return {"success": True, "enrolled": enrolled}
+        elif result["skipped_reason"] == "cooldown":
+            skipped_cooldown += 1
+    return {"success": True, "enrolled": enrolled, "skipped_cooldown": skipped_cooldown}
 
 
 @app.get("/api/sequences/{sequence_id}/enrollments")

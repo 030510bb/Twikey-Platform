@@ -188,23 +188,35 @@ aanroep) en is bewust idempotent/onschadelijk als je het vaker aanroept dan
 nodig — contacten waarvan de volgende stap nog niet due is, worden gewoon
 overgeslagen.
 
-De makkelijkste manier om dit op Render in te richden is een aparte **Cron
-Job**-service:
+De makkelijkste manier om dit op Render in te richten is een aparte **Cron
+Job**-service. **Let op:** Render's Cron Job-UI heeft geen losse "alleen een
+command, geen repo nodig"-runtime (dat leek eerder wel zo, maar bleek in de
+praktijk niet te bestaan) — je koppelt 'm aan deze GitHub-repo en laat Render
+alleen een klein Python-scriptje draaien, zonder de hele backend-app op te
+starten:
 
 1. In het Render-dashboard: **New +** → **Cron Job**.
-2. Kies **Command** als runtime (geen eigen repo/Dockerfile nodig) en vul als
-   command in:
+2. Koppel de GitHub-repo van dit project (zelfde repo als de backend-service).
+3. **Language**: `Python 3`. **Root Directory**: `backend`.
+4. **Build Command**: `pip install requests`.
+5. **Command**:
    ```bash
-   curl -fsS -X POST https://api.justmeet.tech/api/cron/process-sequences -H "X-Admin-Secret: $ADMIN_SECRET"
+   python3 -c "import os, requests; r = requests.post('https://api.justmeet.tech/api/cron/process-sequences', headers={'X-Admin-Secret': os.environ['ADMIN_SECRET']}); print(r.status_code, r.text)"
    ```
-3. Zet **Schedule** op bijvoorbeeld `*/15 * * * *` (elke 15 minuten) of
+6. Zet **Schedule** op bijvoorbeeld `*/15 * * * *` (elke 15 minuten) of
    `0 * * * *` (elk uur) — kies een interval dat past bij de kortste
    wachttijd die je tussen sequence-stappen gebruikt.
-4. Voeg bij **Environment** dezelfde `ADMIN_SECRET`-waarde toe als bij de
+7. Voeg bij **Environment** dezelfde `ADMIN_SECRET`-waarde toe als bij de
    backend-service (kopieer 'm handmatig over — Render deelt secrets niet
    automatisch tussen services).
-5. Sla op. Render logt elke run; een `{"processed": N}`-achtig antwoord
-   betekent dat de aanroep gelukt is.
+8. Sla op. Render logt elke run; de `print(...)`-regel in de log toont de
+   HTTP-statuscode en het antwoord (een `{"processed": N}`-achtig antwoord
+   betekent dat de aanroep gelukt is).
+
+Elke volgende cron-job hieronder (verzendwachtrij, digest, prospecting,
+flow-monitoring, LinkedIn-/Meta-advertentieleads) volgt exact dezelfde 8
+stappen — alleen de URL in stap 5 en het schema in stap 6 verschillen per
+endpoint.
 
 Elke externe scheduler die op een cron-achtig interval een HTTPS-POST met een
 header kan doen werkt hiervoor (Render Cron Jobs, GitHub Actions met een

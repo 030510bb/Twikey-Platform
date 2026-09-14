@@ -517,19 +517,54 @@ def _decrypted_smtp_settings(account_id: int) -> dict | None:
     }
 
 
-def _send_plain_for_account(account_id: int, to: str, subject: str, body: str):
-    """Send a plain-text email as this account's own mailbox if it has SMTP
-    settings configured, otherwise fall back to the shared SEND_AS_EMAIL
-    Gmail sender - same as it worked before this feature existed."""
-    custom = _decrypted_smtp_settings(account_id)
+def _decrypted_user_smtp_settings(user_id: int) -> dict | None:
+    """Zelfde als _decrypted_smtp_settings hierboven, maar voor het
+    persoonlijke afzenderadres van één teamlid (crm-roadmap.md, "eigen
+    afzenderadres per teamlid") - None als dat teamlid er geen heeft
+    ingesteld."""
+    row = database.get_user_smtp_settings(user_id)
+    if not row:
+        return None
+    return {
+        "host": row["host"],
+        "port": row["port"],
+        "username": row["username"],
+        "password": crypto.decrypt(row["password_encrypted"]),
+        "from_email": row["from_email"],
+        "from_name": row["from_name"],
+        "use_tls": bool(row["use_tls"]),
+    }
+
+
+def _resolve_smtp_settings(account_id: int, sender_user_id: int = None) -> dict | None:
+    """Bepaalt welk afzenderadres een verzending gebruikt, in volgorde:
+    (1) het persoonlijke adres van sender_user_id, als dat teamlid er een
+    heeft ingesteld - voor een automatische sequence-stap/campagne-
+    verzending is dat de toegewezen accountmanager van het contact
+    (contacts.assigned_to), voor een handmatige actie de ingelogde
+    gebruiker zelf; (2) het account-brede adres (smtp_settings); (3) None,
+    waarna de caller terugvalt op de gedeelde SEND_AS_EMAIL-afzender."""
+    if sender_user_id:
+        custom = _decrypted_user_smtp_settings(sender_user_id)
+        if custom:
+            return custom
+    return _decrypted_smtp_settings(account_id)
+
+
+def _send_plain_for_account(account_id: int, to: str, subject: str, body: str, sender_user_id: int = None):
+    """Send a plain-text email as this account's own mailbox (or a specific
+    teamlid's personal one, see _resolve_smtp_settings) if configured,
+    otherwise fall back to the shared SEND_AS_EMAIL Gmail sender - same as
+    it worked before this feature existed."""
+    custom = _resolve_smtp_settings(account_id, sender_user_id)
     if custom:
         smtp_client.send_email(custom, to, subject, body, subtype="plain")
         return {"id": None}
     return send_email(SEND_AS_EMAIL, to, subject, body)
 
 
-def _send_html_for_account(account_id: int, to: str, subject: str, html_body: str):
-    custom = _decrypted_smtp_settings(account_id)
+def _send_html_for_account(account_id: int, to: str, subject: str, html_body: str, sender_user_id: int = None):
+    custom = _resolve_smtp_settings(account_id, sender_user_id)
     if custom:
         smtp_client.send_html_email(custom, to, subject, html_body)
         return
@@ -606,7 +641,9 @@ def api_send_email(payload: SendEmailRequest, account: dict = Depends(get_curren
     """Send an email as this account's own mailbox (if configured via
     POST /api/email-settings) or on behalf of SEND_AS_EMAIL otherwise."""
     try:
-        result = _send_plain_for_account(account["id"], payload.to, payload.subject, payload.message)
+        result = _send_plain_for_account(
+            account["id"], payload.to, payload.subject, payload.message, sender_user_id=account["user_id"],
+        )
     except Exception as exc:  # noqa: BLE001 - surface the real reason to the caller
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"success": True, "message_id": result.get("id")}
@@ -769,6 +806,94 @@ def api_test_imap_settings(payload: EmailSettingsTestIn, account: dict = Depends
     except Exception as exc:  # noqa: BLE001 - surface the real IMAP error to the customer
         raise HTTPException(status_code=400, detail=f"Inloggen op IMAP is mislukt: {exc}") from exc
     return {"success": True, "inbox_message_count": count}
+
+
+# ---------------------------------------------------------------------------
+# Persoonlijk afzenderadres per teamlid (crm-roadmap.md, "eigen
+# afzenderadres per teamlid") - zelfde vorm als de account-brede
+# Mail-instellingen hierboven, maar gekoppeld aan account["user_id"] (het
+# ingelogde teamlid zelf) i.p.v. account["id"]. Send-only, geen IMAP - zie
+# de tabel-docstring bij user_smtp_settings in database.py.
+# ---------------------------------------------------------------------------
+
+class UserEmailSettingsIn(BaseModel):
+    host: str
+    port: int
+    username: str
+    password: str = ""  # blank keeps the currently-saved password unchanged
+    from_email: EmailStr
+    from_name: str = ""
+    use_tls: bool = True
+
+
+class UserEmailSettingsTestIn(UserEmailSettingsIn):
+    test_to: EmailStr | None = None  # defaults to the logged-in user's own email
+
+
+@app.get("/api/user/email-settings")
+def api_get_user_email_settings(account: dict = Depends(get_current_account)):
+    row = database.get_user_smtp_settings(account["user_id"])
+    if not row:
+        return {"configured": False}
+    return {
+        "configured": True,
+        "host": row["host"],
+        "port": row["port"],
+        "username": row["username"],
+        "from_email": row["from_email"],
+        "from_name": row["from_name"],
+        "use_tls": bool(row["use_tls"]),
+    }
+
+
+@app.post("/api/user/email-settings")
+def api_save_user_email_settings(payload: UserEmailSettingsIn, account: dict = Depends(get_current_account)):
+    existing = database.get_user_smtp_settings(account["user_id"])
+    if payload.password:
+        password_encrypted = crypto.encrypt(payload.password)
+    elif existing:
+        password_encrypted = existing["password_encrypted"]
+    else:
+        raise HTTPException(status_code=400, detail="Wachtwoord is verplicht bij het voor het eerst instellen.")
+    database.save_user_smtp_settings(
+        account["user_id"], payload.host, payload.port, payload.username,
+        password_encrypted, payload.from_email, payload.from_name, payload.use_tls,
+    )
+    return {"success": True}
+
+
+@app.delete("/api/user/email-settings")
+def api_delete_user_email_settings(account: dict = Depends(get_current_account)):
+    """Verwijdert het persoonlijke afzenderadres - valt terug op het
+    account-brede adres (of de gedeelde afzender)."""
+    database.delete_user_smtp_settings(account["user_id"])
+    return {"success": True}
+
+
+@app.post("/api/user/email-settings/test")
+def api_test_user_email_settings(payload: UserEmailSettingsTestIn, account: dict = Depends(get_current_account)):
+    settings = {
+        "host": payload.host, "port": payload.port, "username": payload.username,
+        "password": payload.password, "from_email": payload.from_email,
+        "from_name": payload.from_name, "use_tls": payload.use_tls,
+    }
+    if not settings["password"]:
+        existing = database.get_user_smtp_settings(account["user_id"])
+        if not existing:
+            raise HTTPException(status_code=400, detail="Vul een wachtwoord in om te testen.")
+        settings["password"] = crypto.decrypt(existing["password_encrypted"])
+
+    to = payload.test_to or account["email"]
+    try:
+        smtp_client.send_email(
+            settings, to,
+            "Testmail - Twikey Sales Platform",
+            "Dit is een testmail om te controleren of je persoonlijke e-mailinstellingen correct zijn ingesteld. "
+            "Als je deze mail ontvangt, werkt het en kun je de instellingen opslaan.",
+        )
+    except Exception as exc:  # noqa: BLE001 - surface the real SMTP error to the customer
+        raise HTTPException(status_code=400, detail=f"Versturen van de testmail is mislukt: {exc}") from exc
+    return {"success": True, "sent_to": to}
 
 
 # ---------------------------------------------------------------------------
@@ -2498,7 +2623,9 @@ def _categorize_reply(objection_templates: list, text: str) -> tuple[str, str]:
 def _send_reply_draft(account: dict, draft_body: str, reply: dict):
     subject = reply.get("subject") or ""
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
-    _send_plain_for_account(account["id"], reply["from_email"], reply_subject, draft_body)
+    _send_plain_for_account(
+        account["id"], reply["from_email"], reply_subject, draft_body, sender_user_id=account["user_id"],
+    )
 
 
 @app.post("/api/replies/fetch")
@@ -2859,7 +2986,9 @@ def api_process_sequences():
         body = _with_signature_plain(account_id, body)
         body = _with_unsubscribe_footer_plain(account_id, enrollment["contact_id"], body)
         try:
-            _send_plain_for_account(account_id, enrollment["email"], subject, body)
+            _send_plain_for_account(
+                account_id, enrollment["email"], subject, body, sender_user_id=enrollment.get("assigned_to"),
+            )
             database.record_sequence_send(
                 enrollment["id"], step["id"], sent=True, rendered_subject=subject, rendered_body=body,
             )
@@ -3194,7 +3323,7 @@ def _attempt_send_campaign_recipient(aid: int, r: dict) -> bool:
     full_html = _with_unsubscribe_footer_html(aid, r["contact_id"], full_html)
 
     try:
-        _send_html_for_account(aid, r["email"], subject, full_html)
+        _send_html_for_account(aid, r["email"], subject, full_html, sender_user_id=r.get("assigned_to"))
         database.record_send_result(
             r["recipient_id"], sent=True, rendered_subject=subject, rendered_body=full_html,
         )

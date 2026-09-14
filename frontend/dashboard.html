@@ -1227,6 +1227,55 @@
 
         <div id="team" class="tab-content">
             <div class="card">
+                <h2><span class="icon">✉️</span>Mijn eigen afzenderadres</h2>
+                <p style="color:#666; margin-bottom: 15px;">
+                    Verstuur automatische mails naar contacten die aan jou zijn toegewezen (en je eigen handmatige
+                    verzendingen) vanaf je eigen adres, in plaats van het gedeelde account-adres — persoonlijker voor
+                    de ontvanger. Alleen het afzenderadres verschuift; verzendlimiet, handtekening en afmeldlink
+                    blijven de account-brede instelling (zie Integraties → Verzendinstellingen).
+                </p>
+                <div id="myemail-status"></div>
+                <div id="myemail-alert"></div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="input-group">
+                        <label>SMTP-server (host)</label>
+                        <input type="text" id="myemail-host" placeholder="smtp.gmail.com">
+                    </div>
+                    <div class="input-group">
+                        <label>Poort</label>
+                        <input type="number" id="myemail-port" placeholder="587" value="587">
+                    </div>
+                    <div class="input-group">
+                        <label>Gebruikersnaam</label>
+                        <input type="text" id="myemail-username" placeholder="jij@jouwbedrijf.nl">
+                    </div>
+                    <div class="input-group">
+                        <label>Wachtwoord (app-wachtwoord)</label>
+                        <input type="password" id="myemail-password" placeholder="Laat leeg om het huidige wachtwoord te behouden">
+                    </div>
+                    <div class="input-group">
+                        <label>Afzender e-mailadres</label>
+                        <input type="email" id="myemail-from-email" placeholder="benjamin@jouwbedrijf.nl">
+                    </div>
+                    <div class="input-group">
+                        <label>Afzendernaam (optioneel)</label>
+                        <input type="text" id="myemail-from-name" placeholder="Benjamin">
+                    </div>
+                </div>
+                <div class="input-group" style="margin-top: 6px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" id="myemail-use-tls" checked style="width:auto;">
+                        STARTTLS gebruiken (aan laten voor de meeste providers, ook Gmail/Workspace op poort 587)
+                    </label>
+                </div>
+                <div style="margin-top: 15px;">
+                    <button class="button button-secondary" onclick="testMyEmailSettings()">📤 Testmail versturen</button>
+                    <button class="button button-primary" onclick="saveMyEmailSettings()">Opslaan</button>
+                    <button class="button button-secondary" id="myemail-disconnect" style="color:#b91c1c; display:none;" onclick="disconnectMyEmailSettings()">Terugzetten naar gedeeld adres</button>
+                </div>
+            </div>
+
+            <div class="card">
                 <h2><span class="icon">➕</span>Teamlid uitnodigen</h2>
                 <p style="color:#666; margin-bottom: 15px;">
                     Een teamlid krijgt een eigen inlog (e-mail + wachtwoord), maar
@@ -2117,6 +2166,7 @@
             }
             if (tabName === 'team') {
                 loadTeamUsers();
+                loadMyEmailSettings();
             }
             if (tabName === 'integrations') {
                 loadEmailSettings();
@@ -2530,6 +2580,99 @@
                 loadEmailSettings();
             } catch (err) {
                 emailSettingsAlert(`Mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Team: mijn eigen afzenderadres (crm-roadmap.md, "eigen afzenderadres per teamlid") ---
+
+        function myEmailSettingsAlert(message, kind) {
+            const el = document.getElementById('myemail-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        function readMyEmailSettingsForm() {
+            return {
+                host: document.getElementById('myemail-host').value.trim(),
+                port: parseInt(document.getElementById('myemail-port').value, 10) || 587,
+                username: document.getElementById('myemail-username').value.trim(),
+                password: document.getElementById('myemail-password').value,
+                from_email: document.getElementById('myemail-from-email').value.trim(),
+                from_name: document.getElementById('myemail-from-name').value.trim(),
+                use_tls: document.getElementById('myemail-use-tls').checked,
+            };
+        }
+
+        async function loadMyEmailSettings() {
+            const statusEl = document.getElementById('myemail-status');
+            const disconnectBtn = document.getElementById('myemail-disconnect');
+            statusEl.innerHTML = '';
+            myEmailSettingsAlert('', '');
+            try {
+                const data = await apiGet('/api/user/email-settings');
+                if (data.configured) {
+                    statusEl.innerHTML = `<div class="alert alert-success">✓ Actief - mail aan jouw contacten (en je eigen handmatige verzendingen) gaat vanaf <strong>${data.from_email}</strong> via ${data.host}.</div>`;
+                    document.getElementById('myemail-host').value = data.host;
+                    document.getElementById('myemail-port').value = data.port;
+                    document.getElementById('myemail-username').value = data.username;
+                    document.getElementById('myemail-from-email').value = data.from_email;
+                    document.getElementById('myemail-from-name').value = data.from_name || '';
+                    document.getElementById('myemail-use-tls').checked = !!data.use_tls;
+                    document.getElementById('myemail-password').placeholder = 'Laat leeg om het huidige wachtwoord te behouden';
+                    disconnectBtn.style.display = 'inline-block';
+                } else {
+                    statusEl.innerHTML = '<div class="alert alert-warning">Nog niet ingesteld - je mail gaat nu via het account-brede adres.</div>';
+                    disconnectBtn.style.display = 'none';
+                }
+            } catch (err) {
+                statusEl.innerHTML = `<div class="alert alert-warning">Kon instellingen niet laden: ${err.message}</div>`;
+            }
+        }
+
+        async function testMyEmailSettings() {
+            const settings = readMyEmailSettingsForm();
+            myEmailSettingsAlert('', '');
+            if (!settings.host || !settings.username || !settings.from_email) {
+                myEmailSettingsAlert('Vul in elk geval host, gebruikersnaam en afzender-e-mailadres in.', 'warning');
+                return;
+            }
+            try {
+                const account = JSON.parse(localStorage.getItem(AUTH_ACCOUNT_KEY) || '{}');
+                const result = await apiPost('/api/user/email-settings/test', { ...settings, test_to: account.email || null });
+                myEmailSettingsAlert(`✓ Testmail is verstuurd naar ${result.sent_to}. Check die inbox - als hij is aangekomen, kun je opslaan.`, 'success');
+            } catch (err) {
+                myEmailSettingsAlert(`Testmail versturen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function saveMyEmailSettings() {
+            const settings = readMyEmailSettingsForm();
+            myEmailSettingsAlert('', '');
+            if (!settings.host || !settings.username || !settings.from_email) {
+                myEmailSettingsAlert('Vul in elk geval host, gebruikersnaam en afzender-e-mailadres in.', 'warning');
+                return;
+            }
+            try {
+                await apiPost('/api/user/email-settings', settings);
+                myEmailSettingsAlert('✓ Opgeslagen. Mail aan jouw contacten gaat voortaan via dit adres.', 'success');
+                document.getElementById('myemail-password').value = '';
+                loadMyEmailSettings();
+            } catch (err) {
+                myEmailSettingsAlert(`Opslaan mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function disconnectMyEmailSettings() {
+            if (!confirm('Weet je zeker dat je terug wilt naar het account-brede adres? Je eigen SMTP-instellingen worden verwijderd.')) return;
+            try {
+                await apiDelete('/api/user/email-settings');
+                myEmailSettingsAlert('Teruggezet naar het account-brede adres.', 'success');
+                ['myemail-host', 'myemail-username', 'myemail-password', 'myemail-from-email', 'myemail-from-name']
+                    .forEach(id => { document.getElementById(id).value = ''; });
+                document.getElementById('myemail-port').value = '587';
+                loadMyEmailSettings();
+            } catch (err) {
+                myEmailSettingsAlert(`Mislukt: ${err.message}`, 'warning');
             }
         }
 

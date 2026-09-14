@@ -105,6 +105,28 @@ CREATE TABLE IF NOT EXISTS smtp_settings (
     updated_at TEXT NOT NULL
 );
 
+-- Personal counterpart to smtp_settings above (crm-roadmap.md, "eigen
+-- afzenderadres per teamlid"): one row per teamlid, lets a specific person
+-- send as themselves (bv. benjamin@) instead of the account's shared
+-- afzender. Send-only, deliberately no IMAP fields here - reply-reading
+-- stays one shared account-level inbox (imap_* on smtp_settings), not
+-- per-teamlid. Resolution order (see _resolve_smtp_settings in app.py):
+-- this table (if the relevant persoon een eigen adres heeft ingesteld) ->
+-- smtp_settings (account-breed) -> de gedeelde SEND_AS_EMAIL-afzender.
+-- Verzendlimiet/handtekening/afmeldlink blijven bewust account-breed
+-- (accounts.*), niet per teamlid - alleen het afzenderadres verschuift.
+CREATE TABLE IF NOT EXISTS user_smtp_settings (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id),
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    password_encrypted TEXT NOT NULL,
+    from_email TEXT NOT NULL,
+    from_name TEXT DEFAULT '',
+    use_tls INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+);
+
 -- Support/superadmin logins - deliberately separate from "users" above.
 -- These aren't tied to any one customer account: they're Twikey staff who
 -- can see across every account for support purposes. See the "Superadmin /
@@ -1162,6 +1184,52 @@ def delete_smtp_settings(account_id: int) -> bool:
         if not existing:
             return False
         conn.execute("DELETE FROM smtp_settings WHERE account_id = ?", (account_id,))
+        return True
+
+
+def get_user_smtp_settings(user_id: int):
+    """Een teamlid's eigen afzenderconfig, of None als die er niet is (dan
+    valt de caller terug op het account-brede smtp_settings, en anders de
+    gedeelde SEND_AS_EMAIL-afzender - zie _resolve_smtp_settings in
+    app.py)."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM user_smtp_settings WHERE user_id = ?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def save_user_smtp_settings(user_id: int, host: str, port: int, username: str, password_encrypted: str,
+                             from_email: str, from_name: str, use_tls: bool) -> dict:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO user_smtp_settings
+                (user_id, host, port, username, password_encrypted, from_email, from_name, use_tls, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (user_id) DO UPDATE SET
+                host = EXCLUDED.host,
+                port = EXCLUDED.port,
+                username = EXCLUDED.username,
+                password_encrypted = EXCLUDED.password_encrypted,
+                from_email = EXCLUDED.from_email,
+                from_name = EXCLUDED.from_name,
+                use_tls = EXCLUDED.use_tls,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (user_id, host, port, username, password_encrypted, from_email, from_name, 1 if use_tls else 0, now_iso()),
+        )
+        row = conn.execute("SELECT * FROM user_smtp_settings WHERE user_id = ?", (user_id,)).fetchone()
+        return dict(row)
+
+
+def delete_user_smtp_settings(user_id: int) -> bool:
+    """Verwijdert het persoonlijke afzenderadres - valt terug op het
+    account-brede adres (of de gedeelde afzender). Geeft False terug als er
+    niets te verwijderen was."""
+    with get_conn() as conn:
+        existing = conn.execute("SELECT 1 FROM user_smtp_settings WHERE user_id = ?", (user_id,)).fetchone()
+        if not existing:
+            return False
+        conn.execute("DELETE FROM user_smtp_settings WHERE user_id = ?", (user_id,))
         return True
 
 
@@ -2608,7 +2676,7 @@ def due_enrollments(now: str = None) -> list:
             """
             SELECT se.*, s.account_id AS seq_account_id,
                    c.first_name, c.last_name, c.email, c.company,
-                   c.do_not_contact, c.excluded_reason
+                   c.do_not_contact, c.excluded_reason, c.assigned_to
             FROM sequence_enrollments se
             JOIN sequences s ON s.id = se.sequence_id
             JOIN contacts c ON c.id = se.contact_id
@@ -3000,7 +3068,7 @@ def campaign_recipients_for_launch(campaign_id: int, account_id: int) -> list:
             """
             SELECT cr.id AS recipient_id, cr.tracking_token,
                    cv.group_label, cv.offer_name, cv.subject_template, cv.body_template,
-                   c.id AS contact_id, c.first_name, c.last_name, c.email, c.company
+                   c.id AS contact_id, c.first_name, c.last_name, c.email, c.company, c.assigned_to
             FROM campaign_recipients cr
             JOIN campaign_variants cv ON cv.id = cr.variant_id
             JOIN contacts c ON c.id = cr.contact_id
@@ -4047,7 +4115,7 @@ def pending_campaign_recipients_for_account(account_id: int, limit: int) -> list
             """
             SELECT cr.id AS recipient_id, cr.tracking_token,
                    cv.group_label, cv.offer_name, cv.subject_template, cv.body_template,
-                   c.id AS contact_id, c.first_name, c.last_name, c.email, c.company
+                   c.id AS contact_id, c.first_name, c.last_name, c.email, c.company, c.assigned_to
             FROM campaign_recipients cr
             JOIN campaign_variants cv ON cv.id = cr.variant_id
             JOIN contacts c ON c.id = cr.contact_id

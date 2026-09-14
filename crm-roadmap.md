@@ -484,26 +484,28 @@ Het vaste 08:00-09:30-tijdvenster zelf is bewust nog NIET instelbaar
 gemaakt (losse scope-keuze) - dat kan later alsnog als daar behoefte aan
 is.
 
-## Toekomstig idee (nog niet gescoped): eigen afzenderadres per teamlid
+## Gebouwd (14 sept. 2026): eigen afzenderadres per teamlid
 
-Door Benjamin geopperd (n.a.v. de vraag of vanaf een ander adres dan het
-ingestelde verstuurd kan worden - nu al mogelijk via Mail-instellingen,
-maar als één gedeeld afzenderadres voor het hele account). Idee: elk
-teamlid verstuurt automatische mails (campagnes/opvolgsequenties) vanaf
-zijn eigen adres (bv. benjamin@ i.p.v. het gedeelde sales@), zodat mail
-persoonlijker aankomt bij de ontvanger. Bewust niet meegenomen - nog te
-bepalen:
-- Vereist een eigen SMTP-credential per teamlid (net als nu per account
-  bij Mail-instellingen), of kan één gedeeld account met een "Van"-alias
-  per teamlid werken (afhankelijk van wat de mailprovider toestaat)?
-- Hoe wordt bepaald welk teamlid "de afzender" is van een automatische
-  sequence-stap/campagne-verzending - de aanmaker, de toegewezen
-  accountmanager van het contact (`contacts.assigned_to`, al aanwezig),
-  of een handmatige keuze per campagne/sequence?
-- Wat gebeurt er met bestaande gedeelde instellingen (dagelijkse
-  verzendlimiet, handtekening, afmeldlink) die nu account-breed zijn -
-  worden die ook per teamlid, of blijven die gedeeld terwijl alleen het
-  afzenderadres verschuift naar per-teamlid?
+Elk teamlid kan bij Team → "Mijn eigen afzenderadres" zijn eigen SMTP-
+credential instellen (host/gebruikersnaam/wachtwoord/afzenderadres,
+zelfde vorm als het bestaande account-brede Mail-instellingen-blok, maar
+send-only - geen IMAP, reply-tracking blijft één gedeeld account-niveau
+postvak). Resolutievolgorde (`_resolve_smtp_settings` in app.py): (1) het
+persoonlijke adres van de relevante persoon, als ingesteld, (2) het
+account-brede adres, (3) de gedeelde Twikey-afzender.
+
+Wie "de relevante persoon" is:
+- Automatische sequence-stap/campagne-verzending → de toegewezen
+  accountmanager van het contact (`contacts.assigned_to`, al aanwezig) -
+  contact van Jan krijgt mail van Jan, contact van Lisa van Lisa. Geen
+  toewijzing? Dan gewoon het account-brede/gedeelde adres, zoals altijd.
+- Handmatige acties (POST /api/send, een reply-conceptantwoord
+  versturen) → de ingelogde gebruiker zelf, ongeacht wie het contact is
+  toegewezen - wie op verstuur klikt, is de afzender.
+
+Bewust NIET per teamlid gemaakt: dagelijkse verzendlimiet, handtekening
+en afmeldlink - die blijven één account-brede instelling (zie
+Integraties → Verzendinstellingen). Alleen het afzenderadres verschuift.
 
 ## Toekomstig idee (nog niet gescoped): overzicht van geplande mails (dag/week/maand)
 

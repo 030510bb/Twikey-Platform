@@ -36,7 +36,7 @@ customer) - a real next step, not built here.
 import json
 import os
 import secrets
-from collections import defaultdict
+from collections import Counter, defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -2683,13 +2683,32 @@ def create_campaign(account_id: int, name: str, variants: list, include_excluded
     campaign row itself (as persona_id) alongside sector, purely as a label
     for later performance-comparison - see update_campaign() to change it
     after the fact, e.g. for a campaign that was launched before this label
-    existed.
+    existed. If sector is left blank, it's auto-derived from the most
+    common non-empty contacts.sector value among the contacts this
+    campaign will actually reach - purely a best-effort label, still
+    editable afterwards via update_campaign() if the guess is off.
     """
     with get_conn() as conn:
+        contacts_sql = "SELECT id, persona_id, sector FROM contacts WHERE account_id = ? AND do_not_contact = 0"
+        contacts_params = [account_id]
+        if not include_excluded:
+            contacts_sql += " AND (excluded_reason IS NULL OR excluded_reason = '')"
+        if only_persona_id is not None:
+            contacts_sql += " AND persona_id = ?"
+            contacts_params.append(only_persona_id)
+        contacts_sql += " ORDER BY id"
+        contacts = conn.execute(contacts_sql, contacts_params).fetchall()
+
+        resolved_sector = sector
+        if not resolved_sector:
+            sector_counts = Counter(c["sector"] for c in contacts if c["sector"])
+            if sector_counts:
+                resolved_sector = sector_counts.most_common(1)[0][0]
+
         cur = conn.execute(
             "INSERT INTO campaigns (account_id, name, status, sector, persona_id, created_at) "
             "VALUES (?, ?, 'draft', ?, ?, ?) RETURNING id",
-            (account_id, name, sector, only_persona_id, now_iso()),
+            (account_id, name, resolved_sector, only_persona_id, now_iso()),
         )
         campaign_id = cur.fetchone()["id"]
 
@@ -2711,16 +2730,6 @@ def create_campaign(account_id: int, name: str, variants: list, include_excluded
                 persona_variant_ids[persona_id].append(variant_id)
             else:
                 generic_variant_ids.append(variant_id)
-
-        contacts_sql = "SELECT id, persona_id FROM contacts WHERE account_id = ? AND do_not_contact = 0"
-        contacts_params = [account_id]
-        if not include_excluded:
-            contacts_sql += " AND (excluded_reason IS NULL OR excluded_reason = '')"
-        if only_persona_id is not None:
-            contacts_sql += " AND persona_id = ?"
-            contacts_params.append(only_persona_id)
-        contacts_sql += " ORDER BY id"
-        contacts = conn.execute(contacts_sql, contacts_params).fetchall()
 
         persona_counters = defaultdict(int)
         generic_counter = 0

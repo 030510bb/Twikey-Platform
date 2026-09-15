@@ -1443,12 +1443,12 @@
                     <thead>
                         <tr>
                             <th><input type="checkbox" id="contacts-select-all" style="width:auto;" onchange="toggleSelectAllVisibleContacts(this.checked)"></th>
-                            <th>Naam</th><th>Bedrijf</th><th>Functie / sector / omzet</th><th>Tags</th><th>Buyer persona</th>
+                            <th>Naam</th><th>E-mail</th><th>Bedrijf</th><th>Functie / sector / omzet</th><th>Tags</th><th>Buyer persona</th>
                             <th>Toegewezen</th><th>Status</th><th></th>
                         </tr>
                     </thead>
                     <tbody id="contacts-body">
-                        <tr><td colspan="9" style="color:#666;">Laden...</td></tr>
+                        <tr><td colspan="10" style="color:#666;">Laden...</td></tr>
                     </tbody>
                 </table>
                 </div>
@@ -4220,7 +4220,7 @@
 
         async function loadContacts() {
             const tbody = document.getElementById('contacts-body');
-            tbody.innerHTML = '<tr><td colspan="9" style="color:#666;">Laden...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="color:#666;">Laden...</td></tr>';
             const params = new URLSearchParams();
             const q = document.getElementById('contacts-search').value.trim();
             const tags = contactFilters.tag;
@@ -4239,14 +4239,15 @@
             try {
                 const data = await apiGet(`/api/contacts?${params.toString()}`);
                 if (!data.contacts.length) {
-                    tbody.innerHTML = '<tr><td colspan="9" style="color:#666;">Geen contacten gevonden.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="10" style="color:#666;">Geen contacten gevonden.</td></tr>';
                     updateContactsBulkBar();
                     return;
                 }
                 tbody.innerHTML = data.contacts.map(c => `
                     <tr>
                         <td><input type="checkbox" class="contact-select-checkbox" data-contact-id="${c.id}" style="width:auto;" onchange="toggleContactSelection(${c.id}, this.checked)"></td>
-                        <td><a href="#" onclick="toggleContactTimeline(${c.id}); return false;">${c.first_name} ${c.last_name} <span id="timeline-arrow-${c.id}" style="font-size:10px; color:#999;">▸ tijdlijn</span></a><br><span style="color:#666; font-size:12px;">${c.email}</span></td>
+                        <td><a href="#" onclick="toggleContactTimeline(${c.id}); return false;">${c.first_name} ${c.last_name} <span id="timeline-arrow-${c.id}" style="font-size:10px; color:#999;">▸ tijdlijn</span></a></td>
+                        <td>${c.email}</td>
                         <td>${c.company || ''}</td>
                         <td>${c.job_title || ''}${c.sector ? ' · ' + c.sector : ''}${c.revenue_range ? ' · ' + c.revenue_range : ''}</td>
                         <td style="max-width:180px;">${tagsHtml(c)}</td>
@@ -4262,7 +4263,7 @@
                         </td>
                     </tr>
                     <tr class="timeline-expand-row" id="timeline-row-${c.id}" style="display:none;">
-                        <td colspan="9" id="timeline-container-${c.id}" style="background:#f9fafb; padding:10px 14px; border-bottom:1px solid #e5e7eb;"></td>
+                        <td colspan="10" id="timeline-container-${c.id}" style="background:#f9fafb; padding:10px 14px; border-bottom:1px solid #e5e7eb;"></td>
                     </tr>
                 `).join('');
                 document.querySelectorAll('.contact-select-checkbox').forEach(cb => {
@@ -4273,7 +4274,7 @@
                 updateContactsBulkBar();
             } catch (err) {
                 contactsAlert('contacts-list-alert', `Kon contacten niet laden: ${err.message}`, 'warning');
-                tbody.innerHTML = '<tr><td colspan="9" style="color:#666;">-</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" style="color:#666;">-</td></tr>';
             }
         }
 

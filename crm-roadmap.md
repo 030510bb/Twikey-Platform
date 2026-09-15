@@ -958,3 +958,26 @@ bounce-detectie) is en blijft een handmatige actie (knop-klik), geen
 automatische cron - deze fix corrigeert de foutieve verwerking zodra er
 opgehaald wordt, maar geeft geen realtime bounce-meldingen zonder dat
 iemand op "ophalen" klikt.
+
+## Gebouwd (15 sept. 2026): Dashboard herbouwd met paneel-overzicht
+
+Benjamin liet een screenshot zien van Payt's beheer-dashboard (per
+domein een kaart met kerncijfers, bv. "Customers"/"Invoices"/"System")
+als gewenste inspiratie voor "belangrijke details" op dit Dashboard.
+De Dashboard-tab bevatte tot nu toe grotendeels nep-placeholders: een
+hardcoded "4 Lead Magnets"-tegel en een "Platform Status"-kaart die
+altijd dezelfde groene "✓ Connected/Ready/Active"-badges toonde,
+ongeacht de werkelijke status. Vervangen door vijf kaarten met echte
+cijfers uit `database.dashboard_overview_stats()`
+(`GET /api/dashboard/overview-stats`): Contacten (totaal/bounced/niet
+meer benaderen/open herinneringen), Campagnes (concept/actief/
+gepauzeerd), Sequenties (actief/gepauzeerd), Replies & taken
+(conceptantwoorden/herinneringen, met een groen vinkje als alles
+verwerkt is - net als Payt's "Outstanding tasks"-kaart), en Systeem
+(echte koppelingsstatus van e-mail/IMAP/AI/HubSpot/achtergrondtaken,
+met eenzelfde "alles in orde"-vinkje als alles klopt). Kanttekening:
+alleen syntax- en schema-geverifieerd (SQL-kolommen/statuswaarden
+nagelopen tegen SCHEMA/MIGRATIONS), niet handmatig getest in de
+browser - dit project heeft geen lokale sqlite-fallback, alleen een
+echte Postgres/Supabase-verbinding via DATABASE_URL, die hier niet
+beschikbaar was.

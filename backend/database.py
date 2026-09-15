@@ -3361,6 +3361,11 @@ DEFAULT_KB_ARTICLES = [
      "Op het Dashboard onder 'Aandacht nodig' verschijnt automatisch een melding als een verwachte "
      "achtergrondtaak (bv. sequences versturen, campagne-wachtrij verwerken) al langer stilligt dan normaal - "
      "controleer dan of de Render Cron Jobs nog actief zijn (zie DEPLOY.md)."),
+    ("Dashboard", "Wat betekenen de kaarten Contacten/Campagnes/Sequenties/Replies & taken/Systeem?",
+     "Dit zijn de kerncijfers van je account in één oogopslag: aantallen per status voor contacten, "
+     "campagnes en sequenties, openstaande conceptantwoorden/herinneringen (met een groen vinkje als er "
+     "niets openstaat), en de koppelingsstatus van e-mail/IMAP/AI/HubSpot/achtergrondtaken onder Systeem "
+     "(ook een groen vinkje als alles gekoppeld en gezond is)."),
     ("Contacten", "Wat betekent het als een e-mailadres 'bounced' is?",
      "Als een verzonden mail niet aankwam (het adres bestaat niet meer, de mailbox zit vol, etc.) wordt dat "
      "automatisch herkend zodra je op 'Replies ophalen' klikt - het contact wordt dan op 'niet meer "
@@ -5126,6 +5131,85 @@ def digest_stats(account_id: int, since_iso: str = None) -> dict:
             "active_campaigns": active_campaigns["n"],
             "active_sequences": active_sequences["n"],
         }
+
+
+def dashboard_overview_stats(account_id: int) -> dict:
+    """Paneel-cijfers voor de Dashboard-tab (geïnspireerd op een screenshot
+    van Payt's beheer-dashboard, dat per domein een kaart met kerncijfers
+    toont) - vervangt de eerdere hardcoded/nep-placeholders ("4 Lead
+    Magnets", een altijd-groene "Platform Status"-kaart) door echte
+    tellingen uit dit platform."""
+    with get_conn() as conn:
+        contacts = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN email_bounced_at IS NOT NULL THEN 1 ELSE 0 END) AS bounced,
+                SUM(CASE WHEN do_not_contact = 1 THEN 1 ELSE 0 END) AS do_not_contact
+            FROM contacts WHERE account_id = ? AND deleted_at IS NULL
+            """,
+            (account_id,),
+        ).fetchone()
+        open_reminders = conn.execute(
+            "SELECT COUNT(*) AS n FROM reminders WHERE account_id = ? AND status = 'open' AND remind_at <= ?",
+            (account_id, now_iso()),
+        ).fetchone()["n"]
+        campaigns = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draft,
+                SUM(CASE WHEN status = 'launched' AND paused = 0 THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status = 'launched' AND paused = 1 THEN 1 ELSE 0 END) AS paused
+            FROM campaigns WHERE account_id = ?
+            """,
+            (account_id,),
+        ).fetchone()
+        sequences = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END) AS paused
+            FROM sequences WHERE account_id = ?
+            """,
+            (account_id,),
+        ).fetchone()
+        pending_drafts = conn.execute(
+            "SELECT COUNT(*) AS n FROM reply_drafts WHERE account_id = ? AND status = 'pending'", (account_id,)
+        ).fetchone()["n"]
+        smtp_row = conn.execute(
+            "SELECT imap_host FROM smtp_settings WHERE account_id = ?", (account_id,)
+        ).fetchone()
+        hubspot_row = conn.execute(
+            "SELECT access_token_encrypted FROM hubspot_settings WHERE account_id = ?", (account_id,)
+        ).fetchone()
+
+    return {
+        "contacts": {
+            "total": contacts["total"] or 0,
+            "bounced": contacts["bounced"] or 0,
+            "do_not_contact": contacts["do_not_contact"] or 0,
+            "open_reminders": open_reminders,
+        },
+        "campaigns": {
+            "draft": campaigns["draft"] or 0,
+            "active": campaigns["active"] or 0,
+            "paused": campaigns["paused"] or 0,
+        },
+        "sequences": {
+            "active": sequences["active"] or 0,
+            "paused": sequences["paused"] or 0,
+        },
+        "replies": {
+            "pending_drafts": pending_drafts,
+            "open_reminders": open_reminders,
+        },
+        "system": {
+            "email_connected": bool(smtp_row),
+            "imap_connected": bool(smtp_row and smtp_row["imap_host"]),
+            "hubspot_connected": bool(hubspot_row and hubspot_row["access_token_encrypted"]),
+            "cron_healthy": not stale_cron_jobs(),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -730,14 +730,63 @@
                 <div id="scheduled-sends-body"></div>
             </div>
 
-            <div class="grid-2">
-                <div class="stats-box">
-                    <div class="value" id="dashboard-contact-count">-</div>
-                    <div class="label">Contacts Ready</div>
+            <div class="grid-2" id="dashboard-overview-panels">
+                <div class="card">
+                    <h2><span class="icon">👥</span>Contacten</h2>
+                    <div class="metric-row">
+                        <span class="metric-label">Totaal</span>
+                        <span class="metric-value" id="ov-contacts-total">-</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Bounced (onbereikbaar)</span>
+                        <span class="metric-value" id="ov-contacts-bounced">-</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Niet meer benaderen</span>
+                        <span class="metric-value" id="ov-contacts-dnc">-</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Open herinneringen</span>
+                        <span class="metric-value" id="ov-contacts-reminders">-</span>
+                    </div>
                 </div>
-                <div class="stats-box">
-                    <div class="value">4</div>
-                    <div class="label">Lead Magnets</div>
+
+                <div class="card">
+                    <h2><span class="icon">📧</span>Campagnes</h2>
+                    <div class="metric-row">
+                        <span class="metric-label">Concept</span>
+                        <span class="metric-value" id="ov-campaigns-draft">-</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Actief</span>
+                        <span class="metric-value" id="ov-campaigns-active">-</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Gepauzeerd (lage reply-rate)</span>
+                        <span class="metric-value" id="ov-campaigns-paused">-</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2><span class="icon">🔁</span>Sequenties</h2>
+                    <div class="metric-row">
+                        <span class="metric-label">Actief</span>
+                        <span class="metric-value" id="ov-sequences-active">-</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Gepauzeerd (lage reply-rate)</span>
+                        <span class="metric-value" id="ov-sequences-paused">-</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2><span class="icon">💬</span>Replies &amp; taken</h2>
+                    <div id="ov-replies-body"></div>
+                </div>
+
+                <div class="card">
+                    <h2><span class="icon">⚙️</span>Systeem</h2>
+                    <div id="ov-system-body"></div>
                 </div>
             </div>
 
@@ -748,26 +797,6 @@
                     <strong>A/B Test</strong> — daar staat ook je live contactenlijst.
                 </p>
                 <button class="button button-primary" onclick="switchTab('abtest')">🚀 Naar A/B Test &amp; Campagnes</button>
-            </div>
-
-            <div class="card">
-                <h2><span class="icon">📅</span>Platform Status</h2>
-                <div class="metric-row">
-                    <span class="metric-label">Email Sync</span>
-                    <span class="status-badge status-success">✓ Connected</span>
-                </div>
-                <div class="metric-row">
-                    <span class="metric-label">LinkedIn Automation</span>
-                    <span class="status-badge status-success">✓ Ready</span>
-                </div>
-                <div class="metric-row">
-                    <span class="metric-label">Message Validation</span>
-                    <span class="status-badge status-success">✓ Active</span>
-                </div>
-                <div class="metric-row">
-                    <span class="metric-label">A/B Test Module</span>
-                    <span class="status-badge status-success">✓ Ready</span>
-                </div>
             </div>
         </div>
 
@@ -4927,15 +4956,86 @@
         // --- Dashboard ---------------------------------------------------
 
         async function loadDashboardStats() {
-            try {
-                const data = await apiGet('/api/contacts');
-                document.getElementById('dashboard-contact-count').textContent = data.count;
-            } catch (err) {
-                document.getElementById('dashboard-contact-count').textContent = '?';
-            }
+            loadDashboardOverviewStats();
             loadAttentionItems();
             loadFlowsAttention();
             loadScheduledSends();
+        }
+
+        async function loadDashboardOverviewStats() {
+            let stats;
+            try {
+                stats = await apiGet('/api/dashboard/overview-stats');
+            } catch (err) {
+                document.getElementById('ov-replies-body').innerHTML = '<p style="color:#666;">Kon niet geladen worden.</p>';
+                document.getElementById('ov-system-body').innerHTML = '<p style="color:#666;">Kon niet geladen worden.</p>';
+                return;
+            }
+
+            const c = stats.contacts, camp = stats.campaigns, seq = stats.sequences, r = stats.replies, sys = stats.system;
+
+            document.getElementById('ov-contacts-total').textContent = c.total;
+            document.getElementById('ov-contacts-bounced').textContent = c.bounced;
+            document.getElementById('ov-contacts-bounced').style.color = c.bounced ? '#b91c1c' : '';
+            document.getElementById('ov-contacts-dnc').textContent = c.do_not_contact;
+            document.getElementById('ov-contacts-reminders').textContent = c.open_reminders;
+            document.getElementById('ov-contacts-reminders').style.color = c.open_reminders ? '#b45309' : '';
+
+            document.getElementById('ov-campaigns-draft').textContent = camp.draft;
+            document.getElementById('ov-campaigns-active').textContent = camp.active;
+            document.getElementById('ov-campaigns-paused').textContent = camp.paused;
+            document.getElementById('ov-campaigns-paused').style.color = camp.paused ? '#b91c1c' : '';
+
+            document.getElementById('ov-sequences-active').textContent = seq.active;
+            document.getElementById('ov-sequences-paused').textContent = seq.paused;
+            document.getElementById('ov-sequences-paused').style.color = seq.paused ? '#b91c1c' : '';
+
+            const repliesBody = document.getElementById('ov-replies-body');
+            if (!r.pending_drafts && !r.open_reminders) {
+                repliesBody.innerHTML = `
+                    <div style="text-align:center; padding: 10px 0;">
+                        <div style="font-size:28px;">✓</div>
+                        <div style="color:#065f46; font-weight:bold; margin-top:6px;">Alles verwerkt</div>
+                        <div style="color:#666; font-size:12px; margin-top:2px;">Geen openstaande conceptantwoorden of herinneringen.</div>
+                    </div>
+                `;
+            } else {
+                repliesBody.innerHTML = `
+                    <div class="metric-row">
+                        <span class="metric-label">Conceptantwoorden ter goedkeuring</span>
+                        <span class="metric-value" style="color:${r.pending_drafts ? '#b45309' : ''}">${r.pending_drafts}</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Open herinneringen</span>
+                        <span class="metric-value" style="color:${r.open_reminders ? '#b45309' : ''}">${r.open_reminders}</span>
+                    </div>
+                `;
+            }
+
+            const sysRows = [
+                ['Email versturen', sys.email_connected],
+                ['Replies ophalen (IMAP)', sys.imap_connected],
+                ['AI-conceptantwoorden (Claude)', sys.ai_configured],
+                ['HubSpot-koppeling', sys.hubspot_connected],
+                ['Achtergrondtaken', sys.cron_healthy],
+            ];
+            const allOk = sysRows.every(([, ok]) => ok);
+            const sysBody = document.getElementById('ov-system-body');
+            if (allOk) {
+                sysBody.innerHTML = `
+                    <div style="text-align:center; padding: 10px 0;">
+                        <div style="font-size:28px;">✓</div>
+                        <div style="color:#065f46; font-weight:bold; margin-top:6px;">Alle instellingen zijn in orde</div>
+                    </div>
+                `;
+            } else {
+                sysBody.innerHTML = sysRows.map(([label, ok]) => `
+                    <div class="metric-row">
+                        <span class="metric-label">${label}</span>
+                        <span class="status-badge ${ok ? 'status-success' : 'status-warning'}">${ok ? '✓ OK' : '⚠ Niet gekoppeld'}</span>
+                    </div>
+                `).join('');
+            }
         }
 
         function scheduledSendBucketLabel(item) {

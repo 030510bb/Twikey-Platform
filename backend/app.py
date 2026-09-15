@@ -1091,6 +1091,18 @@ def api_dashboard_attention(account: dict = Depends(get_current_account)):
     return {"items": items}
 
 
+@app.get("/api/dashboard/overview-stats")
+def api_dashboard_overview_stats(account: dict = Depends(get_current_account)):
+    """Paneel-cijfers voor de Dashboard-tab (Contacten/Campagnes/Sequenties/
+    Replies & taken/Systeem) - geïnspireerd op een screenshot van Payt's
+    beheer-dashboard, vervangt de eerdere hardcoded placeholders daar.
+    ai_configured komt hier i.p.v. in database.py bij, want dat is een
+    losstaande module-check (ANTHROPIC_API_KEY), geen databasequery."""
+    stats = database.dashboard_overview_stats(account["id"])
+    stats["system"]["ai_configured"] = ai_client.is_configured()
+    return stats
+
+
 @app.get("/api/dashboard/flows-attention")
 def api_dashboard_flows_attention(account: dict = Depends(get_current_account)):
     """"Flows die aandacht nodig hebben"-blok: sequences/campagnes die de

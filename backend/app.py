@@ -1451,6 +1451,38 @@ def api_update_contact(contact_id: int, payload: ContactUpdateIn, account: dict 
 
 @app.delete("/api/contacts/{contact_id}")
 def api_delete_contact(contact_id: int, account: dict = Depends(get_current_account)):
+    """"Verwijderen" vanuit de normale Contacten-lijst is nu een
+    soft-delete (prullenbak, zie GET /api/contacts/deleted hieronder) -
+    definitief verwijderen kan alleen nog vanuit die prullenbak, met een
+    expliciete "DELETE"-bevestiging."""
+    if not database.soft_delete_contact(contact_id, account["id"], deleted_by=account["user_id"]):
+        raise HTTPException(status_code=404, detail="Contact niet gevonden.")
+    return {"success": True}
+
+
+@app.get("/api/contacts/deleted")
+def api_list_deleted_contacts(account: dict = Depends(get_current_account)):
+    return {"contacts": database.list_deleted_contacts(account["id"])}
+
+
+@app.post("/api/contacts/{contact_id}/restore")
+def api_restore_contact(contact_id: int, account: dict = Depends(get_current_account)):
+    if not database.restore_contact(contact_id, account["id"]):
+        raise HTTPException(status_code=404, detail="Contact niet gevonden in de prullenbak.")
+    return {"success": True}
+
+
+class PermanentDeleteContactIn(BaseModel):
+    confirm: str = ""
+
+
+@app.post("/api/contacts/{contact_id}/permanent-delete")
+def api_permanent_delete_contact(contact_id: int, payload: PermanentDeleteContactIn, account: dict = Depends(get_current_account)):
+    """Definitief en onomkeerbaar verwijderen - alleen aan te roepen vanuit
+    de prullenbak. Vereist dat de gebruiker letterlijk "DELETE" typt als
+    extra veiligheidsstap, bovenop de soft-delete die al gebeurd is."""
+    if payload.confirm != "DELETE":
+        raise HTTPException(status_code=400, detail='Typ precies "DELETE" om definitief te verwijderen.')
     if not database.delete_contact(contact_id, account["id"]):
         raise HTTPException(status_code=404, detail="Contact niet gevonden.")
     return {"success": True}
@@ -1462,7 +1494,13 @@ class BulkContactIdsIn(BaseModel):
 
 @app.post("/api/contacts/bulk-delete")
 def api_bulk_delete_contacts(payload: BulkContactIdsIn, account: dict = Depends(get_current_account)):
-    deleted = sum(1 for cid in payload.contact_ids if database.delete_contact(cid, account["id"]))
+    """Soft-delete (prullenbak) - zie GET /api/contacts/deleted en
+    POST /api/contacts/{id}/restore. Definitief verwijderen kan alleen
+    nog vanuit de prullenbak, met een expliciete "DELETE"-bevestiging."""
+    deleted = sum(
+        1 for cid in payload.contact_ids
+        if database.soft_delete_contact(cid, account["id"], deleted_by=account["user_id"])
+    )
     return {"success": True, "deleted": deleted, "skipped": len(payload.contact_ids) - deleted}
 
 
@@ -3238,10 +3276,19 @@ def api_process_sequences():
     beheer-endpoints, niet met een account-sessie. Bedoeld om periodiek
     aangeroepen te worden (bv. een uur-cron op Render of een externe
     scheduler) - zie DEPLOY.md."""
-    processed, skipped, errors, throttled, waiting_for_window, blocked_bad_name = 0, 0, 0, 0, 0, 0
+    processed, skipped, errors, throttled, waiting_for_window, blocked_bad_name, blocked_deleted = 0, 0, 0, 0, 0, 0, 0
     schedule_cache: dict = {}
     for enrollment in database.due_enrollments():
         account_id = enrollment["seq_account_id"]
+        if enrollment.get("deleted_at"):
+            # Geen skip_enrollment (permanent) - een verwijderd contact kan
+            # hersteld worden (zie POST /api/contacts/{id}/restore), en dan
+            # moet de sequence gewoon verdergaan. Blijft dus "due" en wordt
+            # vanzelf weer opgepakt zodra het contact hersteld is (of
+            # verdwijnt vanzelf uit due_enrollments zodra het definitief
+            # verwijderd wordt, via de cascade in delete_contact()).
+            blocked_deleted += 1
+            continue
         if enrollment["do_not_contact"] or enrollment["excluded_reason"]:
             database.skip_enrollment(enrollment["id"], "Contact is niet meer te benaderen of uitgesloten.")
             skipped += 1
@@ -3302,6 +3349,7 @@ def api_process_sequences():
     return {
         "success": True, "processed": processed, "skipped": skipped, "errors": errors,
         "throttled": throttled, "waiting_for_window": waiting_for_window, "blocked_bad_name": blocked_bad_name,
+        "blocked_deleted": blocked_deleted,
     }
 
 

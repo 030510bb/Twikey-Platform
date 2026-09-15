@@ -862,3 +862,37 @@ sends()` levert de kandidaten; het filteren op naam gebeurt in app.py
 app.py zat - geen dubbele implementatie in SQL. Klik "Bekijken" springt
 naar het Contacten-tabblad. Geen frontend-wijziging nodig - de bestaande
 "Aandacht nodig"-rendering is al generiek per item-type.
+
+## Gebouwd (15 sept. 2026): contacten verwijderen is nu een soft-delete (prullenbak)
+
+Op Benjamins expliciete verzoek: "verwijderen" gooide een contact
+voorheen meteen definitief en onomkeerbaar weg (inclusief alle
+geschiedenis). Nieuwe kolommen `contacts.deleted_at`/`deleted_by`:
+`DELETE /api/contacts/{id}` en `POST /api/contacts/bulk-delete` (de
+knoppen die de UI daadwerkelijk gebruikt) zetten nu alleen nog
+`deleted_at`, en het contact verdwijnt daardoor uit `list_contacts()`
+(dus de gewone lijst én de CSV-export) en uit elke plek die contacten
+als doelwit voor automatische verzending selecteert:
+`due_enrollments()`, `pending_campaign_recipients_for_account()`,
+`campaign_recipients_for_launch()`, `create_campaign()`'s
+contact-selectie, `add_contacts_to_campaign()`, `auto_enroll_by_persona()`
+en `enroll_contact()`. Een sequence-stap die toch nog "due" wordt voor een
+inmiddels verwijderd contact wordt niet permanent geskipt (zoals
+do_not_contact/uitgesloten) maar blijft gewoon staan - zodra het contact
+hersteld wordt, gaat de sequence vanzelf verder.
+
+Nieuw blok "Prullenbak" onderaan het Contacten-tabblad
+(`GET /api/contacts/deleted`) met per verwijderd contact **Herstellen**
+(`POST /api/contacts/{id}/restore`, zet `deleted_at` terug op NULL) en
+**Definitief verwijderen** (`POST /api/contacts/{id}/permanent-delete`) -
+dat laatste roept de oude, ongewijzigde `delete_contact()` aan (echt
+onomkeerbaar, cascadeert door alle gekoppelde tabellen) en vereist, als
+extra veiligheidsstap bovenop de soft-delete die er al aan voorafging,
+dat de gebruiker letterlijk "DELETE" typt in een prompt - de backend
+controleert dat exacte woord ook zelf nog een keer (niet alleen
+frontend-validatie).
+
+`add_contact()`'s `ON CONFLICT`-upsert zet `deleted_at`/`deleted_by` ook
+weer op NULL - een eerder verwijderd contact dat opnieuw wordt
+geïmporteerd (zelfde e-mailadres) komt dus automatisch weer terug i.p.v.
+stilzwijgend verwijderd te blijven staan.

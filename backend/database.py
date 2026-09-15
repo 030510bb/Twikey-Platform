@@ -765,6 +765,19 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'admin';
 -- aan Claude bij AI-mailsuggesties/verdiepingsvragen (zie
 -- ai_client._profile_context).
 ALTER TABLE account_profiles ADD COLUMN IF NOT EXISTS pain_points TEXT NOT NULL DEFAULT '';
+
+-- Soft-delete voor contacten (Benjamins expliciete verzoek, 15 sept
+-- 2026): "verwijderen" zette voorheen meteen alles definitief en
+-- onomkeerbaar weg. deleted_at NULL = normaal zichtbaar contact; een
+-- waarde = in de "prullenbak" (zie list_deleted_contacts/
+-- restore_contact hieronder) - overal waar contacten worden getoond of
+-- als doelwit voor automatische verzending geselecteerd, wordt nu op
+-- "deleted_at IS NULL" gefilterd. delete_contact() (de oude, definitieve
+-- functie) blijft ongewijzigd bestaan en wordt alleen nog aangeroepen
+-- vanuit de nieuwe "definitief verwijderen"-actie in de prullenbak, die
+-- een expliciete "DELETE"-bevestiging vereist (zie app.py).
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS deleted_by INTEGER REFERENCES users(id);
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -1419,7 +1432,9 @@ def add_contact(
                 job_title=CASE WHEN excluded.job_title = '' THEN contacts.job_title ELSE excluded.job_title END,
                 sector=CASE WHEN excluded.sector = '' THEN contacts.sector ELSE excluded.sector END,
                 revenue_range=CASE WHEN excluded.revenue_range = '' THEN contacts.revenue_range ELSE excluded.revenue_range END,
-                company_domain=excluded.company_domain
+                company_domain=excluded.company_domain,
+                deleted_at=NULL,
+                deleted_by=NULL
             """,
             (account_id, first_name, last_name, email, company, linkedin_url,
              job_title, sector, revenue_range, source, domain, now_iso()),
@@ -1473,7 +1488,7 @@ def list_contacts(account_id: int, q: str = None, tag: list = None, persona_id: 
             FROM contacts c
             LEFT JOIN users u ON u.id = c.assigned_to
             LEFT JOIN buyer_personas bp ON bp.id = c.persona_id
-            WHERE c.account_id = ?
+            WHERE c.account_id = ? AND c.deleted_at IS NULL
         """
         params = [account_id]
         if q:
@@ -1612,15 +1627,73 @@ def update_contact(contact_id: int, account_id: int, **fields) -> dict:
         return dict(row)
 
 
+def soft_delete_contact(contact_id: int, account_id: int, deleted_by: int = None) -> bool:
+    """"Verwijderen" vanuit de normale Contacten-lijst - zet het contact in
+    de prullenbak (deleted_at) i.p.v. het meteen definitief weg te gooien.
+    Het contact verdwijnt hierdoor uit list_contacts() en elke plek die
+    contacten als doelwit voor automatische verzending selecteert, maar
+    blijft bestaan (met volledige geschiedenis) tot iemand het handmatig
+    herstelt of definitief verwijdert via delete_contact() hieronder.
+    Returns False als het contact niet bij dit account hoort."""
+    with get_conn() as conn:
+        owned = conn.execute(
+            "SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)
+        ).fetchone()
+        if not owned:
+            return False
+        conn.execute(
+            "UPDATE contacts SET deleted_at = ?, deleted_by = ? WHERE id = ?",
+            (now_iso(), deleted_by, contact_id),
+        )
+        return True
+
+
+def restore_contact(contact_id: int, account_id: int) -> bool:
+    """Haalt een contact terug uit de prullenbak (deleted_at = NULL) - het
+    verschijnt weer overal waar het voorheen stond, inclusief actieve
+    sequence-inschrijvingen/campagne-wachtrij die nog niet verstuurd
+    waren. Returns False als het contact niet bij dit account hoort of
+    niet verwijderd was."""
+    with get_conn() as conn:
+        owned = conn.execute(
+            "SELECT 1 FROM contacts WHERE id = ? AND account_id = ? AND deleted_at IS NOT NULL",
+            (contact_id, account_id),
+        ).fetchone()
+        if not owned:
+            return False
+        conn.execute("UPDATE contacts SET deleted_at = NULL, deleted_by = NULL WHERE id = ?", (contact_id,))
+        return True
+
+
+def list_deleted_contacts(account_id: int) -> list:
+    """De "prullenbak" - contacten die soft-deleted zijn, meest recent
+    verwijderd eerst, met de e-mail van wie het verwijderde (indien nog
+    bekend/niet zelf verwijderd als teamlid)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.*, u.email AS deleted_by_email
+            FROM contacts c
+            LEFT JOIN users u ON u.id = c.deleted_by
+            WHERE c.account_id = ? AND c.deleted_at IS NOT NULL
+            ORDER BY c.deleted_at DESC
+            """,
+            (account_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def delete_contact(contact_id: int, account_id: int) -> bool:
-    """Verwijdert een contact definitief, inclusief alle gekoppelde data
+    """Verwijdert een contact DEFINITIEF, inclusief alle gekoppelde data
     (tags, tijdlijn, herinneringen, campagne-ontvangerschap, sequence-
     inschrijvingen + -verzendingen, LinkedIn-outreach, binnengekomen
     replies) - geen van die tabellen heeft ON DELETE CASCADE, dus een
     contact met geschiedenis zou anders altijd op een foreign-key-fout
-    stuklopen. Onomkeerbaar - de aanroeper (UI) hoort hier expliciet om te
-    laten bevestigen. Returns False als het contact niet bij dit account
-    hoort."""
+    stuklopen. Onomkeerbaar - wordt alleen aangeroepen vanuit de
+    prullenbak (zie POST /api/contacts/{id}/permanent-delete in app.py),
+    die een expliciete "DELETE"-bevestiging van de gebruiker vereist
+    vóórdat dit aangeroepen wordt. Returns False als het contact niet bij
+    dit account hoort."""
     with get_conn() as conn:
         owned = conn.execute(
             "SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)
@@ -2826,7 +2899,7 @@ def enroll_contact(sequence_id: int, account_id: int, contact_id: int) -> dict:
             "SELECT name FROM sequences WHERE id = ? AND account_id = ?", (sequence_id, account_id)
         ).fetchone()
         contact = conn.execute(
-            "SELECT 1 FROM contacts WHERE id = ? AND account_id = ?", (contact_id, account_id)
+            "SELECT 1 FROM contacts WHERE id = ? AND account_id = ? AND deleted_at IS NULL", (contact_id, account_id)
         ).fetchone()
         if not seq or not contact:
             return {"enrollment": None, "skipped_reason": "not_found"}
@@ -2894,7 +2967,7 @@ def auto_enroll_by_persona(account_id: int) -> dict:
             f"""
             SELECT c.id AS contact_id, c.persona_id
             FROM contacts c
-            WHERE c.account_id = ? AND c.persona_id IS NOT NULL
+            WHERE c.account_id = ? AND c.persona_id IS NOT NULL AND c.deleted_at IS NULL
               AND NOT EXISTS (
                   SELECT 1 FROM sequence_enrollments se
                   WHERE se.contact_id = c.id AND (se.status = 'active'{cooldown_clause})
@@ -2951,16 +3024,16 @@ def list_enrollments(sequence_id: int, account_id: int) -> list:
 def due_enrollments(now: str = None) -> list:
     """Across ALL accounts - used by the sequence-processing endpoint. Only
     enrollments whose sequence is still active and whose next_send_at has
-    passed; contact-level do_not_contact/exclusion is checked at send-time
-    by the caller (app.py), not here, since that can change after
-    enrollment."""
+    passed; contact-level do_not_contact/exclusion/deleted_at is checked
+    at send-time by the caller (app.py), not here, since that can change
+    after enrollment."""
     now = now or now_iso()
     with get_conn() as conn:
         rows = conn.execute(
             """
             SELECT se.*, s.account_id AS seq_account_id,
                    c.first_name, c.last_name, c.email, c.company,
-                   c.do_not_contact, c.excluded_reason, c.assigned_to
+                   c.do_not_contact, c.excluded_reason, c.assigned_to, c.deleted_at
             FROM sequence_enrollments se
             JOIN sequences s ON s.id = se.sequence_id
             JOIN contacts c ON c.id = se.contact_id
@@ -2986,7 +3059,7 @@ def contacts_with_pending_automated_sends(account_id: int) -> list:
             """
             SELECT DISTINCT c.id, c.first_name, c.last_name, c.email
             FROM contacts c
-            WHERE c.account_id = ? AND c.do_not_contact = 0
+            WHERE c.account_id = ? AND c.do_not_contact = 0 AND c.deleted_at IS NULL
               AND (c.excluded_reason IS NULL OR c.excluded_reason = '')
               AND (
                 EXISTS (
@@ -3112,6 +3185,12 @@ DEFAULT_KB_ARTICLES = [
      "Ga naar Integraties > Contacten importeren en upload je bestand. Het platform herkent zelf welke "
      "kolom bij welk veld hoort (ook bij afwijkende kolomkoppen) en laat je de koppeling controleren "
      "voordat er iets wordt geïmporteerd."),
+    ("CRM", "Kan ik een verwijderd contact terughalen?",
+     "Ja - verwijderde contacten komen in de Prullenbak terecht (onderaan het Contacten-tabblad), niet meteen "
+     "definitief weg. Daar kun je een contact herstellen, of het pas daadwerkelijk definitief verwijderen "
+     "(vereist het letterlijk typen van 'DELETE' als extra bevestiging - dat kan dan niet meer ongedaan "
+     "gemaakt worden). Een contact in de prullenbak doet nergens meer aan mee: geen campagnes, sequences "
+     "of exports."),
     ("CRM", "Wat zijn buyer persona's en waar stel ik ze in?",
      "Een buyer persona is een doelgroep-profiel (bv. 'Eigenaar/Directeur', 'Operations Manager') met een "
      "korte omschrijving van hun pijnpunt/context. In te stellen bij het Profiel-tabblad - hoe specifieker "
@@ -3317,7 +3396,7 @@ def create_campaign(account_id: int, name: str, variants: list, include_excluded
     editable afterwards via update_campaign() if the guess is off.
     """
     with get_conn() as conn:
-        contacts_sql = "SELECT id, persona_id, sector FROM contacts WHERE account_id = ? AND do_not_contact = 0"
+        contacts_sql = "SELECT id, persona_id, sector FROM contacts WHERE account_id = ? AND do_not_contact = 0 AND deleted_at IS NULL"
         contacts_params = [account_id]
         if not include_excluded:
             contacts_sql += " AND (excluded_reason IS NULL OR excluded_reason = '')"
@@ -3478,7 +3557,7 @@ def add_contacts_to_campaign(campaign_id: int, account_id: int, contact_ids: lis
         generic_counter = 0
         for contact_id in contact_ids:
             contact = conn.execute(
-                "SELECT id, persona_id FROM contacts WHERE id = ? AND account_id = ? AND do_not_contact = 0",
+                "SELECT id, persona_id FROM contacts WHERE id = ? AND account_id = ? AND do_not_contact = 0 AND deleted_at IS NULL",
                 (contact_id, account_id),
             ).fetchone()
             if not contact:
@@ -3530,7 +3609,7 @@ def campaign_recipients_for_launch(campaign_id: int, account_id: int) -> list:
             JOIN campaign_variants cv ON cv.id = cr.variant_id
             JOIN contacts c ON c.id = cr.contact_id
             JOIN campaigns camp ON camp.id = cr.campaign_id
-            WHERE cr.campaign_id = ? AND camp.account_id = ?
+            WHERE cr.campaign_id = ? AND camp.account_id = ? AND c.deleted_at IS NULL
             """,
             (campaign_id, account_id),
         ).fetchall()
@@ -4680,7 +4759,7 @@ def pending_campaign_recipients_for_account(account_id: int, limit: int) -> list
             JOIN contacts c ON c.id = cr.contact_id
             JOIN campaigns camp ON camp.id = cr.campaign_id
             WHERE camp.account_id = ? AND camp.status = 'launched' AND camp.paused = 0
-              AND cr.sent_at IS NULL AND cr.send_error IS NULL
+              AND cr.sent_at IS NULL AND cr.send_error IS NULL AND c.deleted_at IS NULL
             ORDER BY camp.launched_at ASC, cr.id ASC
             LIMIT ?
             """,

@@ -1487,6 +1487,24 @@
                     </tbody>
                 </table>
             </div>
+
+            <div class="card">
+                <h2><span class="icon">🗑️</span>Prullenbak</h2>
+                <p style="color:#666; margin-bottom:15px;">
+                    Verwijderde contacten staan hier tot je ze herstelt of definitief verwijdert - ze doen in de
+                    tussentijd nergens meer aan mee (geen campagnes, sequences of exports).
+                </p>
+                <button class="button button-secondary" id="deleted-contacts-toggle" onclick="toggleDeletedContacts()"><span id="deleted-contacts-label">Tonen</span> (<span id="deleted-contacts-count">0</span>)</button>
+                <div id="deleted-contacts-panel" style="display:none; margin-top:15px;">
+                    <div id="deleted-contacts-alert"></div>
+                    <table>
+                        <thead><tr><th>Naam</th><th>E-mail</th><th>Verwijderd op</th><th>Door</th><th></th></tr></thead>
+                        <tbody id="deleted-contacts-body">
+                            <tr><td colspan="5" style="color:#666;">Laden...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <div id="integrations" class="tab-content">
@@ -2349,6 +2367,7 @@
                 loadContacts();
                 loadReminders();
                 loadExclusions();
+                loadDeletedContactsCount();
             }
             if (tabName === 'support') {
                 loadKbArticles();
@@ -4278,16 +4297,99 @@
 
         async function bulkDeleteContacts() {
             const count = selectedContactIds.size;
-            if (!confirm(`Weet je zeker dat je deze ${count} contact(en) definitief wilt verwijderen? Dit kan niet ongedaan worden gemaakt.`)) {
+            if (!confirm(`${count} contact(en) verwijderen? Ze verdwijnen uit deze lijst maar blijven te herstellen via de Prullenbak hieronder.`)) {
                 return;
             }
             try {
                 const result = await apiPost('/api/contacts/bulk-delete', { contact_ids: Array.from(selectedContactIds) });
-                contactsAlert('contacts-list-alert', `✓ ${result.deleted} contact(en) verwijderd${result.skipped ? ` (${result.skipped} overgeslagen)` : ''}.`, 'success');
+                contactsAlert('contacts-list-alert', `✓ ${result.deleted} contact(en) verwijderd${result.skipped ? ` (${result.skipped} overgeslagen)` : ''} - te herstellen via de Prullenbak.`, 'success');
                 selectedContactIds.clear();
                 loadContacts();
+                loadDeletedContactsCount();
             } catch (err) {
                 contactsAlert('contacts-list-alert', `Verwijderen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        // --- Prullenbak (soft-delete contacten) ------------------------------
+
+        function deletedContactsAlert(message, kind) {
+            const el = document.getElementById('deleted-contacts-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        async function loadDeletedContactsCount() {
+            try {
+                const data = await apiGet('/api/contacts/deleted');
+                document.getElementById('deleted-contacts-count').textContent = data.contacts.length;
+            } catch (err) {
+                // Non-fatal - de teller blijft gewoon op 0 staan.
+            }
+        }
+
+        async function loadDeletedContactsList() {
+            const tbody = document.getElementById('deleted-contacts-body');
+            tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">Laden...</td></tr>';
+            try {
+                const data = await apiGet('/api/contacts/deleted');
+                document.getElementById('deleted-contacts-count').textContent = data.contacts.length;
+                if (!data.contacts.length) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">De prullenbak is leeg.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.contacts.map(c => `
+                    <tr>
+                        <td>${escapeHtml(c.first_name || '')} ${escapeHtml(c.last_name || '')}</td>
+                        <td>${escapeHtml(c.email)}</td>
+                        <td>${new Date(c.deleted_at).toLocaleString('nl-NL')}</td>
+                        <td>${escapeHtml(c.deleted_by_email || '-')}</td>
+                        <td style="display:flex; gap:6px;">
+                            <button class="button button-secondary" style="margin:0; font-size:12px; padding:4px 8px;" onclick="restoreDeletedContact(${c.id})">Herstellen</button>
+                            <button class="button button-secondary" style="margin:0; font-size:12px; padding:4px 8px; color:#b91c1c;" onclick="permanentDeleteContact(${c.id}, '${escapeHtml((c.first_name + ' ' + c.last_name).trim() || c.email).replace(/'/g, "\\'")}')">Definitief verwijderen</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="5" style="color:#666;">Laden mislukt: ${escapeHtml(err.message)}</td></tr>`;
+            }
+        }
+
+        function toggleDeletedContacts() {
+            const panel = document.getElementById('deleted-contacts-panel');
+            const willShow = panel.style.display === 'none';
+            panel.style.display = willShow ? 'block' : 'none';
+            document.getElementById('deleted-contacts-label').textContent = willShow ? 'Verbergen' : 'Tonen';
+            if (willShow) loadDeletedContactsList();
+        }
+
+        async function restoreDeletedContact(contactId) {
+            try {
+                await apiPost(`/api/contacts/${contactId}/restore`, {});
+                deletedContactsAlert('✓ Contact hersteld.', 'success');
+                loadDeletedContactsList();
+                loadContacts();
+            } catch (err) {
+                deletedContactsAlert(`Herstellen mislukt: ${err.message}`, 'warning');
+            }
+        }
+
+        async function permanentDeleteContact(contactId, name) {
+            const typed = prompt(
+                `Typ precies DELETE (hoofdletters) om ${name} definitief en onomkeerbaar te verwijderen. ` +
+                `Alle geschiedenis (tijdlijn, campagnes, sequences, replies) gaat hiermee verloren.`
+            );
+            if (typed === null) return;
+            if (typed !== 'DELETE') {
+                deletedContactsAlert('Niet verwijderd - je moet exact "DELETE" typen.', 'warning');
+                return;
+            }
+            try {
+                await apiPost(`/api/contacts/${contactId}/permanent-delete`, { confirm: 'DELETE' });
+                deletedContactsAlert('✓ Definitief verwijderd.', 'success');
+                loadDeletedContactsList();
+            } catch (err) {
+                deletedContactsAlert(`Verwijderen mislukt: ${err.message}`, 'warning');
             }
         }
 

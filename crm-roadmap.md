@@ -896,3 +896,17 @@ frontend-validatie).
 weer op NULL - een eerder verwijderd contact dat opnieuw wordt
 geïmporteerd (zelfde e-mailadres) komt dus automatisch weer terug i.p.v.
 stilzwijgend verwijderd te blijven staan.
+
+## Gebouwd (15 sept. 2026): mislukte/uitgebleven prospecting-import op Dashboard
+
+Benjamin merkte op dat een dag zonder nieuwe geïmporteerde contacten
+(vermoedelijk door de Explorium-credits die dezelfde dag opraakten, zie
+eerdere fix) geruisloos gebeurde - geen melding. Nieuwe kolommen op
+`prospecting_settings`: `last_import_at`/`last_import_error`/
+`last_import_new_count`, bijgewerkt door `update_prospecting_import_status()`
+ná ELKE cron-poging voor een account (geslaagd of niet - dat gebeurde
+eerder alleen in een tijdelijke logregel, niet persistent). Nieuw item in
+`attention_items()`: als `daily_import_enabled` aan staat en de laatste
+poging een fout gaf, of langer dan 36 uur geleden was, verschijnt dat nu
+op het Dashboard onder "Aandacht nodig" met de daadwerkelijke
+foutmelding erbij.

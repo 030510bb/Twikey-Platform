@@ -2771,9 +2771,11 @@ def api_process_prospecting():
                             sequence_skipped_cooldown += 1
             contacts_imported += new_count
             accounts_processed += 1
+            database.update_prospecting_import_status(account_id, new_count=new_count, error=None)
         except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
             logger.warning("Dagelijkse prospecting mislukt voor account %s: %s", account_id, exc)
             errors += 1
+            database.update_prospecting_import_status(account_id, new_count=0, error=str(exc))
     return {
         "success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported,
         "errors": errors, "sequence_enrolled": sequence_enrolled, "sequence_skipped_cooldown": sequence_skipped_cooldown,

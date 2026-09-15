@@ -778,6 +778,17 @@ ALTER TABLE account_profiles ADD COLUMN IF NOT EXISTS pain_points TEXT NOT NULL 
 -- een expliciete "DELETE"-bevestiging vereist (zie app.py).
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS deleted_at TEXT;
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS deleted_by INTEGER REFERENCES users(id);
+
+-- Status van de laatste dagelijkse prospecting-cron-run per account
+-- (crm-roadmap.md, Benjamin merkte op dat een uitgebleven import
+-- geruisloos gebeurde - geen melding). Bijgewerkt door
+-- update_prospecting_import_status() ná elke cron-poging voor dit
+-- account, ongeacht of die slaagde - gebruikt door attention_items() om
+-- op het Dashboard te laten zien als de import mislukte of te lang
+-- geleden draaide.
+ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS last_import_at TEXT;
+ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS last_import_error TEXT;
+ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS last_import_new_count INTEGER;
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -2334,6 +2345,20 @@ def accounts_with_daily_prospecting_enabled() -> list:
         return [dict(r) for r in rows]
 
 
+def update_prospecting_import_status(account_id: int, new_count: int = 0, error: str = None):
+    """Bijgewerkt door POST /api/cron/process-prospecting ná elke poging
+    voor dit account, geslaagd of niet - zie attention_items() hieronder,
+    dat hiermee op het Dashboard kan laten zien als de dagelijkse import
+    mislukt is of te lang geleden draaide (i.p.v. geruisloos niets doen,
+    wat eerder een keer onopgemerkt bleef)."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE prospecting_settings SET last_import_at = ?, last_import_error = ?, last_import_new_count = ? "
+            "WHERE account_id = ?",
+            (now_iso(), error, new_count, account_id),
+        )
+
+
 def delete_prospecting_settings(account_id: int) -> bool:
     with get_conn() as conn:
         existing = conn.execute("SELECT 1 FROM prospecting_settings WHERE account_id = ?", (account_id,)).fetchone()
@@ -3273,6 +3298,11 @@ DEFAULT_KB_ARTICLES = [
      "bij Integraties, en zet 'Elke dag automatisch nieuwe contacten importeren' aan om dagelijks een "
      "vast aantal nieuwe contacten binnen te laten komen - nooit automatisch benaderd, alleen als contact "
      "toegevoegd."),
+    ("Integraties", "Waarom is er een dag geen nieuwe prospecting-import binnengekomen?",
+     "Op het Dashboard onder 'Aandacht nodig' verschijnt automatisch een melding als de dagelijkse import "
+     "mislukte (bv. Explorium-credits op) of al langer dan 36 uur niet gedraaid heeft (bv. de cron-job staat "
+     "niet meer aan). Zonder zo'n melding: gewoon geen nieuwe leads gevonden die dag die aan je filters "
+     "voldeden."),
     ("Integraties", "Kan een dagelijkse prospecting-import automatisch op een sequence worden ingeschreven?",
      "Ja, optioneel - kies bij Integraties > Vibe Prospecting een sequence bij 'Automatisch inschrijven op "
      "sequence'. Staat standaard uit; de bestaande afkoelperiode-instelling (Sequence-inschrijving) geldt "
@@ -4682,6 +4712,31 @@ def attention_items(account_id: int) -> list:
                 "message": f"{due_reminders_count} herinnering(en) staan open om weer contact op te nemen.",
                 "count": due_reminders_count, "tab": "contacts",
             })
+
+        # Dagelijkse prospecting-import (crm-roadmap.md): Benjamin merkte op
+        # dat een uitgebleven import geruisloos gebeurde - geen melding.
+        # Bijgewerkt door update_prospecting_import_status() ná elke
+        # cron-poging, geslaagd of niet.
+        prospecting = conn.execute(
+            "SELECT daily_import_enabled, last_import_at, last_import_error FROM prospecting_settings WHERE account_id = ?",
+            (account_id,),
+        ).fetchone()
+        if prospecting and prospecting["daily_import_enabled"]:
+            if prospecting["last_import_error"]:
+                items.append({
+                    "type": "prospecting_import_failed", "severity": "high",
+                    "message": f"Dagelijkse prospecting-import mislukte: {prospecting['last_import_error']}",
+                    "count": 1, "tab": "integrations",
+                })
+            else:
+                stale_cutoff = (datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()
+                if not prospecting["last_import_at"] or prospecting["last_import_at"] < stale_cutoff:
+                    items.append({
+                        "type": "prospecting_import_stale", "severity": "medium",
+                        "message": "Dagelijkse prospecting-import lijkt al meer dan 36 uur niet gedraaid te hebben - "
+                                   "controleer of de cron-job nog actief is (zie DEPLOY.md).",
+                        "count": 1, "tab": "integrations",
+                    })
 
     queued = len(pending_campaign_recipients_for_account(account_id, limit=100000))
     if queued:

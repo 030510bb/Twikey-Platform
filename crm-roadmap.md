@@ -924,3 +924,17 @@ weer te verwijderen. Geen backend-wijziging nodig - dezelfde
 `/api/contacts`-multiselect-query-parameters van eerder worden nu alleen
 vanuit een JS-state-object (`contactFilters`) opgebouwd i.p.v. rechtstreeks
 uit DOM-`<select multiple>`-elementen.
+
+## Gebouwd (15 sept. 2026): cron-jobs health-check op Dashboard
+
+Benjamin vroeg expliciet om zichtbaarheid op "testen die draaien" (de
+achtergrondprocessen zelf). Nieuwe globale (niet per account) tabel
+`cron_runs` houdt per job-naam de laatste run bij via
+`record_cron_run(job_name)`, aangeroepen als allereerste regel van elke
+`/api/cron/*`-functie in app.py - zo telt zelfs een run die daarna faalt
+nog als "geprobeerd". `CRON_HEALTH_EXPECTED_MINUTES` legt per job vast
+hoe vaak die hoort te draaien; `stale_cron_jobs()` vergelijkt dat tegen
+`cron_runs` en `attention_items()` toont het resultaat op het Dashboard
+(voor elk account, ook accounts die de betreffende functionaliteit zelf
+niet gebruiken - een stilgevallen cron raakt in de praktijk toch
+iedereen zodra die weer gaat draaien).

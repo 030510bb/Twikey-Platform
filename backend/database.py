@@ -380,6 +380,19 @@ CREATE TABLE IF NOT EXISTS kb_articles (
     created_at TEXT NOT NULL
 );
 
+-- Cron-gezondheid: wanneer draaide elk /api/cron/*-endpoint voor het
+-- laatst (record_cron_run() hieronder, aangeroepen als eerste regel van
+-- elke cron-functie in app.py, dus ook als de rest van die run faalt telt
+-- het als "geprobeerd"). Eén rij per cron-naam, niet per account - het is
+-- infrastructuur, geen klantdata. Gebruikt door attention_items() om op
+-- het Dashboard te laten zien als een cron-job stilgevallen lijkt (bv.
+-- niet (meer) ingericht in Render) - Benjamin merkte op dat dit eerder
+-- geruisloos gebeurde, geen melding.
+CREATE TABLE IF NOT EXISTS cron_runs (
+    job_name TEXT PRIMARY KEY,
+    last_run_at TEXT NOT NULL
+);
+
 -- A support question a customer submits when the FAQ doesn't answer it.
 -- Visible to Twikey support in admin.html; status tracks the reply flow.
 CREATE TABLE IF NOT EXISTS support_tickets (
@@ -3307,6 +3320,11 @@ DEFAULT_KB_ARTICLES = [
      "Ja, optioneel - kies bij Integraties > Vibe Prospecting een sequence bij 'Automatisch inschrijven op "
      "sequence'. Staat standaard uit; de bestaande afkoelperiode-instelling (Sequence-inschrijving) geldt "
      "hier ook op."),
+
+    ("Dashboard", "Hoe weet ik of de achtergrondtaken (cron-jobs) nog draaien?",
+     "Op het Dashboard onder 'Aandacht nodig' verschijnt automatisch een melding als een verwachte "
+     "achtergrondtaak (bv. sequences versturen, campagne-wachtrij verwerken) al langer stilligt dan normaal - "
+     "controleer dan of de Render Cron Jobs nog actief zijn (zie DEPLOY.md)."),
 ]
 
 
@@ -3344,6 +3362,50 @@ def list_kb_articles(q: str = None) -> list:
         else:
             rows = conn.execute("SELECT * FROM kb_articles ORDER BY sort_order").fetchall()
         return [dict(r) for r in rows]
+
+
+def record_cron_run(job_name: str):
+    """Aangeroepen als allereerste regel van elke /api/cron/*-functie in
+    app.py - zo telt zelfs een run die daarna faalt nog als "geprobeerd",
+    wat precies is wat je wilt weten om te zien of de cron-job er nog is
+    (i.t.t. of de laatste run succesvol was, dat toont het eigen
+    foutafhandelingspad van elke cron al apart, bv. bij prospecting)."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO cron_runs (job_name, last_run_at) VALUES (?, ?)
+            ON CONFLICT (job_name) DO UPDATE SET last_run_at = EXCLUDED.last_run_at
+            """,
+            (job_name, now_iso()),
+        )
+
+
+# Verwachte maximale tijd tussen twee runs, in minuten, per cron-job - ruim
+# boven het aanbevolen schema in DEPLOY.md, zodat een normale vertraging
+# (bv. een trage Render-cold-start) niet meteen als "stilgevallen" meldt.
+CRON_HEALTH_EXPECTED_MINUTES = {
+    "process-sequences": 60,
+    "process-campaign-queue": 120,
+    "process-digests": 1560,
+    "process-flow-monitor": 1560,
+    "process-icp-suggestions": 10080,
+}
+
+
+def stale_cron_jobs() -> list:
+    """Cron-jobs die volgens CRON_HEALTH_EXPECTED_MINUTES allang weer
+    hadden moeten draaien maar dat niet deden (of nog nooit gedraaid
+    hebben) - infrastructuur-breed, niet per account, zie cron_runs
+    hierboven."""
+    with get_conn() as conn:
+        rows = {r["job_name"]: r["last_run_at"] for r in conn.execute("SELECT job_name, last_run_at FROM cron_runs").fetchall()}
+    now = datetime.now(timezone.utc)
+    stale = []
+    for job_name, max_minutes in CRON_HEALTH_EXPECTED_MINUTES.items():
+        last_run_at = rows.get(job_name)
+        if not last_run_at or datetime.fromisoformat(last_run_at) < now - timedelta(minutes=max_minutes):
+            stale.append({"job_name": job_name, "last_run_at": last_run_at})
+    return stale
 
 
 def create_support_ticket(account_id: int, user_id, subject: str, message: str) -> dict:
@@ -4744,6 +4806,21 @@ def attention_items(account_id: int) -> list:
             "type": "campaign_queue", "severity": "low",
             "message": f"{queued} campagne-mail(s) staan in de wachtrij door de dagelijkse verzendlimiet.",
             "count": queued, "tab": "abtest",
+        })
+
+    # Infrastructuur-breed (niet per account) - Benjamin merkte op dat een
+    # stilgevallen cron-job eerder geruisloos gebeurde. Bewust voor elk
+    # account getoond, niet alleen voor accounts die de betreffende
+    # functionaliteit gebruiken - dit raakt in de praktijk toch iedereen
+    # zodra de bijbehorende cron weer draait.
+    stale = stale_cron_jobs()
+    if stale:
+        job_names = ", ".join(s["job_name"] for s in stale)
+        items.append({
+            "type": "cron_stale", "severity": "high",
+            "message": f"Achtergrondtaken lijken stilgevallen: {job_names} - controleer of de Render Cron "
+                       "Jobs nog actief zijn (zie DEPLOY.md).",
+            "count": len(stale), "tab": "integrations",
         })
 
     order = {"high": 0, "medium": 1, "low": 2}

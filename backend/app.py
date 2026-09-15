@@ -3278,6 +3278,7 @@ def api_process_sequences():
     beheer-endpoints, niet met een account-sessie. Bedoeld om periodiek
     aangeroepen te worden (bv. een uur-cron op Render of een externe
     scheduler) - zie DEPLOY.md."""
+    database.record_cron_run("process-sequences")
     processed, skipped, errors, throttled, waiting_for_window, blocked_bad_name, blocked_deleted = 0, 0, 0, 0, 0, 0, 0
     schedule_cache: dict = {}
     for enrollment in database.due_enrollments():
@@ -3364,6 +3365,7 @@ def api_process_campaign_queue():
     campagne/ontvanger eerst. Zelfde beveiliging/aanroeppatroon als
     POST /api/cron/process-sequences: bedoeld om periodiek (bv. elk uur)
     van buitenaf getriggerd te worden, zie DEPLOY.md."""
+    database.record_cron_run("process-campaign-queue")
     sent, failed, throttled_accounts, waiting_for_window, blocked_bad_name = 0, 0, 0, 0, 0
     schedule_cache: dict = {}
     for account_id in database.account_ids_with_pending_campaign_sends():
@@ -3404,6 +3406,7 @@ def api_process_digests():
     last_digest_sent_date vandaag al is, dus vaker draaien dan nodig is
     onschadelijk (zie DEPLOY.md voor hetzelfde cron-patroon als
     process-sequences)."""
+    database.record_cron_run("process-digests")
     sent, errors = 0, 0
     for account in database.accounts_needing_digest():
         stats = database.digest_stats(account["id"])
@@ -3443,6 +3446,7 @@ def api_process_flow_monitor():
     en pauzeert automatisch wat eronder zit - zie
     database.flag_underperforming_flows(). Zelfde beveiliging/
     aanroeppatroon als de andere periodieke cron-endpoints, zie DEPLOY.md."""
+    database.record_cron_run("process-flow-monitor")
     accounts_checked, paused_total, errors = 0, 0, 0
     for account_id in database.account_ids_with_flow_monitor_enabled():
         try:
@@ -3875,6 +3879,7 @@ def api_process_icp_suggestions():
     andere cron-endpoints. accounts_needing_icp_suggestions() is
     idempotent per periode (standaard 7 dagen), dus vaker draaien dan
     nodig is onschadelijk."""
+    database.record_cron_run("process-icp-suggestions")
     processed, errors = 0, 0
     for account_id in database.accounts_needing_icp_suggestions():
         try:

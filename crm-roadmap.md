@@ -938,3 +938,23 @@ hoe vaak die hoort te draaien; `stale_cron_jobs()` vergelijkt dat tegen
 (voor elk account, ook accounts die de betreffende functionaliteit zelf
 niet gebruiken - een stilgevallen cron raakt in de praktijk toch
 iedereen zodra die weer gaat draaien).
+
+## Gebouwd (15 sept. 2026): bounce-detectie voor uitgaande mail
+
+Tweede helft van Benjamins "mails die niet aangekomen zijn"-verzoek.
+`POST /api/replies/fetch` behandelde een DSN/bounce-bericht eerder
+gewoon als een binnengekomen reactie - inclusief een AI-conceptantwoord
+op een bounce, wat natuurlijk niet de bedoeling is. `imap_client.py`
+herkent nu een bounce (RFC 3464: `multipart/report;
+report-type=delivery-status`, of afzender mailer-daemon/postmaster, of
+een herkenbaar onderwerp) en haalt het originele gebounced e-mailadres
+uit de `Final-Recipient`/`Original-Recipient`-velden. Nieuwe kolom
+`contacts.email_bounced_at`, gezet door `mark_contact_bounced()` - zet
+gelijk ook `do_not_contact` (een gebounced adres blijven benaderen heeft
+geen zin en schaadt de afzenderreputatie), en logt het op de tijdlijn.
+Nieuw item in `attention_items()`: aantal bounces van de afgelopen 14
+dagen op het Dashboard. Kanttekening: reply-ophalen (en dus ook
+bounce-detectie) is en blijft een handmatige actie (knop-klik), geen
+automatische cron - deze fix corrigeert de foutieve verwerking zodra er
+opgehaald wordt, maar geeft geen realtime bounce-meldingen zonder dat
+iemand op "ophalen" klikt.

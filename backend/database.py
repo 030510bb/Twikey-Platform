@@ -802,6 +802,15 @@ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS deleted_by INTEGER REFERENCES user
 ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS last_import_at TEXT;
 ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS last_import_error TEXT;
 ALTER TABLE prospecting_settings ADD COLUMN IF NOT EXISTS last_import_new_count INTEGER;
+
+-- Bounce-detectie (Benjamin: "mails die niet aangekomen zijn"). Gezet
+-- door mark_contact_bounced() zodra POST /api/replies/fetch een DSN/
+-- bounce-bericht herkent (zie imap_client._is_bounce) i.p.v. dat als een
+-- gewone reply te verwerken - dat gebeurde eerder ten onrechte, inclusief
+-- een AI-conceptantwoord op een bounce-melding. do_not_contact wordt
+-- gelijk mee gezet (een gebounced adres blijven benaderen heeft geen zin
+-- en schaadt de afzenderreputatie).
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS email_bounced_at TEXT;
 """
 
 DEFAULT_LINKEDIN_TEMPLATES = [
@@ -2139,6 +2148,33 @@ def log_contact_activity(account_id: int, contact_id: int, event_type: str, desc
         return _run(conn)
 
 
+def mark_contact_bounced(account_id: int, email: str) -> dict:
+    """Aangeroepen zodra POST /api/replies/fetch een DSN/bounce-bericht
+    herkent voor dit e-mailadres - zet email_bounced_at én do_not_contact
+    (een gebounced adres blijven benaderen heeft geen zin en schaadt de
+    afzenderreputatie), en logt het op de tijdlijn van het contact.
+    Retourneert None als er geen (nog niet verwijderd) contact met dit
+    adres bij dit account bestaat."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM contacts WHERE account_id = ? AND lower(email) = lower(?) AND deleted_at IS NULL",
+            (account_id, email),
+        ).fetchone()
+        if not row:
+            return None
+        contact_id = row["id"]
+        conn.execute(
+            "UPDATE contacts SET email_bounced_at = ?, do_not_contact = 1 WHERE id = ?",
+            (now_iso(), contact_id),
+        )
+        log_contact_activity(
+            account_id, contact_id, "email_bounced",
+            "E-mailadres is onbereikbaar (bounce) - automatisch op 'niet meer benaderen' gezet.",
+            _conn=conn,
+        )
+        return {"contact_id": contact_id}
+
+
 def contact_timeline(contact_id: int, account_id: int):
     """Everything that happened to one lead, newest first: CRM events
     (created/imported/tag/assignment/exclusion changes) plus every campaign
@@ -3325,6 +3361,12 @@ DEFAULT_KB_ARTICLES = [
      "Op het Dashboard onder 'Aandacht nodig' verschijnt automatisch een melding als een verwachte "
      "achtergrondtaak (bv. sequences versturen, campagne-wachtrij verwerken) al langer stilligt dan normaal - "
      "controleer dan of de Render Cron Jobs nog actief zijn (zie DEPLOY.md)."),
+    ("Contacten", "Wat betekent het als een e-mailadres 'bounced' is?",
+     "Als een verzonden mail niet aankwam (het adres bestaat niet meer, de mailbox zit vol, etc.) wordt dat "
+     "automatisch herkend zodra je op 'Replies ophalen' klikt - het contact wordt dan op 'niet meer "
+     "benaderen' gezet zodat er niet nogmaals naar hetzelfde onbereikbare adres gestuurd wordt, en het "
+     "verschijnt op het Dashboard onder 'Aandacht nodig'. Dit gebeurt bij het handmatig ophalen van "
+     "replies, niet automatisch op de achtergrond."),
 ]
 
 
@@ -4821,6 +4863,23 @@ def attention_items(account_id: int) -> list:
             "message": f"Achtergrondtaken lijken stilgevallen: {job_names} - controleer of de Render Cron "
                        "Jobs nog actief zijn (zie DEPLOY.md).",
             "count": len(stale), "tab": "integrations",
+        })
+
+    # Benjamin: "mails die niet aangekomen zijn" -> bounces (RFC 3464 DSN),
+    # bijgehouden door mark_contact_bounced() vanuit POST /api/replies/fetch
+    # zodra imap_client._is_bounce() er eentje herkent.
+    bounce_cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    with get_conn() as conn:
+        recent_bounces = conn.execute(
+            "SELECT COUNT(*) AS n FROM contacts WHERE account_id = ? AND email_bounced_at IS NOT NULL AND email_bounced_at >= ?",
+            (account_id, bounce_cutoff),
+        ).fetchone()["n"]
+    if recent_bounces:
+        items.append({
+            "type": "email_bounces", "severity": "medium",
+            "message": f"{recent_bounces} e-mailadres(sen) bounceten de afgelopen 14 dagen - automatisch op "
+                       "'niet meer benaderen' gezet.",
+            "count": recent_bounces, "tab": "contacts",
         })
 
     order = {"high": 0, "medium": 1, "low": 2}

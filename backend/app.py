@@ -2992,6 +2992,13 @@ def api_fetch_replies(account: dict = Depends(get_current_account)):
 
     for msg in messages:
         highest_uid = max(highest_uid, msg["uid"])
+        if msg.get("is_bounce"):
+            # Een DSN/bounce-bericht is geen echte reply - eerder werd dit
+            # ten onrechte gecategoriseerd en kreeg het zelfs een AI-
+            # conceptantwoord. Markeer i.p.v. daarvan het gebounced adres.
+            if msg.get("bounced_recipient"):
+                database.mark_contact_bounced(account["id"], msg["bounced_recipient"])
+            continue
         category, suggested = _categorize_reply(objection_templates, msg["body"])
         stored = database.record_incoming_reply(
             account["id"], msg["from_email"], msg["subject"], msg["body"],

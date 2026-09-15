@@ -31,6 +31,45 @@ def _decode(value) -> str:
     return decoded
 
 
+_BOUNCE_FROM_RE = re.compile(r"(mailer-daemon|postmaster)", re.IGNORECASE)
+_BOUNCE_SUBJECT_RE = re.compile(
+    r"(undeliver|delivery status notification|delivery.?s? failure|mail delivery failed|"
+    r"returned to sender|failure notice|niet[- ]?bezorgd)",
+    re.IGNORECASE,
+)
+_FINAL_RECIPIENT_RE = re.compile(r"Final-Recipient:\s*rfc822;\s*([^\s]+)", re.IGNORECASE)
+_ORIGINAL_RECIPIENT_RE = re.compile(r"Original-Recipient:\s*rfc822;\s*([^\s]+)", re.IGNORECASE)
+
+
+def _is_bounce(msg, from_email: str, subject: str) -> bool:
+    """Herkent een DSN/bounce-bericht (RFC 3464) i.p.v. dit als een echte
+    reply te behandelen - zonder deze check werd een bounce eerder gewoon
+    als binnengekomen reactie opgeslagen en kreeg zelfs een AI-
+    conceptantwoord, wat natuurlijk niet de bedoeling is."""
+    if msg.get_content_type() == "multipart/report" and (msg.get_param("report-type") or "").lower() == "delivery-status":
+        return True
+    if _BOUNCE_FROM_RE.search(from_email or ""):
+        return True
+    if _BOUNCE_SUBJECT_RE.search(subject or ""):
+        return True
+    return False
+
+
+def _extract_bounced_recipient(msg) -> str:
+    """Zoekt het originele, gebounced e-mailadres in een DSN-bericht - via
+    de machine-leesbare Final-/Original-Recipient-velden (RFC 3464) die
+    de meeste mailservers meesturen in het delivery-status-onderdeel."""
+    try:
+        raw_text = msg.as_string()
+    except Exception:
+        return ""
+    for pattern in (_FINAL_RECIPIENT_RE, _ORIGINAL_RECIPIENT_RE):
+        m = pattern.search(raw_text)
+        if m:
+            return m.group(1).strip().strip("<>").lower()
+    return ""
+
+
 def _extract_body(msg) -> str:
     """Prefers the plain-text part; falls back to a crude HTML-tag strip if
     that's all a message has."""
@@ -89,12 +128,15 @@ def fetch_new_messages(settings: dict, since_uid: int = 0) -> list:
                     received_at = parsedate_to_datetime(msg.get("Date")).astimezone(timezone.utc).isoformat()
                 except Exception:
                     received_at = datetime.now(timezone.utc).isoformat()
+                is_bounce = _is_bounce(msg, from_email, subject)
                 results.append({
                     "uid": uid,
                     "from_email": from_email.lower(),
                     "subject": subject,
                     "body": body,
                     "received_at": received_at,
+                    "is_bounce": is_bounce,
+                    "bounced_recipient": _extract_bounced_recipient(msg) if is_bounce else "",
                 })
             except Exception:
                 continue

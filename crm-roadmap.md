@@ -981,3 +981,26 @@ nagelopen tegen SCHEMA/MIGRATIONS), niet handmatig getest in de
 browser - dit project heeft geen lokale sqlite-fallback, alleen een
 echte Postgres/Supabase-verbinding via DATABASE_URL, die hier niet
 beschikbaar was.
+
+## Toekomstig idee (nog niet gescoped): linker-sidebar met facet-filters (aantallen per optie)
+
+Benjamin liet twee screenshots zien van Payt's Invoices- en Customers-
+lijsten: een vaste linker-sidebar met filtercategorieën (bv. Step/
+Status/Labels/Attention/Creditworthiness/Customer type), elk met
+checkboxes en een live aantal ernaast per optie (bv. "Paused 2",
+"Active 51"). Expliciet "voor op de backlog" - nog niet bouwen. Dit is
+een ander patroon dan de net gebouwde chip-based "+ Filter
+toevoegen"-aanpak op de Contacten-tab (die opent een los menu per klik;
+hier staan alle categorieën en hun aantallen continu zichtbaar in de
+sidebar, zodat je in één oogopslag ziet hoeveel er per filterwaarde
+zijn vóórdat je klikt). Nog te bepalen bij oppakken:
+- Blijft de chip-aanpak ernaast bestaan (bv. sidebar voor de vaste/
+  veelgebruikte filters, chips voor ad-hoc combinaties), of vervangt
+  dit patroon de chips volledig op de Contacten-tab?
+- De live aantallen per filteroptie vereisen een aparte telquery per
+  categorie (COUNT ... GROUP BY status/tag/persona/bron, met de
+  overige actieve filters al toegepast) - een duidelijk andere
+  backend-vorm dan de huidige losse multiselect-querystring-parameters.
+- Zou dit ook op de Campagnes-overzicht-tabel toegepast moeten worden
+  (analoog aan Payt's Invoices-sidebar met Step/Status), of alleen op
+  Contacten?

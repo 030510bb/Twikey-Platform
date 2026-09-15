@@ -5139,16 +5139,18 @@ def dashboard_overview_stats(account_id: int) -> dict:
     toont) - vervangt de eerdere hardcoded/nep-placeholders ("4 Lead
     Magnets", een altijd-groene "Platform Status"-kaart) door echte
     tellingen uit dit platform."""
+    new_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     with get_conn() as conn:
         contacts = conn.execute(
             """
             SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN email_bounced_at IS NOT NULL THEN 1 ELSE 0 END) AS bounced,
-                SUM(CASE WHEN do_not_contact = 1 THEN 1 ELSE 0 END) AS do_not_contact
+                SUM(CASE WHEN do_not_contact = 1 THEN 1 ELSE 0 END) AS do_not_contact,
+                SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS new_this_week
             FROM contacts WHERE account_id = ? AND deleted_at IS NULL
             """,
-            (account_id,),
+            (new_cutoff, account_id),
         ).fetchone()
         open_reminders = conn.execute(
             "SELECT COUNT(*) AS n FROM reminders WHERE account_id = ? AND status = 'open' AND remind_at <= ?",
@@ -5186,6 +5188,7 @@ def dashboard_overview_stats(account_id: int) -> dict:
     return {
         "contacts": {
             "total": contacts["total"] or 0,
+            "new_this_week": contacts["new_this_week"] or 0,
             "bounced": contacts["bounced"] or 0,
             "do_not_contact": contacts["do_not_contact"] or 0,
             "open_reminders": open_reminders,

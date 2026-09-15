@@ -738,6 +738,10 @@
                         <span class="metric-value" id="ov-contacts-total">-</span>
                     </div>
                     <div class="metric-row">
+                        <span class="metric-label">Nieuw geïmporteerd (7 dagen)</span>
+                        <span class="metric-value" id="ov-contacts-new">-</span>
+                    </div>
+                    <div class="metric-row">
                         <span class="metric-label">Bounced (onbereikbaar)</span>
                         <span class="metric-value" id="ov-contacts-bounced">-</span>
                     </div>
@@ -4975,6 +4979,7 @@
             const c = stats.contacts, camp = stats.campaigns, seq = stats.sequences, r = stats.replies, sys = stats.system;
 
             document.getElementById('ov-contacts-total').textContent = c.total;
+            document.getElementById('ov-contacts-new').textContent = c.new_this_week;
             document.getElementById('ov-contacts-bounced').textContent = c.bounced;
             document.getElementById('ov-contacts-bounced').style.color = c.bounced ? '#b91c1c' : '';
             document.getElementById('ov-contacts-dnc').textContent = c.do_not_contact;

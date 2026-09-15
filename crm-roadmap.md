@@ -910,3 +910,17 @@ eerder alleen in een tijdelijke logregel, niet persistent). Nieuw item in
 poging een fout gaf, of langer dan 36 uur geleden was, verschijnt dat nu
 op het Dashboard onder "Aandacht nodig" met de daadwerkelijke
 foutmelding erbij.
+
+## Gebouwd (15 sept. 2026): contacten-filters herbouwd als verwijderbare chips
+
+De multiselect-listboxen van eerder deze dag voldeden niet - Benjamin
+liet een screenshot van een ander scherm (Twikey's eigen mandaten-
+overzicht) zien met een "Add filter"-knop en verwijderbare filter-chips
+als gewenst patroon. Herbouwd: een "+ Filter toevoegen"-knop opent een
+klein menu om een veld te kiezen (Tag/Buyer persona/Toegewezen aan/
+Status/Bron), daarna de waardes (nog steeds multiselect per veld, via
+checkboxes), en "Toepassen" zet dat om in een chip met een ×-knop om 'm
+weer te verwijderen. Geen backend-wijziging nodig - dezelfde
+`/api/contacts`-multiselect-query-parameters van eerder worden nu alleen
+vanuit een JS-state-object (`contactFilters`) opgebouwd i.p.v. rechtstreeks
+uit DOM-`<select multiple>`-elementen.

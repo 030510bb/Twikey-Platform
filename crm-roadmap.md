@@ -789,3 +789,28 @@ verschillende onderliggende kolommen i.p.v. één kolom). Frontend: native
 `<select multiple>`-listboxen i.p.v. custom widgets - eenvoudiger te
 bouwen/onderhouden, met een korte hint over Cmd/Ctrl-klikken voor
 meerdere selecties.
+
+## Toekomstig idee (nog niet gescoped): inbound-flows (event, whitepaper-download, etc.)
+
+Door Benjamin geopperd (15 sept. 2026): naast de bestaande sequences/
+campagnes - die uitgaan van outbound-initiatief (jij benadert het contact
+eerst) - ook een flow-type voor **inbound**-signalen: een lead die zelf
+een whitepaper downloadt, zich voor een event/webinar inschrijft, of een
+ander stuk content aanvraagt. Bewust nog niet gebouwd - eerst te bepalen:
+- Wat triggert een inbound-flow precies? Een los formulier/landingspagina
+  binnen dit platform (vergelijkbaar met de bestaande lead-magnet-
+  trackinglink bij campagnes), of een koppeling met een extern
+  formulier-/event-tool (bv. Typeform, Eventbrite, een eigen website-
+  formulier via webhook)?
+- Moet de opvolging een aparte flow-soort worden met een eigen "trigger
+  = download/aanmelding" in plaats van "handmatig ingeschreven" (zoals
+  sequences nu werken), of volstaat het om gewoon een sequence te
+  bouwen die je aan zo'n trigger koppelt?
+- Hoe verhoudt dit zich tot de bestaande sequence-inschrijving-
+  afkoelperiode - moet een inbound-signaal die cooldown kunnen
+  doorbreken (iemand die net een whitepaper download wil vermoedelijk
+  wél meteen een reactie, ook al zat diegene al in een sequence)?
+- Sluit dit aan bij de al bestaande "leads uit Instagram/LinkedIn-
+  advertenties"-koppeling (ook een vorm van inbound), of is dit
+  functioneel iets anders (een actieve contactaanvraag versus een
+  passief geregistreerde advertentie-lead)?

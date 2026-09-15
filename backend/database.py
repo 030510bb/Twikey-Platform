@@ -3078,6 +3078,11 @@ DEFAULT_KB_ARTICLES = [
      "Een buyer persona is een doelgroep-profiel (bv. 'Eigenaar/Directeur', 'Operations Manager') met een "
      "korte omschrijving van hun pijnpunt/context. In te stellen bij het Profiel-tabblad - hoe specifieker "
      "de omschrijving, hoe beter de AI-mailsuggesties voor die persona worden."),
+    ("CRM", "Waarom is een automatische mail aan een contact niet verstuurd?",
+     "Als een contact geen bruikbare voornaam heeft (leeg, of iets als een e-mailadres in plaats van een "
+     "echte naam) wordt een automatische sequence-stap of campagne-mail bewust tegengehouden i.p.v. met een "
+     "kapotte aanhef verstuurd - zichtbaar op de tijdlijn van dat contact. Vul een echte voornaam in en de "
+     "eerstvolgende cron-run pakt het vanzelf weer op."),
 
     ("Sequences & Campagnes", "Wat is het verschil tussen een sequence en een campagne?",
      "Een sequence is een doorlopende opvolgflow (meerdere mails over tijd, bv. na X dagen een volgende "

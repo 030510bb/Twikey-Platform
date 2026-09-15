@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import random
+import re
 import secrets
 import urllib.parse
 from datetime import date, datetime, timedelta, timezone
@@ -1280,7 +1281,7 @@ def api_import_contacts_csv_confirm(payload: CsvImportConfirmIn, account: dict =
             continue
         contact = database.add_contact(
             account_id=account["id"],
-            first_name=row.get("first_name") or email.split("@")[0],
+            first_name=row.get("first_name", ""),  # leeg blijft leeg - géén e-mail-local-part als naam-fallback (zie _looks_like_real_name)
             email=email,
             last_name=row.get("last_name", ""),
             company=row.get("company", ""),
@@ -1501,7 +1502,7 @@ async def api_import_contacts_csv(
             continue
         contact = database.add_contact(
             account_id=account["id"],
-            first_name=row.get("first_name") or email.split("@")[0],
+            first_name=row.get("first_name", ""),  # leeg blijft leeg - géén e-mail-local-part als naam-fallback (zie _looks_like_real_name)
             email=email,
             last_name=row.get("last_name", ""),
             company=row.get("company", ""),
@@ -3213,7 +3214,7 @@ def api_process_sequences():
     beheer-endpoints, niet met een account-sessie. Bedoeld om periodiek
     aangeroepen te worden (bv. een uur-cron op Render of een externe
     scheduler) - zie DEPLOY.md."""
-    processed, skipped, errors, throttled, waiting_for_window = 0, 0, 0, 0, 0
+    processed, skipped, errors, throttled, waiting_for_window, blocked_bad_name = 0, 0, 0, 0, 0, 0
     schedule_cache: dict = {}
     for enrollment in database.due_enrollments():
         account_id = enrollment["seq_account_id"]
@@ -3233,6 +3234,19 @@ def api_process_sequences():
             # dagbudget (morgen, of na verhoging) weer ruimte heeft.
             throttled += 1
             continue
+        if not _looks_like_real_name(enrollment["first_name"]):
+            # Geen skip_enrollment (permanent) - blijft "due" en wordt
+            # vanzelf weer opgepakt zodra iemand de naam van dit contact
+            # herstelt. Gevonden bij een echte verzending (15 sept 2026):
+            # een contact zonder echte voornaam kreeg een kapotte aanhef
+            # ("roy.janssen", het e-mailadres-lokale-deel) - liever
+            # helemaal niet versturen dan zo'n mail de deur uit laten gaan.
+            database.log_contact_activity(
+                account_id, enrollment["contact_id"], "send_blocked_bad_name",
+                "Automatische mail tegengehouden: geen bruikbare voornaam - vul een echte voornaam in om te hervatten.",
+            )
+            blocked_bad_name += 1
+            continue
         sequence = database.get_sequence(enrollment["sequence_id"], account_id)
         step = next((s for s in sequence["steps"] if s["step_order"] == enrollment["current_step"]), None) if sequence else None
         if not step:
@@ -3243,8 +3257,8 @@ def api_process_sequences():
             "first_name": enrollment["first_name"], "last_name": enrollment["last_name"],
             "company": enrollment["company"],
         }
-        subject = _render_template(step["subject_template"], contact)
-        body = _render_template(step["body_template"], contact)
+        subject = _plain_text_from_html(_render_template(step["subject_template"], contact))
+        body = _plain_text_from_html(_render_template(step["body_template"], contact))
         body = _with_signature_plain(account_id, body)
         body = _with_unsubscribe_footer_plain(account_id, enrollment["contact_id"], body)
         try:
@@ -3263,7 +3277,7 @@ def api_process_sequences():
             errors += 1
     return {
         "success": True, "processed": processed, "skipped": skipped, "errors": errors,
-        "throttled": throttled, "waiting_for_window": waiting_for_window,
+        "throttled": throttled, "waiting_for_window": waiting_for_window, "blocked_bad_name": blocked_bad_name,
     }
 
 
@@ -3276,7 +3290,7 @@ def api_process_campaign_queue():
     campagne/ontvanger eerst. Zelfde beveiliging/aanroeppatroon als
     POST /api/cron/process-sequences: bedoeld om periodiek (bv. elk uur)
     van buitenaf getriggerd te worden, zie DEPLOY.md."""
-    sent, failed, throttled_accounts, waiting_for_window = 0, 0, 0, 0
+    sent, failed, throttled_accounts, waiting_for_window, blocked_bad_name = 0, 0, 0, 0, 0
     schedule_cache: dict = {}
     for account_id in database.account_ids_with_pending_campaign_sends():
         remaining_budget = database.remaining_daily_budget(account_id)
@@ -3288,12 +3302,15 @@ def api_process_campaign_queue():
             if not _in_send_window(f"camp:{r['id']}", account_id, schedule_cache):
                 waiting_for_window += 1
                 continue
-            if _attempt_send_campaign_recipient(account_id, r):
+            result = _attempt_send_campaign_recipient(account_id, r)
+            if result == "sent":
                 sent += 1
+            elif result == "blocked_bad_name":
+                blocked_bad_name += 1
             else:
                 failed += 1
     return {
-        "success": True, "sent": sent, "failed": failed,
+        "success": True, "sent": sent, "failed": failed, "blocked_bad_name": blocked_bad_name,
         "throttled_accounts": throttled_accounts, "waiting_for_window": waiting_for_window,
     }
 
@@ -3559,13 +3576,52 @@ def _render_template(template: str, contact: dict) -> str:
     )
 
 
-def _attempt_send_campaign_recipient(aid: int, r: dict) -> bool:
+_BR_TAG_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _plain_text_from_html(text: str) -> str:
+    """Automatische sequence-stappen worden als platte tekst verstuurd (zie
+    _send_plain_for_account) - maar AI-gegenereerde content (Email
+    Generator, variant-suggesties) gebruikt <br><br> voor alinea's, wat
+    anders letterlijk als "<br><br>" in de ontvangen mail verschijnt
+    (gevonden bij een echte verzending, 15 sept 2026). Zet br-tags om naar
+    echte regeleinden en strip verder alle andere HTML-tags defensief."""
+    text = _BR_TAG_RE.sub("\n", text)
+    return _HTML_TAG_RE.sub("", text)
+
+
+_REAL_NAME_RE = re.compile(r"^[A-ZÀ-Ý][A-Za-zà-ÿÀ-Ý'’]*(?:[ \-][A-ZÀ-Ý][A-Za-zà-ÿÀ-Ý'’]*)*$")
+
+
+def _looks_like_real_name(name: str) -> bool:
+    """Voorkomt dat een automatische mail met een kapotte aanhef verstuurd
+    wordt - bv. "roy.janssen" (het e-mailadres-lokale-deel, gebruikt als
+    terugvaloptie bij een CSV-import zonder voornaam-kolom, gevonden bij
+    een echte verzending 15 sept 2026). Een echte naam begint met een
+    hoofdletter en bevat geen "@", cijfers of punten - een e-mailadres of
+    e-mail-local-part komt hier dus nooit doorheen."""
+    name = (name or "").strip()
+    return bool(name) and bool(_REAL_NAME_RE.match(name))
+
+
+def _attempt_send_campaign_recipient(aid: int, r: dict) -> str:
     """Rendert en verstuurt één campagne-ontvanger, en logt het resultaat
     (record_send_result) - gedeeld tussen api_launch_campaign (directe
     launch) en api_process_campaign_queue (het wegwerken van een wachtrij
     die is ontstaan doordat de dagelijkse verzendlimiet een launch afkapte,
-    zie remaining_daily_budget()). Geeft True terug bij een geslaagde
-    verzending."""
+    zie remaining_daily_budget()). Geeft "sent"/"failed"/"blocked_bad_name"
+    terug - bij dat laatste wordt bewust NIET record_send_result
+    aangeroepen, zodat cr.sent_at/send_error allebei leeg blijven en de
+    ontvanger "pending" blijft staan (zelfde plek als de bestaande
+    wachtrij-mechaniek) - zodra iemand de naam van dit contact herstelt,
+    pakt de eerstvolgende cron-run 'm vanzelf weer op."""
+    if not _looks_like_real_name(r.get("first_name")):
+        database.log_contact_activity(
+            aid, r["contact_id"], "send_blocked_bad_name",
+            "Automatische mail tegengehouden: geen bruikbare voornaam - vul een echte voornaam in om te hervatten.",
+        )
+        return "blocked_bad_name"
     subject = _render_template(r["subject_template"], r)
     body_html = _render_template(r["body_template"], r)
 
@@ -3589,13 +3645,13 @@ def _attempt_send_campaign_recipient(aid: int, r: dict) -> bool:
         database.record_send_result(
             r["recipient_id"], sent=True, rendered_subject=subject, rendered_body=full_html,
         )
-        return True
+        return "sent"
     except Exception as exc:  # noqa: BLE001
         database.record_send_result(
             r["recipient_id"], sent=False, error=str(exc),
             rendered_subject=subject, rendered_body=full_html,
         )
-        return False
+        return "failed"
 
 
 @app.post("/api/campaigns/{campaign_id}/launch")
@@ -3620,15 +3676,21 @@ def api_launch_campaign(campaign_id: int, account: dict = Depends(require_admin_
         queued = len(recipients) - remaining_budget
         recipients = recipients[:remaining_budget]
 
-    sent, failed = 0, 0
+    sent, failed, blocked_bad_name = 0, 0, 0
     for r in recipients:
-        if _attempt_send_campaign_recipient(aid, r):
+        result = _attempt_send_campaign_recipient(aid, r)
+        if result == "sent":
             sent += 1
+        elif result == "blocked_bad_name":
+            blocked_bad_name += 1
         else:
             failed += 1
 
     database.mark_campaign_launched(campaign_id)
-    return {"success": True, "sent": sent, "failed": failed, "queued": queued, "total": sent + failed + queued}
+    return {
+        "success": True, "sent": sent, "failed": failed, "blocked_bad_name": blocked_bad_name,
+        "queued": queued, "total": sent + failed + blocked_bad_name + queued,
+    }
 
 
 @app.get("/api/campaigns/{campaign_id}/results")

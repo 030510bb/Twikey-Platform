@@ -814,3 +814,39 @@ ander stuk content aanvraagt. Bewust nog niet gebouwd - eerst te bepalen:
   advertenties"-koppeling (ook een vorm van inbound), of is dit
   functioneel iets anders (een actieve contactaanvraag versus een
   passief geregistreerde advertentie-lead)?
+
+## Fix (15 sept. 2026): twee bugs gevonden bij de eerste echte sequence-verzending
+
+Benjamin's eerste live sequence-mail (naar hollandfoodservice.nl) legde
+twee problemen bloot:
+
+1. **Letterlijke `<br><br>` in de ontvangen mail.** Sequence-stappen
+   worden als platte tekst verstuurd (`_send_plain_for_account`), maar
+   AI-gegenereerde content (Email Generator, variant-suggesties) gebruikt
+   `<br><br>` voor alinea's - bedoeld voor de HTML-verzending die
+   campagnes wél gebruiken. Nieuwe `_plain_text_from_html()` in app.py
+   zet br-tags om naar echte regeleinden en strip overige HTML-tags,
+   toegepast op subject/body vlak voor een sequence-stap verstuurd wordt.
+2. **Kapotte aanhef ("roy.janssen") bij een contact zonder voornaam.**
+   De CSV-import viel terug op het e-mailadres-lokale-deel
+   (`email.split("@")[0]`) als er geen voornaam-kolom was - die
+   terugvaloptie is verwijderd (leeg blijft nu gewoon leeg). Belangrijker,
+   op expliciet verzoek van Benjamin ("dan zou je het moeten
+   tegenhouden"): een automatische sequence-stap of campagne-mail wordt nu
+   nooit meer verstuurd als het contact geen naam heeft die op een echte
+   naam lijkt (nieuwe `_looks_like_real_name()`-check, regex: begint met
+   een hoofdletter, geen "@"/cijfers/punten). Zo'n geblokkeerde
+   verzending blijft "pending"/"due" staan (geen permanente skip) en wordt
+   vanzelf weer opgepakt zodra iemand de naam handmatig herstelt -
+   zichtbaar op de tijdlijn van dat contact (`send_blocked_bad_name`) en
+   meegeteld in de cron-/launch-respons (`blocked_bad_name`).
+
+**Nog open, ligt bij Benjamin, geen codewijziging**: de afmeldlink (en elke
+andere publieke tracking-link) wijst naar de kale Render-URL
+(`twikey-platform-backend.onrender.com`), wat onprofessioneel oogt in een
+mail namens "Twikey Campaigns". Dit lost op zodra het eigen domein
+(`api.justmeet.tech`/`app.justmeet.tech`, of specifiek voor dit account
+bijvoorbeeld `twikeycampaigns.justmeet.tech`) daadwerkelijk gekoppeld is -
+zie DEPLOY.md "Stap 5 — Eigen domein koppelen" voor de exacte DNS-stappen
+bij justmeet.tech. Vereist toegang tot de DNS van dat domein, dus niet iets
+dat vanuit code op te lossen is.

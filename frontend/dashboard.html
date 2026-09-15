@@ -4366,6 +4366,7 @@
             linkedin_action: '#1d4ed8',
             sequence_enrolled: '#15803d',
             sequence_enroll_blocked: '#b45309',
+            send_blocked_bad_name: '#b91c1c',
         };
 
         const timelineCache = {}; // contactId -> already-fetched timeline events, so re-toggling doesn't re-fetch
@@ -5091,7 +5092,8 @@
 
                 statusBadge.className = 'status-badge status-success';
                 statusBadge.textContent = `✓ Verstuurd: ${result.sent}/${result.total}` +
-                    (result.failed ? ` (${result.failed} mislukt)` : '');
+                    (result.failed ? ` (${result.failed} mislukt)` : '') +
+                    (result.blocked_bad_name ? ` (${result.blocked_bad_name} tegengehouden: geen bruikbare voornaam)` : '');
                 ABTEST_VARIANTS = [];
                 renderAbtestVariants();
 

@@ -1060,11 +1060,35 @@ def api_update_send_schedule_settings(payload: SendScheduleSettingsIn, account: 
 
 
 @app.get("/api/dashboard/attention")
+def _blocked_bad_name_attention_item(account_id: int) -> dict | None:
+    """Extra "Aandacht nodig"-item, naast database.attention_items()
+    hieronder - de naam-check (_looks_like_real_name) is Python-logica,
+    dus dit item wordt hier samengesteld (via de kandidatenlijst uit
+    database.contacts_with_pending_automated_sends) i.p.v. in SQL."""
+    candidates = database.contacts_with_pending_automated_sends(account_id)
+    bad = [c for c in candidates if not _looks_like_real_name(c["first_name"])]
+    if not bad:
+        return None
+    return {
+        "type": "blocked_bad_name", "severity": "medium",
+        "message": f"{len(bad)} contact(en) hebben geen bruikbare voornaam - automatische mails worden tegengehouden totdat je dit herstelt.",
+        "count": len(bad), "tab": "contacts",
+    }
+
+
+@app.get("/api/dashboard/attention")
 def api_dashboard_attention(account: dict = Depends(get_current_account)):
     """"Aandacht nodig"-kaart op het Dashboard-tabblad: mislukte
-    verzendingen, openstaande conceptantwoorden, vervallen herinneringen en
-    een eventuele verzendwachtrij - zie database.attention_items()."""
-    return {"items": database.attention_items(account["id"])}
+    verzendingen, openstaande conceptantwoorden, vervallen herinneringen,
+    een eventuele verzendwachtrij (database.attention_items()) en
+    contacten met een kapotte naam die verzending blokkeert."""
+    items = database.attention_items(account["id"])
+    bad_name_item = _blocked_bad_name_attention_item(account["id"])
+    if bad_name_item:
+        items.append(bad_name_item)
+        severity_order = {"high": 0, "medium": 1, "low": 2}
+        items.sort(key=lambda i: severity_order.get(i["severity"], 9))
+    return {"items": items}
 
 
 @app.get("/api/dashboard/flows-attention")

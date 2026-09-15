@@ -850,3 +850,15 @@ bijvoorbeeld `twikeycampaigns.justmeet.tech`) daadwerkelijk gekoppeld is -
 zie DEPLOY.md "Stap 5 — Eigen domein koppelen" voor de exacte DNS-stappen
 bij justmeet.tech. Vereist toegang tot de DNS van dat domein, dus niet iets
 dat vanuit code op te lossen is.
+
+**Vervolg, zelfde dag**: op Benjamins verzoek ("plaats deze zaken ook op
+het dashboard, onder het kopje zaken die aandacht nodig hebben") is een
+nieuw item toegevoegd aan de bestaande "Aandacht nodig"-kaart: het aantal
+contacten met een openstaande automatische verzending (due sequence-stap
+of pending campagne-ontvanger) waarvan de naam geblokkeerd wordt door
+`_looks_like_real_name`. Nieuwe `database.contacts_with_pending_automated_
+sends()` levert de kandidaten; het filteren op naam gebeurt in app.py
+(`_blocked_bad_name_attention_item`), omdat die regex-logica al in
+app.py zat - geen dubbele implementatie in SQL. Klik "Bekijken" springt
+naar het Contacten-tabblad. Geen frontend-wijziging nodig - de bestaande
+"Aandacht nodig"-rendering is al generiek per item-type.

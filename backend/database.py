@@ -2971,6 +2971,44 @@ def due_enrollments(now: str = None) -> list:
         return [dict(r) for r in rows]
 
 
+def contacts_with_pending_automated_sends(account_id: int) -> list:
+    """Contacten met minstens 1 automatische verzending die nu klaarstaat
+    (een due, actieve sequence-stap, of een pending campagne-ontvanger) -
+    kandidaten voor het "Aandacht nodig"-blok op het Dashboard, dat laat
+    zien welke contacten een kapotte naam hebben die de verzending
+    blokkeert. De naam-check zelf (_looks_like_real_name) zit in app.py,
+    niet hier - deze functie levert alleen de kandidaten, gefilterd op
+    "zou hier sowieso niet naartoe verstuurd worden" (do_not_contact/
+    uitgesloten telt hier al niet mee, los van de naam)."""
+    now = now_iso()
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT c.id, c.first_name, c.last_name, c.email
+            FROM contacts c
+            WHERE c.account_id = ? AND c.do_not_contact = 0
+              AND (c.excluded_reason IS NULL OR c.excluded_reason = '')
+              AND (
+                EXISTS (
+                    SELECT 1 FROM sequence_enrollments se
+                    JOIN sequences s ON s.id = se.sequence_id
+                    WHERE se.contact_id = c.id AND se.account_id = ?
+                      AND se.status = 'active' AND s.status = 'active' AND se.next_send_at <= ?
+                )
+                OR EXISTS (
+                    SELECT 1 FROM campaign_recipients cr
+                    JOIN campaigns camp ON camp.id = cr.campaign_id
+                    WHERE cr.contact_id = c.id AND camp.account_id = ?
+                      AND camp.status = 'launched' AND camp.paused = 0
+                      AND cr.sent_at IS NULL AND cr.send_error IS NULL
+                )
+              )
+            """,
+            (account_id, account_id, now, account_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def record_sequence_send(enrollment_id: int, step_id: int, sent: bool, error: str = None,
                           rendered_subject: str = None, rendered_body: str = None):
     """Logs the send attempt and advances the enrollment to the next step
@@ -3081,8 +3119,8 @@ DEFAULT_KB_ARTICLES = [
     ("CRM", "Waarom is een automatische mail aan een contact niet verstuurd?",
      "Als een contact geen bruikbare voornaam heeft (leeg, of iets als een e-mailadres in plaats van een "
      "echte naam) wordt een automatische sequence-stap of campagne-mail bewust tegengehouden i.p.v. met een "
-     "kapotte aanhef verstuurd - zichtbaar op de tijdlijn van dat contact. Vul een echte voornaam in en de "
-     "eerstvolgende cron-run pakt het vanzelf weer op."),
+     "kapotte aanhef verstuurd - zichtbaar op de tijdlijn van dat contact én als telling op het Dashboard "
+     "onder 'Aandacht nodig'. Vul een echte voornaam in en de eerstvolgende cron-run pakt het vanzelf weer op."),
 
     ("Sequences & Campagnes", "Wat is het verschil tussen een sequence en een campagne?",
      "Een sequence is een doorlopende opvolgflow (meerdere mails over tijd, bv. na X dagen een volgende "

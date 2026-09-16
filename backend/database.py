@@ -393,6 +393,24 @@ CREATE TABLE IF NOT EXISTS cron_runs (
     last_run_at TEXT NOT NULL
 );
 
+-- Imports-tabblad (Benjamin: geïnspireerd op Payt's Imports-pagina): één
+-- rij per import-poging over alle bronnen heen (Vibe Prospecting dagelijks/
+-- handmatig, LinkedIn-ads, Meta-ads, en toekomstige bronnen - source is
+-- vrije tekst, geen enum, zodat een nieuwe bron geen schema-wijziging
+-- vergt). start_import_run()/finish_import_run() hieronder omsluiten elke
+-- per-account poging in de bestaande /api/cron/process-*-crons en de
+-- nieuwe handmatige "Nu importeren"-trigger.
+CREATE TABLE IF NOT EXISTS import_runs (
+    id SERIAL PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    source TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    contacts_added INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT
+);
+
 -- A support question a customer submits when the FAQ doesn't answer it.
 -- Visible to Twikey support in admin.html; status tracks the reply flow.
 CREATE TABLE IF NOT EXISTS support_tickets (
@@ -2408,6 +2426,80 @@ def update_prospecting_import_status(account_id: int, new_count: int = 0, error:
         )
 
 
+SOURCE_LABELS = {
+    "vibe_prospecting_daily": "Vibe Prospecting (dagelijks)",
+    "vibe_prospecting_manual": "Vibe Prospecting (handmatig)",
+    "linkedin_ads": "LinkedIn Ads",
+    "meta_ads": "Meta Ads",
+}
+
+
+def start_import_run(account_id: int, source: str) -> int:
+    """Start-markering voor één import-poging (Imports-tabblad) - aangeroepen
+    vóór de eigenlijke import-logica in elke /api/cron/process-*-functie en
+    de handmatige 'Nu importeren'-trigger. finish_import_run() hieronder
+    sluit 'm af, geslaagd of niet - zo staat een run die halverwege crasht
+    nog steeds in de geschiedenis (status blijft 'running')."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO import_runs (account_id, source, started_at, status) VALUES (?, ?, ?, 'running') RETURNING id",
+            (account_id, source, now_iso()),
+        )
+        return cur.fetchone()["id"]
+
+
+def finish_import_run(run_id: int, contacts_added: int = 0, error: str = None):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE import_runs SET finished_at = ?, status = ?, contacts_added = ?, error_message = ? WHERE id = ?",
+            (now_iso(), "error" if error else "success", contacts_added, error, run_id),
+        )
+
+
+def list_import_runs(account_id: int, limit: int = 100) -> list:
+    """Geschiedenis voor het Imports-tabblad, nieuwste eerst, over alle
+    bronnen heen (source is vrije tekst - zie SOURCE_LABELS voor de
+    weergavenaam, met de ruwe waarde als fallback voor een nog
+    onbekende/toekomstige bron)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM import_runs WHERE account_id = ? ORDER BY started_at DESC LIMIT ?",
+            (account_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def import_run_detail(run_id: int, account_id: int):
+    """Eén run plus de contacten die daarin zijn toegevoegd. Er is bewust
+    geen import_run_id-kolom op contacts - de koppeling gaat via
+    source + created_at binnen [started_at, finished_at], wat voor een
+    eenmalige detailweergave nauwkeurig genoeg is zonder een schema-
+    wijziging aan de contacten-tabel."""
+    with get_conn() as conn:
+        run = conn.execute(
+            "SELECT * FROM import_runs WHERE id = ? AND account_id = ?", (run_id, account_id)
+        ).fetchone()
+        if not run:
+            return None
+        run = dict(run)
+        contacts = []
+        if run["finished_at"]:
+            contacts = [
+                dict(r) for r in conn.execute(
+                    """
+                    SELECT id, first_name, last_name, email, company, job_title, sector
+                    FROM contacts
+                    WHERE account_id = ? AND source = ? AND created_at >= ? AND created_at <= ?
+                      AND deleted_at IS NULL
+                    ORDER BY created_at
+                    """,
+                    (account_id, run["source"], run["started_at"], run["finished_at"]),
+                ).fetchall()
+            ]
+        run["contacts"] = contacts
+        return run
+
+
 def delete_prospecting_settings(account_id: int) -> bool:
     with get_conn() as conn:
         existing = conn.execute("SELECT 1 FROM prospecting_settings WHERE account_id = ?", (account_id,)).fetchone()
@@ -3366,6 +3458,12 @@ DEFAULT_KB_ARTICLES = [
      "campagnes en sequenties, openstaande conceptantwoorden/herinneringen (met een groen vinkje als er "
      "niets openstaat), en de koppelingsstatus van e-mail/IMAP/AI/HubSpot/achtergrondtaken onder Systeem "
      "(ook een groen vinkje als alles gekoppeld en gezond is)."),
+    ("Imports", "Wat staat er op het Imports-tabblad?",
+     "Een geschiedenis van elke contacten-import, over alle bronnen heen (Vibe Prospecting, LinkedIn Ads, "
+     "Meta Ads): wanneer gestart, hoelang het duurde, of het slaagde, en hoeveel nieuwe contacten er "
+     "binnenkwamen. Klik op het aantal toegevoegde contacten voor de details van die run. Met 'Nu "
+     "importeren' start je een Vibe Prospecting-import direct, zonder te wachten op de dagelijkse "
+     "automatische import (die instel je bij Integraties)."),
     ("Contacten", "Wat betekent het als een e-mailadres 'bounced' is?",
      "Als een verzonden mail niet aankwam (het adres bestaat niet meer, de mailbox zit vol, etc.) wordt dat "
      "automatisch herkend zodra je op 'Replies ophalen' klikt - het contact wordt dan op 'niet meer "

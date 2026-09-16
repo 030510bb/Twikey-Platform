@@ -2727,71 +2727,137 @@ def api_process_prospecting():
     sequence_enrolled, sequence_skipped_cooldown = 0, 0
     for settings_row in database.accounts_with_daily_prospecting_enabled():
         account_id = settings_row["account_id"]
-        target = settings_row["daily_import_count"] or 10
-        sector = (settings_row["daily_import_sector"] or "").strip()
-        country = (settings_row["daily_import_country"] or "nl").strip().lower()
-        auto_enroll_sequence_id = settings_row["daily_import_auto_enroll_sequence_id"]
+        run_id = database.start_import_run(account_id, "vibe_prospecting_daily")
         try:
-            api_key = crypto.decrypt(settings_row["api_key_encrypted"])
-            filters = {"country_code": {"values": [country]}}
-            if sector:
-                filters["linkedin_category"] = {"values": [sector]}
-            businesses = prospecting_client.search_businesses(api_key, filters, size=target * 3)
-            new_count = 0
-            for business in businesses:
-                if new_count >= target:
-                    break
-                business_id = business.get("business_id")
-                if not business_id:
-                    continue
-                # fetch_prospects (niet match_prospects) is het juiste
-                # endpoint om mensen bij een bedrijf te VINDEN - geeft
-                # naam/functie meteen mee, dus geen aparte match-stap nodig
-                # voor die velden.
-                prospects = prospecting_client.fetch_prospects(api_key, {
-                    "business_id": {"values": [business_id]},
-                    "job_title": {"values": DAILY_PROSPECTING_JOB_TITLES, "include_related_job_titles": True},
-                }, size=target - new_count)
-                if not prospects:
-                    continue
-                prospect_ids = [p["prospect_id"] for p in prospects if p.get("prospect_id")]
-                enriched_by_id = {e["prospect_id"]: e for e in prospecting_client.enrich_prospect_contacts(api_key, prospect_ids)}
-                for prospect in prospects:
-                    if new_count >= target:
-                        break
-                    enriched = enriched_by_id.get(prospect.get("prospect_id"), {})
-                    email = (enriched.get("email") or "").strip()
-                    if not email:
-                        continue
-                    if database.get_contact_by_email(account_id, email):
-                        continue  # al bekend - niet als nieuw tellen (add_contact zou 'm alsnog upserten, maar niet dubbel meetellen)
-                    contact = database.add_contact(
-                        account_id=account_id,
-                        first_name=prospect.get("first_name") or (prospect.get("full_name") or "Onbekend").split(" ")[0],
-                        last_name=prospect.get("last_name") or "",
-                        job_title=prospect.get("job_title") or "",
-                        email=email, company=business.get("name") or "", sector=sector,
-                        source="vibe_prospecting_daily",
-                    )
-                    _apply_hubspot_exclusion(account_id, contact)
-                    new_count += 1
-                    if auto_enroll_sequence_id:
-                        result = database.enroll_contact(auto_enroll_sequence_id, account_id, contact["id"])
-                        if result["enrollment"]:
-                            sequence_enrolled += 1
-                        elif result["skipped_reason"] == "cooldown":
-                            sequence_skipped_cooldown += 1
+            new_count, enrolled, skipped_cooldown = _run_prospecting_import_for_account(account_id, settings_row)
             contacts_imported += new_count
             accounts_processed += 1
+            sequence_enrolled += enrolled
+            sequence_skipped_cooldown += skipped_cooldown
             database.update_prospecting_import_status(account_id, new_count=new_count, error=None)
+            database.finish_import_run(run_id, contacts_added=new_count)
         except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
             logger.warning("Dagelijkse prospecting mislukt voor account %s: %s", account_id, exc)
             errors += 1
             database.update_prospecting_import_status(account_id, new_count=0, error=str(exc))
+            database.finish_import_run(run_id, contacts_added=0, error=str(exc))
     return {
         "success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported,
         "errors": errors, "sequence_enrolled": sequence_enrolled, "sequence_skipped_cooldown": sequence_skipped_cooldown,
     }
+
+
+def _run_prospecting_import_for_account(account_id: int, settings_row: dict) -> tuple:
+    """Kernlogica van de dagelijkse Vibe Prospecting-import voor één
+    account - losgetrokken uit api_process_prospecting() hierboven zodat
+    zowel de cron als de handmatige 'Nu importeren'-trigger
+    (api_prospecting_import_now hieronder) 'm kunnen hergebruiken.
+    Retourneert (new_count, sequence_enrolled, sequence_skipped_cooldown);
+    gooit door bij een fout - de caller is verantwoordelijk voor het
+    afronden van de import_runs-rij (finish_import_run)."""
+    target = settings_row["daily_import_count"] or 10
+    sector = (settings_row["daily_import_sector"] or "").strip()
+    country = (settings_row["daily_import_country"] or "nl").strip().lower()
+    auto_enroll_sequence_id = settings_row["daily_import_auto_enroll_sequence_id"]
+    api_key = crypto.decrypt(settings_row["api_key_encrypted"])
+    filters = {"country_code": {"values": [country]}}
+    if sector:
+        filters["linkedin_category"] = {"values": [sector]}
+    businesses = prospecting_client.search_businesses(api_key, filters, size=target * 3)
+    new_count, sequence_enrolled, sequence_skipped_cooldown = 0, 0, 0
+    for business in businesses:
+        if new_count >= target:
+            break
+        business_id = business.get("business_id")
+        if not business_id:
+            continue
+        # fetch_prospects (niet match_prospects) is het juiste endpoint om
+        # mensen bij een bedrijf te VINDEN - geeft naam/functie meteen mee,
+        # dus geen aparte match-stap nodig voor die velden.
+        prospects = prospecting_client.fetch_prospects(api_key, {
+            "business_id": {"values": [business_id]},
+            "job_title": {"values": DAILY_PROSPECTING_JOB_TITLES, "include_related_job_titles": True},
+        }, size=target - new_count)
+        if not prospects:
+            continue
+        prospect_ids = [p["prospect_id"] for p in prospects if p.get("prospect_id")]
+        enriched_by_id = {e["prospect_id"]: e for e in prospecting_client.enrich_prospect_contacts(api_key, prospect_ids)}
+        for prospect in prospects:
+            if new_count >= target:
+                break
+            enriched = enriched_by_id.get(prospect.get("prospect_id"), {})
+            email = (enriched.get("email") or "").strip()
+            if not email:
+                continue
+            if database.get_contact_by_email(account_id, email):
+                continue  # al bekend - niet als nieuw tellen (add_contact zou 'm alsnog upserten, maar niet dubbel meetellen)
+            contact = database.add_contact(
+                account_id=account_id,
+                first_name=prospect.get("first_name") or (prospect.get("full_name") or "Onbekend").split(" ")[0],
+                last_name=prospect.get("last_name") or "",
+                job_title=prospect.get("job_title") or "",
+                email=email, company=business.get("name") or "", sector=sector,
+                source="vibe_prospecting_daily",
+            )
+            _apply_hubspot_exclusion(account_id, contact)
+            new_count += 1
+            if auto_enroll_sequence_id:
+                result = database.enroll_contact(auto_enroll_sequence_id, account_id, contact["id"])
+                if result["enrollment"]:
+                    sequence_enrolled += 1
+                elif result["skipped_reason"] == "cooldown":
+                    sequence_skipped_cooldown += 1
+    return new_count, sequence_enrolled, sequence_skipped_cooldown
+
+
+@app.post("/api/prospecting/import-now")
+def api_prospecting_import_now(account: dict = Depends(get_current_account)):
+    """Handmatige trigger (Imports-tabblad, 'Nu importeren') - voert
+    dezelfde import direct uit i.p.v. te wachten op de dagelijkse cron.
+    Werkt ongeacht daily_import_enabled (dat schakelt alleen de
+    automatische cron), zolang er een API-key gekoppeld is."""
+    settings_row = database.get_prospecting_settings(account["id"])
+    if not settings_row or not settings_row.get("api_key_encrypted"):
+        raise HTTPException(
+            status_code=400,
+            detail="Er is nog geen Vibe Prospecting API-key gekoppeld (zie Integraties).",
+        )
+    run_id = database.start_import_run(account["id"], "vibe_prospecting_manual")
+    try:
+        new_count, enrolled, skipped_cooldown = _run_prospecting_import_for_account(account["id"], settings_row)
+        database.update_prospecting_import_status(account["id"], new_count=new_count, error=None)
+        database.finish_import_run(run_id, contacts_added=new_count)
+        return {
+            "success": True, "contacts_imported": new_count,
+            "sequence_enrolled": enrolled, "sequence_skipped_cooldown": skipped_cooldown,
+        }
+    except Exception as exc:  # noqa: BLE001 - foutmelding teruggeven aan de gebruiker, niet laten crashen
+        database.update_prospecting_import_status(account["id"], new_count=0, error=str(exc))
+        database.finish_import_run(run_id, contacts_added=0, error=str(exc))
+        raise HTTPException(status_code=400, detail=f"Import mislukt: {exc}") from exc
+
+
+@app.get("/api/imports")
+def api_list_imports(account: dict = Depends(get_current_account)):
+    """Imports-tabblad: geschiedenis van elke import-poging over alle
+    bronnen heen (Vibe Prospecting/LinkedIn Ads/Meta Ads/toekomstige
+    bronnen), nieuwste eerst - zie database.list_import_runs()."""
+    runs = database.list_import_runs(account["id"])
+    for run in runs:
+        run["source_label"] = database.SOURCE_LABELS.get(run["source"], run["source"])
+    return {"runs": runs}
+
+
+@app.get("/api/imports/{run_id}")
+def api_import_detail(run_id: int, account: dict = Depends(get_current_account)):
+    """Detail bij één import-run: welke contacten daarin precies zijn
+    toegevoegd (of de foutmelding als de run mislukte) - zie
+    database.import_run_detail()."""
+    run = database.import_run_detail(run_id, account["id"])
+    if not run:
+        raise HTTPException(status_code=404, detail="Import-run niet gevonden.")
+    run["source_label"] = database.SOURCE_LABELS.get(run["source"], run["source"])
+    return run
 
 
 @app.post("/api/cron/process-linkedin-ads", dependencies=[Depends(require_admin_secret)])
@@ -2808,6 +2874,8 @@ def api_process_linkedin_ads():
     for settings_row in database.accounts_with_linkedin_ads_enabled():
         account_id = settings_row["account_id"]
         auto_enroll_sequence_id = settings_row["auto_enroll_sequence_id"]
+        run_id = database.start_import_run(account_id, "linkedin_ads")
+        account_new_count = 0
         try:
             access_token = crypto.decrypt(settings_row["access_token_encrypted"])
             since_ms = None
@@ -2830,6 +2898,7 @@ def api_process_linkedin_ads():
                 )
                 _apply_hubspot_exclusion(account_id, contact)
                 contacts_imported += 1
+                account_new_count += 1
                 if auto_enroll_sequence_id:
                     result = database.enroll_contact(auto_enroll_sequence_id, account_id, contact["id"])
                     if result["enrollment"]:
@@ -2838,9 +2907,11 @@ def api_process_linkedin_ads():
                         sequence_skipped_cooldown += 1
             database.update_linkedin_ads_last_synced_at(account_id)
             accounts_processed += 1
+            database.finish_import_run(run_id, contacts_added=account_new_count)
         except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
             logger.warning("LinkedIn-ads-import mislukt voor account %s: %s", account_id, exc)
             errors += 1
+            database.finish_import_run(run_id, contacts_added=account_new_count, error=str(exc))
     return {
         "success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported,
         "errors": errors, "sequence_enrolled": sequence_enrolled, "sequence_skipped_cooldown": sequence_skipped_cooldown,
@@ -2860,6 +2931,8 @@ def api_process_meta_ads():
     for settings_row in database.accounts_with_meta_ads_enabled():
         account_id = settings_row["account_id"]
         auto_enroll_sequence_id = settings_row["auto_enroll_sequence_id"]
+        run_id = database.start_import_run(account_id, "meta_ads")
+        account_new_count = 0
         try:
             access_token = crypto.decrypt(settings_row["access_token_encrypted"])
             form_ids = [f for f in (settings_row["form_ids"] or "").split(",") if f]
@@ -2880,6 +2953,7 @@ def api_process_meta_ads():
                 )
                 _apply_hubspot_exclusion(account_id, contact)
                 contacts_imported += 1
+                account_new_count += 1
                 if auto_enroll_sequence_id:
                     result = database.enroll_contact(auto_enroll_sequence_id, account_id, contact["id"])
                     if result["enrollment"]:
@@ -2888,8 +2962,10 @@ def api_process_meta_ads():
                         sequence_skipped_cooldown += 1
             database.update_meta_ads_last_synced_at(account_id)
             accounts_processed += 1
+            database.finish_import_run(run_id, contacts_added=account_new_count)
         except Exception as exc:  # noqa: BLE001 - één account-fout mag de hele cron-run niet stoppen
             logger.warning("Meta-ads-import mislukt voor account %s: %s", account_id, exc)
+            database.finish_import_run(run_id, contacts_added=account_new_count, error=str(exc))
             errors += 1
     return {
         "success": True, "accounts_processed": accounts_processed, "contacts_imported": contacts_imported,

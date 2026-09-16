@@ -649,6 +649,7 @@
             <nav class="sidebar-nav">
                 <button class="tab-button active" onclick="switchTab('dashboard')">📊 Dashboard</button>
                 <button class="tab-button" onclick="switchTab('contacts')">👤 Contacten</button>
+                <button class="tab-button" onclick="switchTab('imports')">📥 Imports</button>
 
                 <div class="sidebar-group-label">Outreach</div>
                 <button class="tab-button" onclick="switchTab('email')">📧 Email Sync</button>
@@ -1384,6 +1385,31 @@
                         <tr><td colspan="6" style="color:#666;">Laden...</td></tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <div id="imports" class="tab-content">
+            <div class="card">
+                <h2><span class="icon">📥</span>Imports</h2>
+                <p style="color:#666; margin-bottom:14px;">
+                    Geschiedenis van elke automatische en handmatige contacten-import, over alle bronnen heen
+                    (Vibe Prospecting, LinkedIn Ads, Meta Ads). Instellingen per bron staan bij
+                    <a href="#" onclick="switchTab('integrations'); return false;">Integraties</a>.
+                </p>
+                <div id="imports-alert"></div>
+                <button class="button button-primary" onclick="triggerProspectingImportNow()" id="import-now-button">🚀 Nu importeren (Vibe Prospecting)</button>
+                <div style="overflow-x:auto; margin-top:16px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Bron</th><th>Gestart op</th><th>Duur</th><th>Status</th><th>Contacten toegevoegd</th>
+                        </tr>
+                    </thead>
+                    <tbody id="imports-body">
+                        <tr><td colspan="5" style="color:#666;">Laden...</td></tr>
+                    </tbody>
+                </table>
+                </div>
             </div>
         </div>
 
@@ -2289,6 +2315,7 @@
         const TAB_BREADCRUMBS = {
             dashboard: { icon: '📊', label: 'Dashboard' },
             contacts: { icon: '👤', label: 'Contacten' },
+            imports: { icon: '📥', label: 'Imports' },
             email: { icon: '📧', label: 'Email Sync' },
             emailgenerator: { icon: '✉️', label: 'Email Generator' },
             linkedin: { icon: '🔗', label: 'LinkedIn' },
@@ -2376,6 +2403,9 @@
                 loadExclusions();
                 loadDeletedContactsCount();
                 renderContactFilterChips();
+            }
+            if (tabName === 'imports') {
+                loadImportRuns();
             }
             if (tabName === 'support') {
                 loadKbArticles();
@@ -4955,6 +4985,105 @@
                 `).join('');
             } catch (err) {
                 tbody.innerHTML = `<tr><td colspan="4" style="color:#666;">Kon ideeën/feedback niet laden: ${err.message}</td></tr>`;
+            }
+        }
+
+        // --- Imports -------------------------------------------------------
+
+        function importsAlert(message, kind) {
+            const el = document.getElementById('imports-alert');
+            if (!message) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="alert alert-${kind}">${message}</div>`;
+        }
+
+        const IMPORT_STATUS_BADGE = {
+            running: '<span class="status-badge status-pending">⏳ Bezig</span>',
+            success: '<span class="status-badge status-success">✓ Geslaagd</span>',
+            error: '<span class="status-badge status-warning">⚠ Mislukt</span>',
+        };
+
+        function importRunDuration(run) {
+            if (!run.finished_at) return '-';
+            const ms = new Date(run.finished_at) - new Date(run.started_at);
+            if (ms < 1000) return '< 1s';
+            if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+            return `${Math.round(ms / 60000)}m`;
+        }
+
+        function importRunContactsCell(run) {
+            if (run.status === 'error') {
+                return `<span style="color:#b91c1c;" title="${escapeHtml(run.error_message || '')}">${escapeHtml(run.error_message || 'Onbekende fout')}</span>`;
+            }
+            if (!run.contacts_added) return '0';
+            return `<a href="#" onclick="toggleImportRunDetail(${run.id}); return false;">${run.contacts_added} toegevoegd</a>`;
+        }
+
+        async function loadImportRuns() {
+            const tbody = document.getElementById('imports-body');
+            tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">Laden...</td></tr>';
+            try {
+                const data = await apiGet('/api/imports');
+                const runs = data.runs || [];
+                if (!runs.length) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">Nog geen imports uitgevoerd.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = runs.map(run => `
+                    <tr>
+                        <td>${escapeHtml(run.source_label)}</td>
+                        <td>${new Date(run.started_at).toLocaleString('nl-NL')}</td>
+                        <td>${importRunDuration(run)}</td>
+                        <td>${IMPORT_STATUS_BADGE[run.status] || run.status}</td>
+                        <td>${importRunContactsCell(run)}</td>
+                    </tr>
+                    <tr class="import-detail-row" id="import-detail-row-${run.id}" style="display:none;">
+                        <td colspan="5" id="import-detail-container-${run.id}" style="background:#f9fafb; padding:10px 14px; border-bottom:1px solid #e5e7eb;"></td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                importsAlert(`Kon imports niet laden: ${err.message}`, 'warning');
+                tbody.innerHTML = '<tr><td colspan="5" style="color:#666;">-</td></tr>';
+            }
+        }
+
+        async function toggleImportRunDetail(runId) {
+            const row = document.getElementById(`import-detail-row-${runId}`);
+            const container = document.getElementById(`import-detail-container-${runId}`);
+            if (row.style.display !== 'none') { row.style.display = 'none'; return; }
+            row.style.display = 'table-row';
+            container.innerHTML = 'Laden...';
+            try {
+                const run = await apiGet(`/api/imports/${runId}`);
+                const contacts = run.contacts || [];
+                if (!contacts.length) {
+                    container.innerHTML = '<span style="color:#666;">Geen contacten gevonden voor deze run.</span>';
+                    return;
+                }
+                container.innerHTML = contacts.map(c => `
+                    <div class="metric-row">
+                        <span class="metric-label">${escapeHtml(c.first_name)} ${escapeHtml(c.last_name)} - ${escapeHtml(c.email)}</span>
+                        <span style="color:#666; font-size:12px;">${escapeHtml(c.company || '')}</span>
+                    </div>
+                `).join('');
+            } catch (err) {
+                container.innerHTML = `<span style="color:#b91c1c;">Kon details niet laden: ${escapeHtml(err.message)}</span>`;
+            }
+        }
+
+        async function triggerProspectingImportNow() {
+            const button = document.getElementById('import-now-button');
+            button.disabled = true;
+            button.textContent = '⏳ Bezig met importeren...';
+            importsAlert('', '');
+            try {
+                const result = await apiPost('/api/prospecting/import-now', {});
+                importsAlert(`Import voltooid: ${result.contacts_imported} nieuwe contact(en) toegevoegd.`, 'success');
+                loadImportRuns();
+            } catch (err) {
+                importsAlert(`Import mislukt: ${err.message}`, 'warning');
+            } finally {
+                button.disabled = false;
+                button.textContent = '🚀 Nu importeren (Vibe Prospecting)';
             }
         }
 

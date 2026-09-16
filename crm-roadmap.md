@@ -1004,3 +1004,30 @@ zijn vóórdat je klikt). Nog te bepalen bij oppakken:
 - Zou dit ook op de Campagnes-overzicht-tabel toegepast moeten worden
   (analoog aan Payt's Invoices-sidebar met Step/Status), of alleen op
   Contacten?
+
+## Gebouwd (16 sept. 2026): eigen Imports-tabblad met geschiedenis over alle bronnen
+
+Benjamin liet Payt's Imports-pagina zien (een log van elke import-run
+met status/duur/aantallen, plus een "Import now"-knop en een
+instellingen-detailpagina) en vroeg expliciet om dit direct te bouwen
+(niet backlog), als eigen tabblad in de hoofdnavigatie i.p.v. een
+sectie binnen Integraties - en om meerdere bronnen te ondersteunen
+(LinkedIn, Vibe Prospecting, "en nog andere partijen"). Nieuwe
+`import_runs`-tabel (niet per bron, generiek: account_id/source/
+started_at/finished_at/status/contacts_added/error_message - `source`
+is vrije tekst, geen enum, zodat een nieuwe bron geen schema-wijziging
+vergt) plus `start_import_run()`/`finish_import_run()`, aangeroepen
+rond elke per-account poging in de drie bestaande import-crons
+(`/api/cron/process-prospecting`, `-linkedin-ads`, `-meta-ads`).
+`_run_prospecting_import_for_account()` is de kernlogica van de
+dagelijkse Vibe Prospecting-import, losgetrokken uit
+`api_process_prospecting()` zodat zowel de cron als de nieuwe
+handmatige trigger (`POST /api/prospecting/import-now`, Payt's "Import
+now") 'm hergebruiken - werkt ongeacht de daily_import_enabled-toggle,
+zolang er een API-key gekoppeld is. Detail-per-run (welke contacten
+precies toegevoegd zijn, zoals Payt's "5 added"-link) gaat via
+`source + created_at` binnen `[started_at, finished_at]` - bewust geen
+nieuwe kolom op `contacts` voor deze koppeling. LinkedIn Ads/Meta Ads
+blijven ongetest tegen een echt account (zie hun eigen cron-
+docstrings) - de import_runs-logging daaromheen is dus wel al aanwezig
+zodra dat getest kan worden.

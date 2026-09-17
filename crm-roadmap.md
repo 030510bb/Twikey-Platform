@@ -1031,3 +1031,33 @@ nieuwe kolom op `contacts` voor deze koppeling. LinkedIn Ads/Meta Ads
 blijven ongetest tegen een echt account (zie hun eigen cron-
 docstrings) - de import_runs-logging daaromheen is dus wel al aanwezig
 zodra dat getest kan worden.
+
+## Toekomstig idee (nog niet gescoped): Kaspr-koppeling - bewust niet gebouwd (16 sept. 2026)
+
+Benjamin liet een screenshot zien van Kaspr's "Launch an automation"-
+scherm (LinkedIn-prospecting/verrijkingstool) en vroeg om een koppeling
+die leads dit platform in trekt, zoals bij LinkedIn Ads/Meta Ads. Na
+onderzoek in Kaspr's eigen documentatie (help.kaspr.io, kaspr.io/api,
+kaspr.io/why-kaspr/integrations):
+- Kaspr's publieke API (`api.developers.kaspr.io`) is **alleen
+  verrijking**: je stuurt een LinkedIn-profiel-URL in, krijgt e-mail/
+  telefoon terug. Geen endpoint om een leads-lijst of automation-
+  resultaat op te halen.
+- Geen eigen webhook voor "nieuwe lead binnengekomen" - CRM-sync
+  (HubSpot/Salesforce/Pipedrive/Zoho) en Zapier zijn de enige
+  geautomatiseerde export-wegen die Kaspr zelf documenteert.
+- Export vanuit Kaspr's eigen dashboard is een handmatige knop (CSV/
+  Excel), kost "exportcredits", geen API-endpoint ervoor.
+- Zapier zou de enige geautomatiseerde weg zijn (webhook-ontvanger aan
+  onze kant + een Zap die Benjamin zelf opzet), maar vraagt om een
+  betaald Zapier-abonnement (Professional, vanaf ~$19,99-29,99/maand)
+  voor webhooks/realtime - bovenop de Kaspr-kosten. Benjamin wilde
+  expliciet geen aparte app als Zapier gebruiken, en met de extra
+  kosten was de conclusie: niet bouwen.
+- **Nog steeds bruikbaar zonder nieuwe koppelingscode**: een CSV-export
+  vanuit Kaspr's dashboard kan vandaag al via de bestaande CSV-import
+  van dit platform binnengehaald worden - alleen handmatig, geen
+  automatisering.
+- Als dit later weer relevant wordt: eerst navragen bij Kaspr zelf of
+  er een niet-openbaar gedocumenteerd bulk-/lijst-endpoint bestaat,
+  vóórdat er weer op een Zapier-omweg gebouwd wordt.
